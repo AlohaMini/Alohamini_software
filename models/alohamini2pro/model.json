@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "asset_revision": 2,
+  "asset_revision": 3,
   "model_id": "alohamini2pro",
   "actuators": [
     {
@@ -128,5 +128,95 @@
     "geometry": "inherited_ros_description",
     "hardware_safety_limits": false,
     "device_calibration_included": false
+  },
+  "arm_rom": {
+    "source": "alohamini2pro/config/kinematics/joint_limits.yaml",
+    "calibrated": "accepted_hardware_joint_map",
+    "joints": {
+      "arm_left_elbow_flex": {
+        "type": "revolute",
+        "span_tick": 2131,
+        "span_min_tick": 1065,
+        "span_max_tick": 2344
+      },
+      "arm_left_gripper": {
+        "type": "revolute",
+        "span_tick": 1384,
+        "span_min_tick": 692,
+        "span_max_tick": 1522
+      },
+      "arm_left_shoulder_lift": {
+        "type": "revolute",
+        "span_tick": 2297,
+        "span_min_tick": 1148,
+        "span_max_tick": 2527
+      },
+      "arm_left_shoulder_pan": {
+        "type": "revolute",
+        "span_tick": 2872,
+        "span_min_tick": 1436,
+        "span_max_tick": 3159
+      },
+      "arm_left_wrist_flex": {
+        "type": "revolute",
+        "span_tick": 2152,
+        "span_min_tick": 1076,
+        "span_max_tick": 2367
+      },
+      "arm_left_wrist_roll": {
+        "type": "continuous",
+        "span_tick": 4095,
+        "span_min_tick": 2048,
+        "span_max_tick": 4095
+      },
+      "arm_left_wrist_yaw": {
+        "type": "revolute",
+        "span_tick": 1934,
+        "span_min_tick": 967,
+        "span_max_tick": 2127
+      },
+      "arm_right_elbow_flex": {
+        "type": "revolute",
+        "span_tick": 2179,
+        "span_min_tick": 1090,
+        "span_max_tick": 2397
+      },
+      "arm_right_gripper": {
+        "type": "revolute",
+        "span_tick": 1384,
+        "span_min_tick": 692,
+        "span_max_tick": 1522
+      },
+      "arm_right_shoulder_lift": {
+        "type": "revolute",
+        "span_tick": 2276,
+        "span_min_tick": 1138,
+        "span_max_tick": 2504
+      },
+      "arm_right_shoulder_pan": {
+        "type": "revolute",
+        "span_tick": 2871,
+        "span_min_tick": 1436,
+        "span_max_tick": 3158
+      },
+      "arm_right_wrist_flex": {
+        "type": "revolute",
+        "span_tick": 2120,
+        "span_min_tick": 1060,
+        "span_max_tick": 2332
+      },
+      "arm_right_wrist_roll": {
+        "type": "continuous",
+        "span_tick": 4095,
+        "span_min_tick": 2048,
+        "span_max_tick": 4095
+      },
+      "arm_right_wrist_yaw": {
+        "type": "revolute",
+        "span_tick": 1925,
+        "span_min_tick": 963,
+        "span_max_tick": 2118
+      }
+    }
   }
 }

@@ -62,3 +62,77 @@ class ModelTests(unittest.TestCase):
         for name in ("unknown", "", None, [], True):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 get_robot_model(name)
+
+
+class ArmRomTests(unittest.TestCase):
+    """Model-level expected arm travel, used to reject implausible calibration."""
+
+    def test_models_with_geometry_declare_every_arm_joint(self):
+        for name in ("alohamini2", "alohamini2pro"):
+            with self.subTest(model=name):
+                model = get_robot_model(name)
+                arms = {m.name for m in model.actuators if m.name.startswith("arm_")}
+                self.assertEqual(set(model.arm_rom.joints), arms)
+
+    def test_model_without_geometry_declares_no_rom(self):
+        # alohamini1 has no installed-geometry asset, so calibration stays unchecked
+        # rather than being checked against an invented range.
+        model = get_robot_model("alohamini1")
+        self.assertIsNone(model.arm_rom)
+        self.assertIsNone(model.rom_band("arm_left_shoulder_pan"))
+
+    def test_rom_records_its_provenance(self):
+        rom = get_robot_model("alohamini2").arm_rom
+        self.assertEqual(rom.calibrated, "accepted_hardware_joint_map")
+        self.assertIn("joint_limits.yaml", rom.source)
+
+    def test_shoulder_lift_band_matches_installed_geometry(self):
+        band = get_robot_model("alohamini2").rom_band("arm_left_shoulder_lift")
+        # Installed geometry allows ~202 degrees, not the ~359 a full turn implies.
+        self.assertAlmostEqual(band.span_tick / 4096 * 360, 201.9, places=1)
+        self.assertEqual(band.type, "revolute")
+        self.assertFalse(band.continuous)
+
+    def test_continuous_joints_accept_a_full_turn(self):
+        for name in ("arm_left_wrist_roll", "arm_right_wrist_roll"):
+            with self.subTest(joint=name):
+                band = get_robot_model("alohamini2").rom_band(name)
+                self.assertTrue(band.continuous)
+                self.assertTrue(band.accepts(4095))
+
+    def test_measured_wrap_around_spans_are_rejected(self):
+        model = get_robot_model("alohamini2")
+        # The 2026-10-12 field failure: every one of these measured a near-full
+        # turn because the encoder wrapped during sampling.
+        for joint, measured in (
+            ("arm_left_shoulder_lift", 4085),
+            ("arm_left_elbow_flex", 4095),
+            ("arm_left_wrist_flex", 4082),
+            ("arm_right_shoulder_lift", 4094),
+        ):
+            with self.subTest(joint=joint):
+                self.assertFalse(model.rom_band(joint).accepts(measured))
+
+    def test_valid_measured_spans_are_accepted(self):
+        model = get_robot_model("alohamini2")
+        for joint, measured in (
+            ("arm_left_shoulder_pan", 2515),
+            ("arm_left_gripper", 1092),
+            ("arm_left_wrist_yaw", 1892),
+            ("arm_right_gripper", 1466),
+        ):
+            with self.subTest(joint=joint):
+                self.assertTrue(model.rom_band(joint).accepts(measured))
+
+    def test_band_rejects_inconsistent_values(self):
+        from alohamini.model.types import ArmRomBand
+
+        with self.assertRaises(ValueError):
+            ArmRomBand("revolute", 3000, 1500, 2500)  # span outside the band
+        with self.assertRaises(ValueError):
+            ArmRomBand("revolute", 2000, 2000, 4096)  # max above one revolution
+        with self.assertRaises(ValueError):
+            ArmRomBand("revolute", 2000, -1, 2500)  # negative lower bound
+        with self.assertRaises(ValueError):
+            ArmRomBand("spinning", 2000, 1500, 2500)  # unknown joint type
+

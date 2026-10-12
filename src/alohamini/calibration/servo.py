@@ -8,12 +8,12 @@ import os
 import shutil
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from alohamini.calibration.encoder import EncoderCalibration, HostPositionUnits
-from alohamini.model import ActuatorSpec
+from alohamini.model import ActuatorSpec, ArmRom
 
 
 @dataclass(frozen=True)
@@ -104,10 +104,49 @@ def save_motor_calibration(
             temporary.unlink(missing_ok=True)
 
 
+def _check_arm_rom(
+    name: str,
+    calibration: MotorCalibration,
+    rom: "ArmRom | None",
+) -> None:
+    """Reject a sampled span the installed mechanism cannot physically travel.
+
+    A measured span larger than the mechanism allows can only come from sampling
+    error (typically crossing the encoder 0/4095 boundary), never from real
+    motion, so it must fail loudly instead of becoming the travel limit.
+    """
+    band = None if rom is None else rom.joints.get(name)
+    if band is None:
+        return
+    span = calibration.range_max - calibration.range_min
+    if band.accepts(span):
+        return
+    measured = f"{calibration.range_min}~{calibration.range_max}"
+    accepted = f"{band.span_min_tick}~{band.span_max_tick}"
+    detail = (
+        "行程采样疑似跨越编码器 0/4095 边界"
+        if span > band.span_tick
+        else "行程采样不完整（未推到两端极限）"
+    )
+    raise ValueError(
+        f"标定行程不合理: {name} 实测 {measured} (span={span}), "
+        f"期望 span {band.span_tick} 落在 [{accepted}] "
+        f"({detail}); 来源 {rom.source} ({rom.calibrated})。请重新标定该关节。"
+    )
+
+
 def load_motor_calibration(
-    path: str | Path, actuators: Sequence[ActuatorSpec]
+    path: str | Path,
+    actuators: Sequence[ActuatorSpec],
+    *,
+    arm_rom: "ArmRom | None" = None,
 ) -> dict[str, MotorCalibration]:
-    """Read one explicit file; reject incomplete or mismatched robots before I/O."""
+    """Read one explicit file; reject incomplete or mismatched robots before I/O.
+
+    When `arm_rom` is supplied, arm joints are additionally checked against the
+    model's installed travel so a mis-sampled span cannot become the limit.
+    Omit it to keep the previous reader behavior (for example for leader arms).
+    """
     path = Path(path).expanduser()
     with path.open("rb") as stream:
         data = stream.read(128 * 1024 + 1)
@@ -119,6 +158,10 @@ def load_motor_calibration(
         raise ValueError("Expected unique configured actuator names")
     if not isinstance(raw, dict) or raw.keys() != motors.keys():
         raise ValueError("Calibration must contain exactly the configured robot's motors")
+    if arm_rom is not None:
+        unknown = sorted(set(arm_rom.joints) - set(motors))
+        if unknown:
+            raise ValueError(f"arm_rom names unknown actuators: {unknown}")
     result = {}
     fields = {"id", "drive_mode", "homing_offset", "range_min", "range_max"}
     for name, values in raw.items():
@@ -127,5 +170,6 @@ def load_motor_calibration(
         calibration = MotorCalibration(**values)
         if calibration.id != motors[name].motor_id:
             raise ValueError(f"Calibration ID mismatch: {name}")
+        _check_arm_rom(name, calibration, arm_rom)
         result[name] = calibration
     return result

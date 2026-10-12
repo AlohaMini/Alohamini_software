@@ -35,6 +35,57 @@ def asset_path(directory: Path, relative: str) -> Path:
 
 
 @dataclass(frozen=True)
+class ArmRomBand:
+    """One joint's expected range of motion, in encoder ticks.
+
+    Mirrors the vocabulary of the installed geometry it is derived from
+    (`joint_limits.yaml`: `type`, `calibrated`), so the two can be compared
+    side by side. Derived from installed geometry, never from a device's own
+    calibration: the expected span is what the mechanism can physically travel,
+    so a measured span outside this band means the calibration sampling is wrong,
+    not the mechanism. Absolute ticks are deliberately absent because they depend
+    on each unit's homing offset; only the span is portable across units.
+    """
+
+    type: str
+    span_tick: int
+    span_min_tick: int
+    span_max_tick: int
+
+    def __post_init__(self) -> None:
+        if self.type not in ("revolute", "continuous"):
+            raise ValueError("type must be 'revolute' or 'continuous'")
+        for field_name in ("span_tick", "span_min_tick", "span_max_tick"):
+            value = getattr(self, field_name)
+            if type(value) is not int or not 0 <= value <= 4095:
+                raise ValueError(f"{field_name} must be an integer in [0, 4095]")
+        if not self.span_min_tick <= self.span_tick <= self.span_max_tick:
+            raise ValueError("span_tick must lie within the accepted span band")
+
+    @property
+    def continuous(self) -> bool:
+        """A joint with no mechanical end stop accepts a full turn."""
+        return self.type == "continuous"
+
+    def accepts(self, span_tick: int) -> bool:
+        """Report whether a measured span is physically plausible for this joint."""
+        return self.span_min_tick <= span_tick <= self.span_max_tick
+
+
+@dataclass(frozen=True)
+class ArmRom:
+    """Model-level expected arm travel, and where it came from.
+
+    `source` and `calibrated` carry the same provenance vocabulary as
+    `joint_limits.yaml` so a reviewer can trace every band back to its origin.
+    """
+
+    source: str
+    calibrated: str
+    joints: Mapping[str, ArmRomBand]
+
+
+@dataclass(frozen=True)
 class RobotModel:
     """Nominal layout and description assets; not a physical safety configuration."""
 
@@ -46,6 +97,11 @@ class RobotModel:
     asset_revision: int
     descriptions: Mapping[str, str]
     directory: Path = field(repr=False, compare=False)
+    arm_rom: ArmRom | None = None
+
+    def rom_band(self, joint: str) -> ArmRomBand | None:
+        """Expected travel for one joint, or None when the model declares none."""
+        return None if self.arm_rom is None else self.arm_rom.joints.get(joint)
 
     def asset_path(self, relative: str) -> Path:
         return asset_path(self.directory, relative)

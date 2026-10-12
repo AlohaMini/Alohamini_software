@@ -21,16 +21,35 @@ from alohamini.schema import CommandIdentity, RobotCommand
 
 
 def installed_calibration(model):
-    return {
-        m.name: MotorCalibration(
+    """A plausible installed calibration for the model.
+
+    Arm joints keep the historical 1000~3000 span; the gripper uses its declared
+    travel because a 2000-tick span exceeds the gripper's real range and would be
+    rejected by the load-time ROM check. Models without declared geometry (for
+    example alohamini1) keep the historical span for every arm joint.
+    """
+    rom = getattr(model, "arm_rom", None)
+    bands = {} if rom is None else dict(rom.joints)
+    values = {}
+    for m in model.actuators:
+        expectation = bands.get(m.name)
+        if m.name.startswith("arm_"):
+            if expectation is not None and not expectation.accepts(2000):
+                lower, upper = 0, expectation.span_tick
+            elif m.name.endswith("wrist_roll"):
+                lower, upper = 0, 4095
+            else:
+                lower, upper = 1000, 3000
+        else:
+            lower, upper = 0, 4095
+        values[m.name] = MotorCalibration(
             m.motor_id,
             int(m.name.startswith("arm_right_")),
             -123 if m.name.startswith("arm_") else 0,
-            1000 if m.name.startswith("arm_") and not m.name.endswith("wrist_roll") else 0,
-            3000 if m.name.startswith("arm_") and not m.name.endswith("wrist_roll") else 4095,
+            lower,
+            upper,
         )
-        for m in model.actuators
-    }
+    return values
 
 
 class CalibrationFileTests(unittest.TestCase):
@@ -431,10 +450,18 @@ class StartupTests(unittest.TestCase):
 
     def test_startup_c_recalibrates_and_rebuilds_host_coordinates(self):
         self.serials["/dev/am_arm_follower_left"].set(1, 31, 2, 999)
+        bands = dict(self.model.arm_rom.joints)
 
         def ranges(bus, names):
             self.assertFalse(any(p[5:7] == b"\x28\x01" for _, p in self.writes()))
-            return dict.fromkeys(names, 800), dict.fromkeys(names, 3200)
+            # Use each joint's declared travel so the re-saved file passes the
+            # load-time ROM check; a full-turn joint cannot start at 800.
+            mins, maxes = {}, {}
+            for name in names:
+                span = bands[name].span_tick
+                lower = 800 if 800 + span <= 4095 else 4095 - span
+                mins[name], maxes[name] = lower, lower + span
+            return mins, maxes
 
         with (
             patch("sys.stdin.isatty", return_value=True),
@@ -448,7 +475,10 @@ class StartupTests(unittest.TestCase):
             for name, units in host._units.items():
                 self.assertEqual(units, saved[name].position_units(units.normalization))
             self.assertEqual(saved["arm_left_shoulder_pan"].range_min, 800)
-            self.assertEqual(saved["arm_right_elbow_flex"].range_max, 3200)
+            self.assertEqual(
+                saved["arm_right_elbow_flex"].range_max,
+                800 + bands["arm_right_elbow_flex"].span_tick,
+            )
             self.assertTrue(list(self.path.parent.glob("*.backup.json")))
         finally:
             host.close()
@@ -584,6 +614,38 @@ class StartupTests(unittest.TestCase):
                         )
             finally:
                 host.close()
+
+
+    def test_implausible_rom_refuses_startup_before_touching_hardware(self):
+        # Field failure 2026-10-12: shoulder_lift sampled 2~4087 (a full turn) for
+        # a joint that travels ~202 degrees. That span became the only travel
+        # limit and drove the joint into a mechanical stop.
+        self.calibrations["arm_left_shoulder_lift"] = MotorCalibration(2, 0, 1846, 2, 4087)
+        self.path.write_text(
+            json.dumps({name: asdict(c) for name, c in self.calibrations.items()}),
+            encoding="utf-8",
+        )
+        with self.assertRaises(ValueError) as failure:
+            self.open()
+        message = str(failure.exception)
+        self.assertIn("arm_left_shoulder_lift", message)
+        self.assertIn("4085", message)
+        self.assertIn("Refusing to start Host", message)
+        self.assertIn("alohamini calibrate arms", message)
+        # No torque was ever enabled and no EEPROM range was written.
+        self.assertFalse(any(p[5:7] == b"\x28\x01" for _, p in self.writes()))
+        self.assertFalse(any(p[5] in (9, 11, 31) for _, p in self.writes()))
+        # The calibration is rejected before any bus is opened or written.
+        self.assertEqual(self.writes(), [])
+        self.assertFalse(any(serial.is_open for serial in self.serials.values()))
+
+    def test_plausible_calibration_starts_and_reaches_ready(self):
+        host = self.open()
+        try:
+            self.assertEqual(host.supervisor.status.host_session_id is not None, True)
+        finally:
+            host.close()
+        self.assert_closed()
 
 
 if __name__ == "__main__":

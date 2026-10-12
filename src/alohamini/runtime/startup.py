@@ -92,12 +92,22 @@ def _open_host(
         else Path(calibration_file).expanduser()
     )
     try:
-        calibrations = load_motor_calibration(path, model.actuators)
+        calibrations = load_motor_calibration(
+            path, model.actuators, arm_rom=model.arm_rom
+        )
     except FileNotFoundError as exc:
         raise FileNotFoundError(
             f"Calibration not found: {path}. Supply the installed robot's existing JSON "
             f"with --calibration, or run alohamini calibrate robot --robot_model {robot_model}; "
             "do not substitute another robot's calibration."
+        ) from exc
+    except ValueError as exc:
+        # A mis-sampled range would otherwise become the only travel limit and
+        # drive a joint into its mechanical stop. Refuse to start instead.
+        raise ValueError(
+            f"Refusing to start Host: installed calibration is not physically plausible. "
+            f"{exc} File: {path}. Re-calibrate on the Pi with "
+            f"`alohamini calibrate arms --robot_model {robot_model}`."
         ) from exc
     joints, units = [], {}
     for motor in model.actuators:

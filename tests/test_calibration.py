@@ -1,9 +1,14 @@
+import json
 import math
+import tempfile
 import unittest
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 
 from alohamini.calibration import EncoderCalibration, JointPositionDecoder, LiftCalibration
 from alohamini.calibration.encoder import HostPositionUnits
+from alohamini.calibration.servo import MotorCalibration, load_motor_calibration
+from alohamini.model import get_robot_model
 
 
 class HostPositionUnitTests(unittest.TestCase):
@@ -222,3 +227,168 @@ class LiftCalibrationTests(unittest.TestCase):
             ):
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     method(value)
+
+
+class CalibrationRomValidationTests(unittest.TestCase):
+    """Reject calibration whose sampled span is not physically plausible.
+
+    Field failure 2026-10-12: hand-pushed sampling crossed the encoder 0/4095
+    boundary, so min/max recorded a near-full turn for joints that travel far
+    less. The span then became the only travel limit, and the slider drove the
+    joint into a mechanical stop (4.1 A, sustained overload, latched 0x08).
+    """
+
+    def _write(self, directory, model_name, overrides):
+        model = get_robot_model(model_name)
+        rom = model.arm_rom
+        bands = {} if rom is None else dict(rom.joints)
+        values = {}
+        for motor in model.actuators:
+            # Baseline: the joint's own expected span, valid by construction.
+            # Non-arm axes keep the deployed base/lift convention.
+            expectation = bands.get(motor.name)
+            span = expectation.span_tick if expectation else 4095
+            values[motor.name] = MotorCalibration(motor.motor_id, 0, 0, 0, span)
+        values.update(overrides)
+        path = Path(directory) / "AlohaMiniRobot.json"
+        path.write_text(json.dumps({k: vars(v) for k, v in values.items()}))
+        return path, model
+
+    def test_field_failure_shoulder_lift_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(
+                directory, "alohamini2", {"arm_left_shoulder_lift": MotorCalibration(2, 0, 1846, 2, 4087)}
+            )
+            with self.assertRaises(ValueError) as caught:
+                load_motor_calibration(path, model.actuators, arm_rom=model.arm_rom)
+            message = str(caught.exception)
+            self.assertIn("arm_left_shoulder_lift", message)
+            self.assertIn("2", message)
+            self.assertIn("4087", message)
+
+    def test_valid_shoulder_pan_span_is_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(
+                directory, "alohamini2", {"arm_left_shoulder_pan": MotorCalibration(1, 0, -1944, 603, 3118)}
+            )
+            values = load_motor_calibration(
+                path, model.actuators, arm_rom=model.arm_rom
+            )
+            self.assertEqual(values["arm_left_shoulder_pan"].range_max, 3118)
+
+    def test_continuous_wrist_roll_full_turn_is_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(
+                directory, "alohamini2", {"arm_left_wrist_roll": MotorCalibration(6, 0, 735, 2, 4086)}
+            )
+            values = load_motor_calibration(
+                path, model.actuators, arm_rom=model.arm_rom
+            )
+            self.assertEqual(values["arm_left_wrist_roll"].range_max, 4086)
+
+    def test_incomplete_narrow_sampling_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(
+                directory, "alohamini2", {"arm_left_elbow_flex": MotorCalibration(3, 0, -1735, 2000, 2100)}
+            )
+            with self.assertRaises(ValueError) as caught:
+                load_motor_calibration(path, model.actuators, arm_rom=model.arm_rom)
+            self.assertIn("arm_left_elbow_flex", str(caught.exception))
+
+    def test_base_and_lift_are_not_range_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(
+                directory, "alohamini2", {"lift_axis": MotorCalibration(11, 0, 0, 0, 4095)}
+            )
+            values = load_motor_calibration(
+                path, model.actuators, arm_rom=model.arm_rom
+            )
+            self.assertEqual(values["lift_axis"].range_max, 4095)
+
+    def test_validation_is_skipped_without_rom(self):
+        # alohamini1 declares no geometry, so the same implausible span loads.
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(
+                directory, "alohamini1", {"arm_left_shoulder_lift": MotorCalibration(2, 0, 0, 2, 4087)}
+            )
+            self.assertIsNone(model.arm_rom)
+            values = load_motor_calibration(
+                path, model.actuators, arm_rom=model.arm_rom
+            )
+            self.assertEqual(values["arm_left_shoulder_lift"].range_max, 4087)
+
+    def test_omitting_rom_keeps_previous_reader_behavior(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(
+                directory, "alohamini2", {"arm_left_shoulder_lift": MotorCalibration(2, 0, 1846, 2, 4087)}
+            )
+            values = load_motor_calibration(path, model.actuators)
+            self.assertEqual(values["arm_left_shoulder_lift"].range_max, 4087)
+
+    def test_span_exactly_at_band_edges_is_accepted(self):
+        expectation = get_robot_model("alohamini2").rom_band("arm_left_elbow_flex")
+        for span in (expectation.span_min_tick, expectation.span_max_tick):
+            with self.subTest(span=span), tempfile.TemporaryDirectory() as directory:
+                path, model = self._write(
+                    directory,
+                    "alohamini2",
+                    {"arm_left_elbow_flex": MotorCalibration(3, 0, 0, 0, span)},
+                )
+                values = load_motor_calibration(
+                    path, model.actuators, arm_rom=model.arm_rom
+                )
+                self.assertEqual(values["arm_left_elbow_flex"].range_max, span)
+
+    def test_span_one_tick_outside_band_is_rejected(self):
+        expectation = get_robot_model("alohamini2").rom_band("arm_left_elbow_flex")
+        for span in (expectation.span_min_tick - 1, expectation.span_max_tick + 1):
+            with self.subTest(span=span), tempfile.TemporaryDirectory() as directory:
+                path, model = self._write(
+                    directory,
+                    "alohamini2",
+                    {"arm_left_elbow_flex": MotorCalibration(3, 0, 0, 0, span)},
+                )
+                with self.assertRaises(ValueError):
+                    load_motor_calibration(
+                        path, model.actuators, arm_rom=model.arm_rom
+                    )
+
+    def test_continuous_joint_ignores_the_narrow_sampling_floor(self):
+        # wrist_roll spins freely, so a small sampled span is a legitimate
+        # partial measurement rather than incomplete travel.
+        expectation = get_robot_model("alohamini2").rom_band("arm_left_wrist_roll")
+        self.assertTrue(expectation.continuous)
+        self.assertTrue(expectation.accepts(expectation.span_min_tick))
+        self.assertFalse(expectation.accepts(expectation.span_min_tick - 1))
+
+    def test_unknown_joint_in_rom_is_rejected(self):
+        from alohamini.model import ArmRom
+
+        with tempfile.TemporaryDirectory() as directory:
+            path, model = self._write(directory, "alohamini2", {})
+            rom = model.arm_rom
+            bogus_joints = dict(rom.joints)
+            bogus_joints["arm_left_nonexistent"] = next(iter(rom.joints.values()))
+            bogus = ArmRom(rom.source, rom.calibrated, bogus_joints)
+            with self.assertRaises(ValueError) as caught:
+                load_motor_calibration(path, model.actuators, arm_rom=bogus)
+            self.assertIn("arm_left_nonexistent", str(caught.exception))
+
+    def test_every_arm_joint_is_actually_checked(self):
+        # A partial table must not silently skip joints: each arm joint's own
+        # over-travel is rejected when it is the only one overridden.
+        motor_ids = {m.name: m.motor_id for m in get_robot_model("alohamini2").actuators}
+        for name in sorted(get_robot_model("alohamini2").arm_rom.joints):
+            if name.endswith("wrist_roll"):
+                continue  # continuous joints accept a full turn by design
+            with self.subTest(joint=name), tempfile.TemporaryDirectory() as directory:
+                path, model = self._write(
+                    directory,
+                    "alohamini2",
+                    {name: MotorCalibration(motor_ids[name], 0, 0, 0, 4095)},
+                )
+                with self.assertRaises(ValueError) as caught:
+                    load_motor_calibration(
+                        path, model.actuators, arm_rom=model.arm_rom
+                    )
+                self.assertIn(name, str(caught.exception))

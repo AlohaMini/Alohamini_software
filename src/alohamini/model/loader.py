@@ -2,13 +2,14 @@
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
 
 from alohamini._validation import finite_number, identifier
 
-from .types import ActuatorSpec, RobotModel, asset_path
+from .types import ActuatorSpec, ArmRom, ArmRomBand, RobotModel, asset_path
 
 
 def _asset_root() -> Path:
@@ -78,6 +79,46 @@ def robot_models() -> tuple[str, ...]:
     return _catalog()[1]
 
 
+_ROM_FIELDS = frozenset({"type", "span_tick", "span_min_tick", "span_max_tick"})
+
+
+def _arm_rom(data: Mapping[str, object], actuators: Sequence[ActuatorSpec]) -> ArmRom | None:
+    """Parse the optional arm ROM declaration; omit it to leave calibration unchecked.
+
+    A model without installed geometry (for example `alohamini1`) legitimately has
+    none. When present, `joints` must cover exactly that model's arm joints, so a
+    partial table can never silently skip a joint's check.
+    """
+    raw = data.get("arm_rom")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != {"source", "calibrated", "joints"}:
+        raise ValueError("arm_rom must contain exactly source, calibrated and joints")
+    for field_name in ("source", "calibrated"):
+        if not isinstance(raw[field_name], str) or not raw[field_name]:
+            raise ValueError(f"arm_rom {field_name} must be a nonempty string")
+    joints = raw["joints"]
+    if not isinstance(joints, dict) or not joints:
+        raise ValueError("arm_rom joints must be a nonempty object")
+    arm_names = {motor.name for motor in actuators if motor.name.startswith("arm_")}
+    if set(joints) != arm_names:
+        missing = sorted(arm_names - set(joints))
+        extra = sorted(set(joints) - arm_names)
+        raise ValueError(
+            f"arm_rom joints must cover exactly the arm joints; missing={missing} extra={extra}"
+        )
+    parsed = {}
+    for name, values in joints.items():
+        if not isinstance(values, dict) or set(values) != _ROM_FIELDS:
+            raise ValueError(f"Invalid arm_rom joint fields: {name}")
+        parsed[name] = ArmRomBand(**values)
+    return ArmRom(
+        source=raw["source"],
+        calibrated=raw["calibrated"],
+        joints=MappingProxyType(parsed),
+    )
+
+
 def load_robot_model(directory: str | Path) -> RobotModel:
     """Load a self-contained model directory; never synthesize missing geometry."""
     directory = Path(directory).resolve()
@@ -135,6 +176,7 @@ def load_robot_model(directory: str | Path) -> RobotModel:
         asset_revision=revision,
         descriptions=MappingProxyType(dict(descriptions)),
         directory=directory,
+        arm_rom=_arm_rom(data, actuators),
     )
 
 

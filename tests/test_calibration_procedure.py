@@ -191,7 +191,21 @@ class CalibrationProcedureTests(unittest.TestCase):
         if ranges is None:
 
             def ranges(_bus, names):
-                return ({name: 1000 for name in names}, {name: 3000 for name in names})
+                # Keep the historical 1000~3000 span wherever the joint's real
+                # travel accepts it; the gripper's range is narrower, and a fixed
+                # 2000-tick span there would be (correctly) rejected on load.
+                rom = get_robot_model(self.model_name).arm_rom
+                bands = {} if rom is None else dict(rom.joints)
+                mins, maxes = {}, {}
+                for name in names:
+                    expectation = bands.get(name)
+                    if expectation is None or expectation.accepts(2000):
+                        mins[name], maxes[name] = 1000, 3000
+                    else:
+                        span = expectation.span_tick
+                        lower = 1000 if 1000 + span <= 4095 else 4095 - span
+                        mins[name], maxes[name] = lower, lower + span
+                return mins, maxes
 
         with (
             patch("builtins.input", return_value=response),
@@ -651,15 +665,26 @@ class CalibrationProcedureTests(unittest.TestCase):
                 path, old = self.prepare_arm_ranges(model_name)
                 before = path.read_bytes()
                 self.run_calibration(response="CALIBRATE BOTH ARMS")
-                result = load_motor_calibration(path, get_robot_model(model_name).actuators)
+                model = get_robot_model(model_name)
+                bands = {} if model.arm_rom is None else dict(model.arm_rom.joints)
+                result = load_motor_calibration(
+                    path, model.actuators, arm_rom=model.arm_rom
+                )
                 for name, value in result.items():
                     if name.startswith("arm_"):
                         self.assertEqual(value.homing_offset, -123)
                         self.assertEqual(value.drive_mode, 1)
-                        self.assertEqual(
-                            (value.range_min, value.range_max),
-                            (0, 4095) if name.endswith("wrist_roll") else (1000, 3000),
-                        )
+                        expectation = bands.get(name)
+                        if name.endswith("wrist_roll"):
+                            expected = (0, 4095)
+                        elif expectation is not None and not expectation.accepts(2000):
+                            # Narrow joints (for example the gripper) cannot use the
+                            # historical span; the recorder substitutes real travel.
+                            span = expectation.span_tick
+                            expected = (1000, 1000 + span)
+                        else:
+                            expected = (1000, 3000)
+                        self.assertEqual((value.range_min, value.range_max), expected)
                     else:
                         self.assertEqual(value, old[name])
                 self.assertTrue(

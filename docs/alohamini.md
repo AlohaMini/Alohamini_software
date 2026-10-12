@@ -125,6 +125,25 @@ alohamini calibrate robot --robot_model alohamini2pro
 
 标定保存在 `~/Alohamini_workspace/calibration/`。可复用同一台机器的完整标定，不能套用另一台机器的数据。自定义标定目录用 `--calibration_dir`；Host 的整机 JSON 用 `--calibration` 指定。重做会保留 `*.backup.json` 备份；标定失败或恢复失败时先排查，不要直接启动运动。
 
+### 装载期行程校验
+
+Host 启动装载标定时，会按型号内置的臂关节机械行程校验每个关节的 `range_min`/`range_max`。行程是**唯一的限位依据**，一旦被记错，滑块会把关节推到机械死点并触发过流保护。因此校验不通过时 Host **拒绝启动**，而不是带病运行。
+
+期望行程来自型号资产 `models/<型号>/model.json` 的 `arm_rom` 字段，由安装几何（`joint_limits.yaml` 的 `accepted_hardware_joint_map`）换算为编码器刻度；未声明该字段的型号不做此校验。
+
+最常见的失败原因是手动推动关节时越过了编码器 `0/4095` 边界，`min`/`max` 同时记到接近两端，跨度被撑成整圈。例如 `arm_left_shoulder_lift` 实际行程约 202°，若被记成 `2~4087`（≈359°），启动会报：
+
+```text
+Refusing to start Host: installed calibration is not physically plausible.
+标定行程不合理: arm_left_shoulder_lift 实测 2~4087 (span=4085),
+期望 span 2297 落在 [1148~2527] (行程采样疑似跨越编码器 0/4095 边界);
+来源 alohamini2pro/config/kinematics/joint_limits.yaml (accepted_hardware_joint_map)。请重新标定该关节。
+```
+
+处理方式：按上文重新标定该关节，**缓慢推到两端极限**但不要越过整圈；`wrist_roll` 是名义连续关节，整圈跨度属正常。底盘与升降轴不参与该校验。
+
+> 只读检查单个关节当前实测行程：`alohamini inspect`，或参考第 9 节 `examples/debug/motors.py get_motors_states`。
+
 ## 4. 启动树莓派 Host
 
 > 启动会使能舵机并执行升降触底回零。
