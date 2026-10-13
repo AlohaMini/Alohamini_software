@@ -13,12 +13,14 @@ from alohamini.learning.policy import make_policy
 from alohamini.policies.registry import algorithm
 
 
-def options(enabled=True):
+def options(enabled=True, *, conditional=False):
     result = model_options(state=False, use_camera_embeddings=enabled)
     result["input_features"] = {
         f"observation.images.{name}": {"type": "VISUAL", "shape": (3, 64, 64)}
         for name in ("forward", "wrist_left", "wrist_right")
     }
+    if conditional:
+        result.update(posterior_condition="image_action", prior_type="conditional_gaussian")
     return result
 
 
@@ -30,7 +32,12 @@ def images():
 
 
 def predict(model, data):
-    return model.model({"observation.images": [data[key] for key in model.config.image_features]})[0]
+    kwargs = (
+        {"latent_sample": torch.zeros(1, model.config.latent_dim)} if model.name == "am_act" else {}
+    )
+    return model.model(
+        {"observation.images": [data[key] for key in model.config.image_features]}, **kwargs
+    )[0]
 
 
 def checkpoint(path, model, *, legacy=False):
@@ -51,11 +58,11 @@ def checkpoint(path, model, *, legacy=False):
     algorithm(model.name).save(path, model, manifest)
 
 
-@pytest.mark.parametrize("kind", ["act", "am_act"])
+@pytest.mark.parametrize("kind,conditional", [("act", False), ("am_act", False), ("am_act", True)])
 @pytest.mark.parametrize("enabled", [False, True])
-def test_wrist_identity_changes_actions_with_fixed_latent(kind, enabled):
+def test_wrist_identity_changes_actions_with_fixed_latent(kind, conditional, enabled):
     torch.manual_seed(72)
-    model = make_policy(kind, options(enabled)).eval()
+    model = make_policy(kind, options(enabled, conditional=conditional)).eval()
     data = images()
     swapped = {
         **data,
