@@ -71,6 +71,10 @@ class BimanualLeader:
             port,
             actuators,
             position_calibrations={k: c.encoder_calibration() for k, c in calibration.items()},
+            position_units={
+                name: c.position_units("range_0_100" if name == "gripper" else "range_m100_100")
+                for name, c in calibration.items()
+            },
             velocity_limits={},
         )
 
@@ -125,20 +129,24 @@ class BimanualLeader:
         """Map fresh leader positions into the Host's declared wire units."""
         if not self._connected:
             raise RuntimeError("Connect the leader before reading")
-        units = {}
+        selected_units = {}
         for side, calibration in self.calibrations.items():
-            for name, entry in calibration.items():
+            selected_units[side] = {}
+            for name in calibration:
                 key = f"arm_{side}_{name}.pos"
                 normalization = normalizations[key]
                 expected = ("range_0_100",) if name == "gripper" else ("range_m100_100", "degrees")
                 if normalization not in expected:
                     raise ValueError(f"Incompatible Host joint units: {key}")
-                units[key] = entry.position_units(normalization)
+                selected_units[side][name] = normalization
         result = {}
         for side, device in self.devices.items():
-            for name, tick in device.read_positions().items():
+            positions = device.normalize_positions(
+                device.read_positions(), normalizations=selected_units[side]
+            )
+            for name, value in positions.items():
                 key = f"arm_{side}_{name}.pos"
-                result[key] = units[key].from_tick(tick)
+                result[key] = value
         return result
 
     def close(self) -> None:

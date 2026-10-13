@@ -24,14 +24,16 @@ from alohamini.datasets.images import image_shape
 from alohamini.hardware.camera import CameraConfig, OpenCVCamera, _capture
 from alohamini.hardware.feetech_device import FeetechBusDevice
 from alohamini.model import get_robot_model
+from alohamini.protocol import encode_command
 from alohamini.runtime.arm_contact import (
     ArmJointSpec,
     GripperContactCalibration,
     JointContactCalibration,
 )
 from alohamini.runtime.host import NativeHost, RecordingCameraBuffer
-from alohamini.runtime.lifecycle import CleanupFailure, CycleResult, HostPhase
+from alohamini.runtime.lifecycle import CleanupFailure, CommandSubmission, CycleResult, HostPhase
 from alohamini.runtime.lift_control import LiftAxisSpec
+from alohamini.schema import CommandIdentity
 
 
 @unittest.skipUnless(importlib.util.find_spec("zmq"), "pyzmq is not installed")
@@ -129,6 +131,7 @@ def host_fixture(
             f"/dev/test-{source}",
             motors,
             position_calibrations={m.name: calibration for m in motors if m.name in units},
+            position_units={m.name: units[m.name] for m in motors if m.name in units},
             velocity_limits={
                 m.name: 1300 if m.name == "lift_axis" else 3000
                 for m in motors
@@ -141,13 +144,163 @@ def host_fixture(
         devices,
         joints,
         LiftAxisSpec(lift_motor, 0.131, -1, lift_encoder_speed),
-        units,
         cameras=cameras,
         command_port=command_port,
         state_port=state_port,
         camera_port=camera_port,
     )
     return host, serials
+
+
+class HostCommandMappingTests(unittest.TestCase):
+    """Exercise protocol-to-register mapping without TCP or physical serial ports."""
+
+    def setUp(self):
+        self.host, self.serials = host_fixture()
+
+        def serial_factory(**kwargs):
+            serials = self.serials
+
+            class PortSelection:
+                def __setattr__(self, name, value):
+                    if name == "port":
+                        object.__setattr__(self, "selected", serials[value])
+                    else:
+                        setattr(self.selected, name, value)
+
+                def __getattr__(self, name):
+                    return getattr(self.selected, name)
+
+            return PortSelection()
+
+        serial = patch("serial.Serial", side_effect=serial_factory)
+        serial.start()
+        self.addCleanup(serial.stop)
+        self.host.supervisor.start()
+        self.addCleanup(self.host.close)
+        self.sequence = 0
+
+    def submit(self, action):
+        self.sequence += 1
+        status = self.host.supervisor.status
+        identity = CommandIdentity(
+            "pc", self.sequence, status.host_session_id, status.control_epoch
+        )
+        data = encode_command(action, identity, allowed_targets=self.host._keys)
+        submission, requested = self.host._submission(data)
+        result = self.host.supervisor.cycle(submission)
+        self.assertTrue(result.command_applied, result.status.fault or result.command_error)
+        self.assertEqual(requested, action)
+        return self.host._payload(result)
+
+    def watchdog_log(self, rejection):
+        self.host._started = True
+        identity = CommandIdentity("pc", 1, self.host.supervisor.status.host_session_id, 0)
+        valid = encode_command({"x.vel": 0.1}, identity, allowed_targets=self.host._keys)
+        if rejection == "height":
+            rejected = encode_command(
+                {"lift_axis.height_mm": 200}, replace(identity, sequence=2),
+                allowed_targets=self.host._keys,
+            )
+        else:
+            rejected = b'{"x.vel":NaN}' if rejection else None
+        with patch.object(
+            self.host, "_receive",
+            side_effect=[None, [b'{"x.vel":NaN}'], None, [valid]],
+        ):
+            self.host.step()  # Earlier rejection must be excluded after acceptance.
+            self.assertTrue(self.host.step().command_applied)
+        clock = time.monotonic
+        with (
+            patch("time.monotonic", side_effect=lambda: clock() + 2.1),
+            patch.object(
+                self.host, "_receive", side_effect=[None, [rejected] if rejected else None]
+            ),
+            self.assertLogs("alohamini.runtime.host", level="WARNING") as logs,
+        ):
+            result = self.host.step()
+        self.assertEqual(result.status.watchdog_events, 1)
+        self.assertIsNone(result.status.control_owner)
+        self.assertEqual(self.serials["/dev/test-left"].get(8, 46, 2), 0)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("timeout=2.000s", logs.output[0])
+        self.assertIn("since_last_applied=2.", logs.output[0])
+        return logs.output[0]
+
+    def test_watchdog_log_without_new_commands_excludes_old_errors(self):
+        log = self.watchdog_log(None)
+        self.assertIn("reason=no new command received", log)
+        self.assertIn("rejected_since_last_applied=0; last_rejection=none", log)
+
+    def test_watchdog_log_includes_protocol_rejection_on_expiring_cycle(self):
+        log = self.watchdog_log("invalid")
+        self.assertIn("reason=commands rejected", log)
+        self.assertIn(
+            "rejected_since_last_applied=1; last_rejection=Non-finite JSON number: NaN", log
+        )
+
+    def test_watchdog_log_includes_controller_rejection_on_expiring_cycle(self):
+        log = self.watchdog_log("height")
+        self.assertIn("reason=commands rejected", log)
+        self.assertIn("rejected_since_last_applied=1", log)
+        self.assertIn("last_rejection=Lift has no verified physical height reference", log)
+
+    def test_host_saturates_raw_normalized_requests_before_register_write(self):
+        for drive_mode in (0, 1):
+            for name, value, expected in (
+                ("arm_left_shoulder_pan", -100.01, -100),
+                ("arm_left_shoulder_pan", 1000, 100),
+                ("arm_left_gripper", -0.01, 0),
+                ("arm_left_gripper", 100.01, 100),
+            ):
+                with self.subTest(drive_mode=drive_mode, name=name, value=value):
+                    bus = self.host._arm_buses[name]
+                    units = replace(bus.position_units[name], drive_mode=drive_mode)
+                    bus._position_units[name] = units
+                    payload = self.submit({f"{name}.pos": value})
+                    motor = next(m for m in self.host.model.actuators if m.name == name)
+                    tick = self.serials[f"/dev/test-{motor.bus}"].get(motor.motor_id, 42, 2)
+                    self.assertEqual(tick, units.to_tick(expected))
+                    self.assertEqual(
+                        payload["_safety"]["accepted_targets"][f"{name}.pos"], expected
+                    )
+
+    def test_host_degree_input_remains_strict(self):
+        name = "arm_left_shoulder_pan"
+        bus = self.host._arm_buses[name]
+        bus._position_units[name] = replace(bus.position_units[name], normalization="degrees")
+        with self.assertRaisesRegex(ValueError, "installed encoder range"):
+            self.submit({f"{name}.pos": 1000})
+        self.assertIsNone(self.host.supervisor.status.control_owner)
+
+    def test_fault_report_does_not_require_a_trusted_feedback_source(self):
+        result = self.host.supervisor.cycle()
+        result = replace(
+            result,
+            feedback=tuple(replace(batch, source_id="unexpected") for batch in result.feedback),
+            status=replace(result.status, phase=HostPhase.FAULT, fault="Wrong feedback source"),
+        )
+        payload = self.host._payload(result)
+        self.assertFalse(payload["_safety"]["feedback_valid"])
+        self.assertEqual(payload["_safety"]["fault"], "Wrong feedback source")
+        self.assertIn("arm_left_shoulder_pan.pos", payload)
+        self.assertIn("arm_right_shoulder_pan.pos", payload)
+
+    def test_lift_controller_saturates_raw_height_request(self):
+        self.sequence += 1
+        status = self.host.supervisor.status
+        identity = CommandIdentity(
+            "pc", self.sequence, status.host_session_id, status.control_epoch
+        )
+        result = self.host.supervisor.cycle(
+            CommandSubmission(
+                identity, lambda: self.host.control.base_lift.establish_lift_reference(0.1)
+            )
+        )
+        self.assertTrue(result.command_applied)
+        for requested, expected in ((600.01, 0.6), (-0.01, 0.0)):
+            self.submit({"lift_axis.height_mm": requested})
+            self.assertEqual(self.host.control.base_lift.lift_target_height_m, expected)
 
 
 class CachedCamera:
@@ -536,7 +689,8 @@ class HostIntegrationTests(unittest.TestCase):
         from test_replay import replay_snapshot
 
         from alohamini.apps.evaluation import run_evaluation
-        from alohamini.datasets.record import _EpisodeWriter as LocalDataset, state_names
+        from alohamini.datasets.record import _EpisodeWriter as LocalDataset
+        from alohamini.datasets.record import state_names
         from alohamini.datasets.tools import IntegrityChecker
 
         image = jpeg()

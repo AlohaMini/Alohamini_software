@@ -109,6 +109,7 @@ class ACTAlgorithm:
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)
+        options.setdefault("use_camera_embeddings", False)
         options["pretrained_backbone_weights"] = None
         if n_action_steps is not None:
             options["n_action_steps"] = n_action_steps
@@ -124,7 +125,27 @@ class ACTAlgorithm:
         )
 
     def load(self, path, model):
-        model.load_state_dict(load_file(path / "model.safetensors"), strict=True)
+        _, manifest = read_checkpoint(path)
+        saved = manifest["config"]
+        old_enabled = saved.get("use_camera_embeddings", False)
+        new_enabled = model.config.use_camera_embeddings
+        if old_enabled or new_enabled:
+            camera_names = [
+                key for key, feature in saved["input_features"].items() if feature["type"] == "VISUAL"
+            ]
+            if camera_names != list(model.config.image_features):
+                raise ValueError("Camera embeddings require the checkpoint camera names and order")
+        state = load_file(path / "model.safetensors")
+        if new_enabled and not old_enabled and model.config.image_features:
+            key = "model.encoder_camera_embed.weight"
+            if key in state:
+                raise ValueError("Checkpoint contains camera embeddings disabled in its config")
+            # Explicit legacy -> camera-aware fine-tuning: preserve initial
+            # predictions, learn identities from data, strictly load every other tensor.
+            state[key] = model.model.encoder_camera_embed.weight.detach().new_zeros(
+                model.model.encoder_camera_embed.weight.shape
+            )
+        model.load_state_dict(state, strict=True)
 
 
 class AMACTAlgorithm(ACTAlgorithm):

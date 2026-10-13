@@ -923,7 +923,7 @@ def export_dataset(root: Path, output: Path, *, recover=False) -> dict:
             ) from exc
 
 
-def check_dataset(root, *, decode_images=False, decode_videos=False):
+def check_dataset(root, *, decode_images=False, decode_videos=False, allow_unused_video_tail=False):
     try:
         info = _read_json(Path(root).expanduser() / "meta/info.json")
         if not isinstance(info, dict):
@@ -935,7 +935,12 @@ def check_dataset(root, *, decode_images=False, decode_videos=False):
         elif info.get("codebase_version") == "v3.0":
             from alohamini.datasets.lerobot_tools import IntegrityChecker as LeRobotChecker
 
-            checker = LeRobotChecker(root, decode_images=decode_images, decode_videos=decode_videos)
+            checker = LeRobotChecker(
+                root,
+                decode_images=decode_images,
+                decode_videos=decode_videos,
+                allow_unused_video_tail=allow_unused_video_tail,
+            )
         else:
             raise ValueError("Expected an AlohaMini or LeRobot v3 dataset")
         return checker.run()

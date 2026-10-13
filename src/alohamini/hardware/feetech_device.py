@@ -12,9 +12,11 @@ from types import MappingProxyType
 
 from alohamini._validation import identifier
 from alohamini.calibration import EncoderCalibration
+from alohamini.calibration.encoder import HostPositionUnits
 from alohamini.calibration.servo import MotorCalibration
 from alohamini.hardware.feedback import FeedbackBatch, MotorFeedback
 from alohamini.hardware.feetech import _FIELDS, _START, FeetechFeedbackReader, _PacketPort
+from alohamini.hardware.motors_bus import MotorsBus
 from alohamini.model import ActuatorSpec
 
 _MODEL_NUMBERS = {"sts3215": 777, "sts3250": 2825, "sts3095": 2569}
@@ -50,7 +52,7 @@ def _finish_cleanup(errors: Mapping[str, str], interrupts: Sequence[BaseExceptio
         raise DeviceOperationError(errors)
 
 
-class FeetechBusDevice:
+class FeetechBusDevice(MotorsBus):
     """Concrete HostDevice with an exclusive 1 Mbaud, 8N1 serial connection.
 
     Position joints require explicit device calibration and limits. Velocity
@@ -74,6 +76,7 @@ class FeetechBusDevice:
         *,
         position_calibrations: Mapping[str, EncoderCalibration],
         velocity_limits: Mapping[str, int],
+        position_units: Mapping[str, HostPositionUnits] | None = None,
     ) -> None:
         if not isinstance(port, str) or not port or "\x00" in port:
             raise ValueError("Provide a serial device path")
@@ -113,7 +116,9 @@ class FeetechBusDevice:
             if type(limit) is not int or not 1 <= limit <= 32767:
                 raise ValueError("Velocity limits must fit the signed STS register")
         self._path = port
-        self._positions = dict(position_calibrations)
+        super().__init__(
+            position_calibrations=position_calibrations, position_units=position_units
+        )
         self._velocities = dict(velocity_limits)
         self._position_io_budget_s = (
             _IO_BUDGET_S if self._positions or self._velocities else _REGISTER_IO_BUDGET_S
@@ -136,10 +141,6 @@ class FeetechBusDevice:
     @property
     def actuators(self) -> tuple[ActuatorSpec, ...]:
         return self._actuators
-
-    @property
-    def position_calibrations(self) -> Mapping[str, EncoderCalibration]:
-        return MappingProxyType(self._positions)
 
     @property
     def velocity_limits(self) -> Mapping[str, int]:
@@ -740,10 +741,7 @@ class FeetechBusDevice:
             raise ValueError("Unknown position-controlled motor")
         if not velocities_raw.keys() <= self._velocities.keys():
             raise ValueError("Unknown velocity-controlled motor")
-        positions = {
-            name: self._positions[name].position_to_tick(value)
-            for name, value in positions_rad.items()
-        }
+        positions = self.encode_positions(positions_rad)
         velocities = {}
         for name, value in velocities_raw.items():
             if type(value) is not int or abs(value) > self._velocities[name]:

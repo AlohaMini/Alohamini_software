@@ -12,7 +12,6 @@ from collections import OrderedDict, deque
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 
-from alohamini.calibration.encoder import HostPositionUnits
 from alohamini.calibration.servo import MotorCalibration
 from alohamini.errors import ProtocolError
 from alohamini.kinematics import OmniBaseKinematics
@@ -103,7 +102,6 @@ class NativeHost:
         devices: Mapping,
         joints: Sequence[ArmJointSpec],
         lift: LiftAxisSpec,
-        position_units: Mapping[str, HostPositionUnits],
         *,
         cameras: Mapping | None = None,
         bind_host: str = "127.0.0.1",
@@ -132,15 +130,14 @@ class NativeHost:
             raise ValueError("Devices must match the complete configured robot model")
         self._joints = {spec.actuator.name: spec for spec in joints}
         arm_names = {m.name for m in model.actuators if m.name.startswith("arm_")}
+        self._arm_buses = {
+            name: device for device in devices.values() for name in device.position_units
+        }
+        position_units = {
+            name: device.position_units[name] for name, device in self._arm_buses.items()
+        }
         if set(self._joints) != arm_names or set(position_units) != arm_names:
             raise ValueError("Provide physical calibration and wire units for every arm joint")
-        for name, units in position_units.items():
-            if not isinstance(units, HostPositionUnits):
-                raise TypeError("Expected HostPositionUnits")
-            calibration = self._joints[name].calibration
-            # Both representations must describe targets accepted by this device.
-            for tick in (units.range_min, units.range_max):
-                calibration.position_to_tick(calibration.position_from_tick(tick))
         by_name = {motor.name: motor for motor in model.actuators}
         if (
             lift.actuator != by_name["lift_axis"]
@@ -148,7 +145,7 @@ class NativeHost:
         ):
             raise ValueError("Lift specification does not match the robot model")
         self.model = model
-        self._units = dict(position_units)
+        self._motor_buses = dict(devices)
         self._keys = command_target_keys(model.model_id)
         self.control = RobotController(
             ArmController(devices, joints),
@@ -187,6 +184,9 @@ class NativeHost:
         self._requested = {}
         self._last_error = None
         self._rejected = self._dropped_responses = self._overruns = 0
+        # Diagnostics only; the supervisor remains the sole watchdog authority.
+        self._watchdog_last_applied_s = None
+        self._watchdog_rejected_baseline = 0
         self._pending_responses = deque()
         self._sequence = 0
         self.timing_ms: dict[str, float] = {}
@@ -209,7 +209,7 @@ class NativeHost:
                     "model": self._joints[name].actuator.motor_model,
                     **asdict(units),
                 }
-                for name, units in self._units.items()
+                for name, units in position_units.items()
             },
         }
         if motor_calibrations is not None:
@@ -223,14 +223,14 @@ class NativeHost:
                 ):
                     raise ValueError(f"Metadata calibration identity mismatch: {name}")
                 normalization = (
-                    self._units[name].normalization
-                    if name in self._units
+                    position_units[name].normalization
+                    if name in position_units
                     else "degrees"
                     if name == "lift_axis"
                     else "range_m100_100"
                 )
                 units = calibration.position_units(normalization)
-                if name in self._units and units != self._units[name]:
+                if name in position_units and units != position_units[name]:
                     raise ValueError(f"Metadata calibration range/direction mismatch: {name}")
                 self._metadata["motors"][name] = {
                     "id": motor.motor_id,
@@ -389,11 +389,12 @@ class NativeHost:
     def _submission(self, data: bytes):
         identity, targets = decode_command(data, allowed_targets=self._keys)
         positions = {}
-        for name, spec in self._joints.items():
-            key = f"{name}.pos"
-            if key in targets:
-                tick = self._units[name].to_tick(targets[key])
-                positions[name] = spec.calibration.position_from_tick(tick)
+        for bus in self._motor_buses.values():
+            positions.update(bus.prepare_position_targets({
+                name: targets[f"{name}.pos"]
+                for name in bus.position_units
+                if f"{name}.pos" in targets
+            }))
         # Deployed send_action zeros omitted base axes on every new wire command.
         # This differs intentionally from RobotCommand's explicit partial-target API.
         command = RobotCommand(
@@ -409,12 +410,15 @@ class NativeHost:
         return self.control.submission(identity, command), targets
 
     def _wire_positions(self, values: Mapping[str, float]) -> dict[str, float]:
-        return {
-            f"{name}.pos": self._units[name].from_tick(
-                self._joints[name].calibration.position_to_tick(value)
-            )
-            for name, value in values.items()
-        }
+        if not values.keys() <= self._arm_buses.keys():
+            raise ValueError("Unknown arm position in controller report")
+        positions = {}
+        for bus in self._motor_buses.values():
+            converted = bus.position_targets_to_units({
+                name: values[name] for name in bus.position_units if name in values
+            })
+            positions.update({f"{name}.pos": value for name, value in converted.items()})
+        return positions
 
     def _payload(self, result: CycleResult) -> dict:
         status = result.status
@@ -425,6 +429,12 @@ class NativeHost:
         }
         motors, positions, currents = {}, {}, {}
         for batch in result.feedback:
+            # Fault reports can contain a batch whose source identity failed
+            # supervision. Route available registers by installed motor names,
+            # as before, without trusting that source or hiding the Host fault.
+            for bus in self._motor_buses.values():
+                normalized = bus.feedback_positions(batch)
+                positions.update({f"{name}.pos": value for name, value in normalized.items()})
             for name, sample in batch.samples.items():
                 motors[name] = {
                     **sample.registers,
@@ -436,10 +446,6 @@ class NativeHost:
                 if sample.current_a is not None:
                     currents[name] = sample.current_a * 1000
                     motors[name]["current_ma"] = currents[name]
-                if name in self._units and "position_raw" in sample.registers:
-                    tick = sample.registers["position_raw"]
-                    if 0 <= tick <= 4095:
-                        positions[f"{name}.pos"] = self._units[name].from_tick(tick)
         body = self.control.base_lift.measured_base_velocity
         if feedback_valid and body is not None:
             positions.update(
@@ -616,8 +622,6 @@ class NativeHost:
             before = self.control.arms.sent_targets
             watchdog_events = self.supervisor.status.watchdog_events
             result = self.supervisor.cycle(poll_command=poll_command)
-            if result.status.watchdog_events > watchdog_events:
-                logger.warning("Host command watchdog expired; stopping motion")
             self.timing_ms.update(self.supervisor.timing_ms)
             if self.control.arms.sent_targets and (
                 result.command_applied or before != self.control.arms.sent_targets
@@ -641,9 +645,30 @@ class NativeHost:
                     {key: targets.get(key, 0.0) for key in ("x.vel", "y.vel", "theta.vel")}
                 )
                 self._last_error = None
+                self._watchdog_last_applied_s = time.monotonic()
+                self._watchdog_rejected_baseline = self._rejected
             elif submission is not None:
                 self._rejected += 1
                 self._last_error = result.command_error or "Command identity or lease rejected"
+            if result.status.watchdog_events > watchdog_events:
+                # Include rejections from this cycle. Format only on expiry, after
+                # the existing stop operation; no extra network or hardware I/O.
+                rejected = self._rejected - self._watchdog_rejected_baseline
+                elapsed = (
+                    time.monotonic() - self._watchdog_last_applied_s
+                    if self._watchdog_last_applied_s is not None
+                    else float("nan")
+                )
+                logger.warning(
+                    "Host command watchdog expired; stopping motion; "
+                    "reason=%s; since_last_applied=%.3fs; timeout=%.3fs; "
+                    "rejected_since_last_applied=%d; last_rejection=%s",
+                    "commands rejected" if rejected else "no new command received",
+                    elapsed,
+                    self.supervisor.COMMAND_WATCHDOG_TIMEOUT_S,
+                    rejected,
+                    self._last_error if rejected else "none",
+                )
             if request is not None:
                 if len(request) == 2 and 0 < len(request[1]) <= 256:
                     identity, token = request

@@ -2,7 +2,7 @@
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Protocol
 
 from alohamini._validation import identifier
@@ -235,19 +235,45 @@ class BaseLiftController:
         lift_stop: bool = False,
     ) -> None:
         """Validate against this cycle without changing either target."""
+        self._prepare_targets(base_velocity, lift_height_m=lift_height_m, lift_stop=lift_stop)
+
+    def _prepare_targets(
+        self,
+        base_velocity: BodyVelocity,
+        *,
+        lift_height_m: float | None = None,
+        lift_stop: bool = False,
+    ) -> Callable[[], None]:
+        """Compute targets once; the callback stages them in this feedback cycle."""
         if not self._fresh:
             raise RuntimeError("Velocity targets require the current Host feedback cycle")
         if self.lift_homing:
             raise RuntimeError("Lift homing is in progress")
         if type(lift_stop) is not bool or (lift_stop and lift_height_m is not None):
             raise ValueError("Lift stop must be boolean and exclude a height target")
-        self._base.target(base_velocity)
+        base = self._base.target(base_velocity)
+        lift_target = self._lift_target
         if lift_height_m is not None:
             if self._lift.height_m is None:
                 raise RuntimeError("Lift has no verified physical height reference")
-            lift_height_target(
+            lift_target = lift_height_target(
                 lift_height_m, self._lift.height_m, direction=self._lift_spec.direction
-            )
+            ).target_height_m
+        elif lift_stop:
+            lift_target = None
+
+        def stage():
+            if lift_height_m is not None:
+                self._lift_settling = False
+                self._lift_settle_after = None
+                self._lift_stop_pending = False
+            elif lift_stop and not self._lift_settling:
+                self._lift_settling = True
+                self._lift_settle_after = None
+            self._base_target, self._lift_target = base, lift_target
+            self._new_command = True
+
+        return stage
 
     def set_targets(
         self,
@@ -257,23 +283,7 @@ class BaseLiftController:
         lift_stop: bool = False,
     ) -> None:
         """Stage an accepted command; validate both targets before changing either."""
-        self.validate_targets(base_velocity, lift_height_m=lift_height_m, lift_stop=lift_stop)
-        base = self._base.target(base_velocity)
-        lift_target = self._lift_target
-        if lift_height_m is not None:
-            lift_target = lift_height_target(
-                lift_height_m, self._lift.height_m, direction=self._lift_spec.direction
-            ).target_height_m
-            self._lift_settling = False
-            self._lift_settle_after = None
-            self._lift_stop_pending = False
-        elif lift_stop:
-            lift_target = None
-            if not self._lift_settling:
-                self._lift_settling = True
-                self._lift_settle_after = None
-        self._base_target, self._lift_target = base, lift_target
-        self._new_command = True
+        self._prepare_targets(base_velocity, lift_height_m=lift_height_m, lift_stop=lift_stop)()
 
     def supervise(self) -> None:
         if (

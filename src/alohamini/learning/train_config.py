@@ -26,10 +26,17 @@ def value(text):
 
 def parse_training_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Local policy training on AlohaMini datasets and their LeRobot v3 exports"
+        description="Local policy training on LeRobot v3 and AlohaMini datasets"
     )
     parser.add_argument("--config", "--config_path", type=Path)
     parser.add_argument("--dataset.root", dest="dataset")
+    parser.add_argument(
+        "--dataset.allow_unannotated",
+        dest="allow_unannotated",
+        type=boolean,
+        help="Allow original LeRobot v3 without Host metadata; "
+        "preserve recorded state/action units",
+    )
     parser.add_argument(
         "--dataset.repo_id", dest="dataset_repo_id", help="Local label only; never downloads"
     )
@@ -46,7 +53,7 @@ def parse_training_args(argv=None):
     parser.add_argument("--wandb.enable", type=boolean)
     parser.add_argument("--output_dir")
     parser.add_argument("--run_name")
-    parser.add_argument("--state", help="auto (default), none, or comma-separated state groups")
+    parser.add_argument("--state", help="auto (default), none, recorded, or named state groups")
     parser.add_argument(
         "--stats", help="Prepared policy statistics JSON; omitted: fit once before training"
     )

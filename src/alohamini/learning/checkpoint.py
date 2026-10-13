@@ -107,6 +107,10 @@ def resolve_pretrained(settings, *, expected_kind=None):
     cfg["pretrained_path"] = str(path)
     overrides = cfg.get("model", {})
     options = _merge(manifest["config"], overrides)
+    if manifest["kind"] in ("act", "am_act"):
+        # Missing in legacy checkpoints: retain their architecture unless the
+        # caller explicitly opts into camera identities for fine-tuning.
+        options.setdefault("use_camera_embeddings", False)
     for key in ASSET_FIELDS.get(manifest["kind"], ()):
         asset = Path(options[key]).expanduser()
         if not asset.is_absolute():
@@ -149,7 +153,15 @@ def validate_pretrained(settings, samples):
     saved = manifest["source_info"]
     if saved["features"]["action"] != samples.info["features"]["action"]:
         raise ValueError("Pretrained checkpoint action coordinates do not match training data")
-    for name in samples.info["features"]["action"]["names"]:
+    unannotated = saved.get("training_only") or samples.info.get("training_only")
+    if unannotated and saved.get("training_only") != samples.info.get("training_only"):
+        raise ValueError(
+            "Cannot transfer a Host action contract to/from an unannotated checkpoint; "
+            "calibration and action units are unavailable"
+        )
+    # Both original-v3 sources remain explicitly offline-only. Field names/order
+    # are checked above; unavailable motor normalization must not be invented.
+    for name in [] if unannotated else samples.info["features"]["action"]["names"]:
         if name.endswith(".pos"):
             motor = name.removesuffix(".pos")
             old = saved["robot_metadata"]["motors"][motor]["normalization"]

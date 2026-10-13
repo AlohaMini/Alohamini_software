@@ -37,15 +37,23 @@ class HostPositionUnits:
         if type(self.drive_mode) is not int or self.drive_mode not in (0, 1):
             raise ValueError("drive_mode must be 0 or 1")
 
+    def _clip(self, value: float) -> float:
+        """Saturate during input-to-encoder conversion, after direction mapping."""
+        if self.normalization == "range_m100_100":
+            return min(100.0, max(-100.0, value))
+        if self.normalization == "range_0_100":
+            return min(100.0, max(0.0, value))
+        return value
+
     def to_tick(self, value: float) -> int:
         finite_number(value, "position target")
         lower, upper = self.range_min, self.range_max
         if self.normalization == "range_m100_100":
             value = -value if self.drive_mode else value
-            tick = int((min(100.0, max(-100.0, value)) + 100) / 200 * (upper - lower) + lower)
+            tick = int((self._clip(value) + 100) / 200 * (upper - lower) + lower)
         elif self.normalization == "range_0_100":
             value = 100 - value if self.drive_mode else value
-            tick = int(min(100.0, max(0.0, value)) / 100 * (upper - lower) + lower)
+            tick = int(self._clip(value) / 100 * (upper - lower) + lower)
         else:
             # Reject before integer conversion if finite input arithmetic overflows.
             raw = value * 4095 / 360 + (lower + upper) / 2
@@ -160,6 +168,14 @@ class EncoderCalibration:
         of floating-point drift at a calibrated endpoint. Bus-range checks, current
         protection and command authorization remain the Host's responsibility.
         """
+        delta = self._target_delta(position_rad)
+        return (self.reference_tick + round(delta)) % self.ticks_per_revolution
+
+    def validate_position(self, position_rad: float) -> None:
+        """Check physical limits and representability without register quantization."""
+        self._target_delta(position_rad)
+
+    def _target_delta(self, position_rad: float) -> float:
         finite_number(position_rad, "position_rad")
         if self.position_min_rad is None:
             raise ValueError("Target conversion requires explicit position limits")
@@ -170,7 +186,7 @@ class EncoderCalibration:
         delta = (position - self.reference_position_rad) * self.ticks_per_revolution
         delta /= self.direction * math.tau * self.joint_per_encoder_ratio
         finite_number(delta, "target encoder delta")
-        return (self.reference_tick + round(delta)) % self.ticks_per_revolution
+        return delta
 
     def velocity_from_ticks_per_second(self, velocity: float) -> float:
         """Convert signed encoder ticks/s into joint rad/s, not an encoded register."""

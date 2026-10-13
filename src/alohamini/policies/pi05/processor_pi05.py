@@ -38,7 +38,10 @@ def fit_statistics(samples, *, delta_dims=ARM_DELTA_DIMS, report_path=None):
     sampling. This reads numeric rows only, without decoding images. Float64
     centered moments replace cancellation-prone squared-moment accumulation.
     """
-    names = state_names(samples.info["robot_metadata"]["robot_model"])
+    # This adapter explicitly uses the 18 named AlohaMini coordinates. Original
+    # v3 needs matching field names, not invented Host calibration metadata.
+    model = samples.info.get("robot_metadata", {}).get("robot_model", "alohamini2pro")
+    names = state_names(model)
     if samples.selection is None or samples.selection.feature["names"] != names:
         raise ValueError("PI0.5 AlohaMini recipe requires the original 18-D position state")
     if samples.info["features"]["action"]["names"] != names:

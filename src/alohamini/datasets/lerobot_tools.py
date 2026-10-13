@@ -217,12 +217,19 @@ REPAIRABLE_ERROR_CODES = {
 
 class IntegrityChecker:
     def __init__(
-        self, root: Path, *, decode_videos=False, decode_images=False, timestamp_tolerance_s=1e-4
+        self,
+        root: Path,
+        *,
+        decode_videos=False,
+        decode_images=False,
+        timestamp_tolerance_s=1e-4,
+        allow_unused_video_tail=False,
     ) -> None:
         self.root = Path(root).expanduser().resolve()
         self.decode_images = decode_images
         self.decode_videos = decode_videos
         self.timestamp_tolerance_s = timestamp_tolerance_s
+        self.allow_unused_video_tail = allow_unused_video_tail
         self.issues: list[Issue] = []
         self.info: dict[str, Any] = {}
         self.data_episodes: dict[int, DataEpisode] = defaultdict(DataEpisode)
@@ -972,7 +979,18 @@ class IntegrityChecker:
                         "VIDEO_RANGE_INVALID",
                         f"Episode {episode_index}, {key}: invalid frame range [{start}, {end})",
                     )
-                if end - start != length:
+                if (
+                    self.allow_unused_video_tail
+                    and not (self.root / "meta/alohamini.json").is_file()
+                    and end - start > length
+                ):
+                    self.warning(
+                        "VIDEO_UNUSED_EPISODE_TAIL",
+                        f"Episode {episode_index}, {key}: video range has "
+                        f"{end - start - length} unused trailing frames; training uses "
+                        f"the {length} recorded frame_index/timestamp pairs",
+                    )
+                elif end - start != length:
                     self.error(
                         "VIDEO_EPISODE_LENGTH_MISMATCH",
                         f"Episode {episode_index}, {key}: video range has {end - start} frames, "

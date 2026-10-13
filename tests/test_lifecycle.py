@@ -152,6 +152,28 @@ class HostLifecycleTests(unittest.TestCase):
         self.host.start()
         self.events.clear()
 
+    def test_prepared_write_runs_after_owner_acceptance(self):
+        self.start()
+        events = []
+
+        def prepare():
+            events.append(("prepare", self.host.status.control_owner))
+            return lambda: events.append(("stage", self.host.status.control_owner))
+
+        command = self.command()
+        result = self.host.cycle(CommandSubmission(command.identity, command.write, prepare))
+        self.assertTrue(result.command_applied)
+        self.assertEqual(events, [("prepare", None), ("stage", "pc")])
+        self.assertNotIn(("pc", "write"), self.events)
+
+    def test_noncallable_prepared_write_faults_without_claiming_owner(self):
+        self.start()
+        command = self.command()
+        result = self.host.cycle(CommandSubmission(command.identity, command.write, lambda: 123))
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertIsNone(result.status.control_owner)
+        self.assertNotIn(("pc", "write"), self.events)
+
     def assert_cleanup(self, *, stop="stop"):
         cleanup = [
             (s, op)

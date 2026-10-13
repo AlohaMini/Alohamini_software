@@ -363,22 +363,47 @@ class TargetRanges:
         self.lift_min = live["lift_axis"]["soft_min_mm"]
         self.lift_max = live["lift_axis"]["soft_max_mm"]
 
-    def clip(self, action):
-        for name, _, lower, upper, normalization in self.joints:
-            if normalization in ("range_0_100", "range_m100_100"):
-                key = f"{name}.pos"
-                action[key] = min(upper, max(lower, action[key]))
-        action["lift_axis.height_mm"] = min(
-            self.lift_max, max(self.lift_min, action["lift_axis.height_mm"])
-        )
+    def check_policy_action(self, action):
+        """Check degree axes without altering any requested coordinate.
 
-    def check(self, actions):
-        for name, index, lower, upper, _ in self.joints:
-            values = actions[:, index]
+        Host converts normalized targets and the lift controller bounds height.
+        This method expects the caller to have checked names and finite values.
+        """
+        for name, _, lower, upper, normalization in self.joints:
+            if normalization == "degrees":
+                value = action[f"{name}.pos"]
+                if value < lower - 1e-4 or value > upper + 1e-4:
+                    raise ValueError(f"Recorded action exceeds the installed joint range: {name}")
+
+    def saturation_requests(self, action):
+        """Report requests outside saturating ranges; do not transform targets."""
+        outside = {}
+        for name, _, lower, upper, normalization in self.joints:
+            key = f"{name}.pos"
+            if normalization != "degrees" and not lower <= action[key] <= upper:
+                outside[key] = action[key]
+        key = "lift_axis.height_mm"
+        if not self.lift_min <= action[key] <= self.lift_max:
+            outside[key] = action[key]
+        return outside
+
+    def check(self, actions, *, host_requests=()):
+        strict = actions
+        if host_requests:
+            if len(host_requests) != len(actions) or any(
+                type(value) is not bool for value in host_requests
+            ):
+                raise ValueError("Invalid Host request frame mask")
+            if any(host_requests):
+                strict = actions[~np.asarray(host_requests)]
+        for name, index, lower, upper, normalization in self.joints:
+            values = (actions if normalization == "degrees" else strict)[:, index]
+            if not len(values):
+                continue
             if values.min() < lower - 1e-4 or values.max() > upper + 1e-4:
                 raise ValueError(f"Recorded action exceeds the installed joint range: {name}")
-        heights = actions[:, self.lift_index]
-        if heights.min() < self.lift_min or heights.max() > self.lift_max:
+        heights = strict[:, self.lift_index]
+        if len(heights) and (heights.min() < self.lift_min or heights.max() > self.lift_max):
             raise ValueError("Recorded action exceeds the installed lift range")
 
 

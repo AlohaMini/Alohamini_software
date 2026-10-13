@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from test_arm_control import joint_spec
 
+from alohamini.errors import CommandRejectedError
 from alohamini.hardware.feedback import FeedbackBatch, MotorFeedback
 from alohamini.kinematics import OmniBaseKinematics
 from alohamini.model import ActuatorSpec
@@ -151,6 +152,49 @@ class RobotControlTests(unittest.TestCase):
             self.assertEqual(device.sequence, before[source] + 1)
         self.assertEqual(self.control.arms.measured_positions, {"left_joint": 0, "right_joint": 0})
         self.assertEqual(self.control.base_lift.lift_output.velocity_raw, -1300)
+
+    def test_cycle_prepares_base_once_before_staging(self):
+        self.reference()
+        base = self.control.base_lift._base
+        with patch.object(base, "target", wraps=base.target) as target:
+            result = self.cycle(
+                RobotCommand({"left_joint": 0.2}, BodyVelocity(0.1), 0.2)
+            )
+        self.assertTrue(result.command_applied)
+        self.assertEqual(target.call_count, 1)
+        self.assertEqual(self.control.base_lift.lift_output.velocity_raw, -1300)
+
+    def test_rejected_owner_discards_prepared_targets(self):
+        self.cycle(RobotCommand({"left_joint": 0.1}, BodyVelocity(0.1)))
+        previous_base = self.control.base_lift.base_target
+        self.events.clear()
+        status = self.host.status
+        identity = CommandIdentity("other", 1, status.host_session_id, status.control_epoch)
+        submission = self.control.submission(
+            identity, RobotCommand({"left_joint": -0.2}, BodyVelocity(-0.1))
+        )
+        result = self.host.cycle(submission)
+        self.assertFalse(result.command_applied)
+        self.assertEqual(self.control.arms.requested_targets, {"left_joint": 0.1})
+        self.assertEqual(self.control.base_lift.base_target, previous_base)
+        self.assertFalse(self.events)
+
+    def test_submission_is_prepared_again_after_feedback_changes(self):
+        self.reference()
+        submission = self.control.submission(self.identity(), RobotCommand(lift_height_m=0.2))
+        self.assertTrue(self.host.cycle(submission).command_applied)
+        # A cached staging callback must not outlive a lost height reference.
+        self.control.base_lift._lift.invalidate()
+        result = self.host.cycle(submission)
+        self.assertFalse(result.command_applied)
+        self.assertIn("height reference", result.command_error)
+
+    def test_direct_set_targets_still_validates_before_any_staging(self):
+        self.control.observe(tuple(device.read_feedback() for device in self.devices.values()))
+        with self.assertRaisesRegex(CommandRejectedError, "outside calibrated"):
+            self.control.set_targets(RobotCommand({"left_joint": 100}, BodyVelocity(0.1)))
+        self.assertFalse(self.control.arms.requested_targets)
+        self.assertIsNone(self.control.base_lift.base_target)
 
     def test_unknown_lift_height_rejects_whole_command_without_claiming_owner(self):
         result = self.cycle(RobotCommand({"left_joint": 0.2}, BodyVelocity(0.1), 0.2))

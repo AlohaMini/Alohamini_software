@@ -127,13 +127,16 @@ def offline_evaluate(
     scaling is included so reported outputs match the checkpoint's action meaning.
     """
     if (
-        samples.info["robot_metadata"] != policy.robot_metadata
+        samples.info.get("robot_metadata") != policy.source.get("robot_metadata")
+        or samples.info.get("training_only") != policy.source.get("training_only")
+        or samples.info["features"]["action"] != policy.source["features"]["action"]
         or samples.state != policy.manifest["state"]
         or samples.cameras != policy.manifest["cameras"]
         or samples.image_size != tuple(policy.manifest["image_size"])
         or samples.info["fps"] != policy.fps
         or (samples.selection.feature if samples.selection else None)
         != policy.manifest["state_feature"]
+        or (samples.selection.units if samples.selection else []) != policy.manifest["state_units"]
     ):
         raise ValueError("Offline dataset does not match checkpoint observation/action contract")
     policy.reset()
@@ -378,11 +381,25 @@ def _train(settings, execution):
             checkpoint_path, manifest, resume_state = load_training_checkpoint(
                 cfg["_checkpoint"], cfg, samples, validation
             )
-            policy = NativePolicy(
-                checkpoint_path / "pretrained_model", device="cpu" if execution.sharded else device
-            )
-            model, processor, stats = policy.model, policy.processor, manifest["stats"]
-            del policy
+            if samples.info.get("training_only"):
+                # load_training_checkpoint already verified dataset fingerprints,
+                # feature contracts and the complete resume configuration.
+                model_path = checkpoint_path / "pretrained_model"
+                restored_options = components.checkpoint_options(
+                    model_path, manifest["config"], device, None, "checkpoint"
+                )
+                stats = manifest["stats"]
+                model = make_policy(cfg["policy"], restored_options, stats)
+                components.load(model_path, model)
+                model.to("cpu" if execution.sharded else device)
+                processor = make_processor(model, stats, device)
+            else:
+                policy = NativePolicy(
+                    checkpoint_path / "pretrained_model",
+                    device="cpu" if execution.sharded else device,
+                )
+                model, processor, stats = policy.model, policy.processor, manifest["stats"]
+                del policy
             if execution.sharded:
                 processor = make_processor(model, stats, device)
         else:
@@ -711,11 +728,13 @@ def _train(settings, execution):
         checkpoint = output / "checkpoint"
         if validation:
             logger.debug("Running final offline evaluation")
-        if execution.sharded and validation:
+        if validation and (
+            execution.sharded or (execution.main and samples.info.get("training_only"))
+        ):
             from alohamini.learning.processor import scale_action
 
-            # Every rank traverses identical batches: custom prediction methods
-            # also need FSDP's collective pre/post-forward hooks.
+            # FSDP ranks traverse identical batches for collective hooks. Original
+            # LeRobot data uses this tensor-only path without a Host policy binding.
             model.eval()
             model.reset()
 

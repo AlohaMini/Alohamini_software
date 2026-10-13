@@ -19,7 +19,12 @@ def sample_arguments(cfg, components, options):
     state = cfg.get("state", "none")
     if state == "auto":
         state = (
-            "joint_position,base_velocity,lift_height"
+            (
+                "recorded"
+                if info.get("codebase_version") == "v3.0"
+                and not (root / "meta/alohamini.json").is_file()
+                else "joint_position,base_velocity,lift_height"
+            )
             if "observation.state" in info["features"]
             else "none"
         )
@@ -47,6 +52,7 @@ def sample_arguments(cfg, components, options):
         video_backend=cfg.get("video_backend", "pyav"),
         camera_workers=cfg.get("camera_workers", 0),
         return_uint8=cfg.get("return_uint8", False),
+        allow_unannotated=cfg.get("allow_unannotated", False),
     )
     validation = cfg.get("val_episodes", [])
     episodes = cfg.get("train_episodes")

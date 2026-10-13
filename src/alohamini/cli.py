@@ -174,9 +174,10 @@ def main(argv: list[str] | None = None) -> int:
     evaluator.add_argument("--fps", type=int, default=30)
     evaluator.add_argument(
         "--calibration-mode",
-        choices=("strict", "normalized"),
+        choices=("strict", "normalized", "legacy_normalized"),
         default=argparse.SUPPRESS,
-        help="strict 要求训练标定一致；normalized 显式迁移归一化关节比例到同型号新机器",
+        help="strict 要求训练标定一致；normalized 迁移已知标定；legacy_normalized 声明旧数据为"
+        "关节[-100,100]/夹爪[0,100]、底盘m/s及deg/s、升降mm，并绑定当前Host标定",
     )
     evaluator.add_argument("--episode_time", dest="episode_time_s", type=float, default=60)
     evaluator.add_argument("--num_episodes", type=int, default=1)
@@ -446,7 +447,15 @@ def main(argv: list[str] | None = None) -> int:
                     from alohamini.learning.policy import NativePolicy
 
                     policy = NativePolicy(
-                        checkpoint, device=device or "cuda", task=options["task"], **overrides
+                        checkpoint,
+                        device=device or "cuda",
+                        task=options["task"],
+                        **(
+                            {"robot_model": options["robot_model"]}
+                            if overrides.get("calibration_mode") == "legacy_normalized"
+                            else {}
+                        ),
+                        **overrides,
                     )
                     if policy.fps != options["fps"]:
                         raise ValueError("Evaluation FPS must match the checkpoint")

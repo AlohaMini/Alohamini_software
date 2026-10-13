@@ -23,7 +23,8 @@ from alohamini.apps.replay import (
 )
 from alohamini.cli import main
 from alohamini.datasets.lerobotv3 import export_lerobot
-from alohamini.datasets.record import _EpisodeWriter as LocalDataset, state_names
+from alohamini.datasets.record import HOST_REQUEST_SEMANTICS, state_names
+from alohamini.datasets.record import _EpisodeWriter as LocalDataset
 from alohamini.errors import ResponseTimeoutError
 from alohamini.model import get_robot_model
 from alohamini.schema import CommandIdentity
@@ -383,6 +384,23 @@ class ReplayTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "exceeds"):
                     check_coordinates(replace(data, actions=actions), live)
 
+    def test_host_request_semantics_apply_only_to_marked_frames_and_saturating_axes(self):
+        data, live = episode_fixture(), replay_snapshot()
+        actions = data.actions.copy()
+        key = "arm_left_shoulder_pan.pos"
+        actions[-1, data.names.index(key)] = 150
+        actions[-1, data.names.index("lift_axis.height_mm")] = 700
+        marked = replace(data, actions=actions, host_requests=(False, False, True))
+        check_coordinates(marked, live)
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            check_coordinates(replace(marked, host_requests=(True, False, False)), live)
+        live.payload["_robot_metadata"]["motors"]["arm_left_shoulder_pan"][
+            "normalization"
+        ] = "degrees"
+        marked.metadata["motors"]["arm_left_shoulder_pan"]["normalization"] = "degrees"
+        with self.assertRaisesRegex(ValueError, "joint range"):
+            check_coordinates(marked, live)
+
 
 class ReplayDatasetTests(unittest.TestCase):
     def setUp(self):
@@ -418,6 +436,57 @@ class ReplayDatasetTests(unittest.TestCase):
         np.testing.assert_array_equal(native.actions, exported.actions)
         self.assertEqual(native.metadata, exported.metadata)
         self.assertEqual(native.names, exported.names)
+
+    def request_dataset(self):
+        root = self.root.parent / "requests"
+        with contextlib.closing(
+            LocalDataset(
+                root, fps=30, task="pick",
+                robot_metadata=replay_snapshot().payload["_robot_metadata"],
+            )
+        ) as dataset:
+            dataset.begin_episode()
+            value = frame(dataset)
+            names = state_names("alohamini2pro")
+            value["action"][names.index("arm_left_gripper.pos")] = -0.01
+            value["action"][names.index("lift_axis.height_mm")] = 700
+            dataset.add_frame(value, {"forward": jpeg()}, {
+                "action_semantics": HOST_REQUEST_SEMANTICS,
+                "requested_action": dict(zip(names, value["action"], strict=True)),
+                "issued_command": asdict(CommandIdentity("pc", 1, "session", 0)),
+            })
+            dataset.save_episode()
+        return root
+
+    def test_native_and_exported_request_semantics_preserve_raw_targets(self):
+        root = self.request_dataset()
+        output = self.root.parent / "export-requests"
+        export_lerobot(root, output, state="lift_height")
+        for path in (root, output):
+            episode = load_episode(path)
+            self.assertEqual(episode.host_requests, (True,))
+            check_coordinates(episode, replay_snapshot())
+            self.assertLess(episode.actions[0, episode.names.index("arm_left_gripper.pos")], 0)
+
+    def test_request_markers_cannot_authorize_mismatched_or_unmarked_frames(self):
+        root = self.request_dataset()
+        sidecar = root / "episodes/episode_000000/safety.jsonl"
+        original = [json.loads(line) for line in sidecar.read_text().splitlines()]
+        for change, error in (
+            ({"requested_action": {}}, "action table"),
+            ({"action_semantics": "unknown"}, "semantics"),
+            ({"frame_index": 999}, "action table"),
+        ):
+            rows = copy.deepcopy(original)
+            rows[0].update(change)
+            sidecar.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
+                load_episode(root)
+        rows = copy.deepcopy(original)
+        rows[0].pop("action_semantics")
+        sidecar.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            check_coordinates(load_episode(root), replay_snapshot())
 
     def test_in_use_dataset_is_rejected(self):
         with contextlib.closing(

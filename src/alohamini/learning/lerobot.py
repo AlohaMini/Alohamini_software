@@ -1,4 +1,4 @@
-"""Read local AlohaMini v3 exports without LeRobot or a Hub connection."""
+"""Read local LeRobot v3 datasets without LeRobot or a Hub connection."""
 
 import io
 import json
@@ -16,18 +16,28 @@ from alohamini.datasets.lerobot_tools import _dataset_path
 class LeRobotSource:
     """Storage adapter only; episode windows and normalization stay shared."""
 
-    def __init__(self, root, info):
+    def __init__(self, root, info, *, allow_unannotated=False):
         self.root, self.storage_info = root, info
         path = root / "meta/alohamini.json"
-        if not path.is_file():
+        self.unannotated = not path.is_file()
+        if self.unannotated and not allow_unannotated:
             raise ValueError(
-                "Training requires a LeRobot v3 dataset exported by AlohaMini "
-                "with calibration and safety metadata"
+                "This LeRobot v3 dataset has no Host calibration/safety metadata; "
+                "to use its recorded coordinates, set --dataset.allow_unannotated=true"
             )
-        metadata = json.loads(path.read_text())
-        source_info = metadata["source_info"]
+        source_info = (
+            deepcopy(info) if self.unannotated else json.loads(path.read_text())["source_info"]
+        )
+        if self.unannotated:
+            source_info["training_only"] = {
+                "source": "original_lerobot_v3",
+                "calibration": "unavailable",
+                "safety_and_host_timing": "unavailable",
+                "action_units": "recorded numeric coordinates; motor normalization unverified",
+                "time_basis": "recorded frame_index/timestamp; no Host-clock reconstruction",
+            }
         self.original_state = source_info["features"].get("observation.state")
-        if (
+        if not self.unannotated and (
             source_info["fps"] != info["fps"]
             or source_info["features"]["action"] != info["features"].get("action")
             or source_info["robot_metadata"]["robot_model"] != info["robot_type"]
@@ -48,7 +58,9 @@ class LeRobotSource:
         self.info = deepcopy(source_info)
         self.info.update(features=deepcopy(info["features"]), cameras=self.cameras)
         self.episodes = {}
-        self.metadata_paths = [root / "meta/info.json", path]
+        self.metadata_paths = [root / "meta/info.json"]
+        if not self.unannotated:
+            self.metadata_paths.append(path)
         for path in sorted((root / "meta/episodes").rglob("*.parquet")):
             self.metadata_paths.append(path)
             for row in pq.read_table(path).to_pylist():
@@ -103,7 +115,9 @@ class LeRobotSource:
         for episode in episodes:
             path = paths[episode]
             safety = self.root / "meta/safety" / f"episode_{episode:06d}.jsonl"
-            if not safety.is_file():
+            if self.unannotated:
+                safety = None
+            elif not safety.is_file():
                 raise ValueError(f"Episode {episode}: missing original safety/timing sidecar")
             if path not in buffered:
                 partitions = {index: [] for index in selected[path]}
@@ -165,7 +179,12 @@ class LeRobotSource:
         return (
             rows,
             safety,
-            [*self.metadata_paths, path, safety, *(v[0] for v in video_refs.values())],
+            [
+                *self.metadata_paths,
+                path,
+                *([safety] if safety is not None else []),
+                *(v[0] for v in video_refs.values()),
+            ],
         )
 
     def image(self, reference, camera, *, video_reader=video_rgb):

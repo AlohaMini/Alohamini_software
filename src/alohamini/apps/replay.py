@@ -20,11 +20,12 @@ from alohamini._validation import finite_number
 from alohamini.apps.teleoperation import ready_units, stop_owned_robot
 from alohamini.calibration.encoder import HostPositionUnits
 from alohamini.client import HostClient
-from alohamini.datasets.record import state_names
+from alohamini.datasets.record import HOST_REQUEST_SEMANTICS, state_names
 from alohamini.datasets.tools import _read_lock
 from alohamini.errors import ResponseTimeoutError
 from alohamini.model import get_robot_model
 from alohamini.paths import WorkspacePaths
+from alohamini.schema import CommandIdentity
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class ReplayEpisode:
     metadata: dict
     names: tuple[str, ...]
     actions: np.ndarray
+    host_requests: tuple[bool, ...] = ()
 
     @property
     def robot_model(self):
@@ -53,6 +55,41 @@ def _json(root, relative):
     if not isinstance(value, dict):
         raise ValueError(f"Expected an object in {relative}")
     return value
+
+
+def _request_rows(root, relative, episode):
+    """Read explicit request semantics, keeping only the small action records.
+
+    Old or missing annotations retain strict replay bounds. A marker must be
+    attached to a real submitted frame; it is not an episode-wide bypass.
+    """
+    if not (root / relative).exists():
+        return {}
+    requests = {}
+    with _local_file(root, relative).open() as stream:
+        for line in stream:
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError("Invalid replay safety record")
+            semantics = record.get("action_semantics")
+            if semantics is None:
+                continue
+            if semantics != HOST_REQUEST_SEMANTICS:
+                raise ValueError("Unknown recorded action semantics")
+            index = record.get("frame_index")
+            if (
+                type(index) is not int
+                or index < 0
+                or index in requests
+                or record.get("episode_index") != episode
+                or record.get("feedback_phase") != "before_issued_command"
+                or not isinstance(record.get("issued_command"), dict)
+                or not isinstance(record.get("requested_action"), dict)
+            ):
+                raise ValueError("Invalid Host request frame annotation")
+            CommandIdentity(**record["issued_command"])
+            requests[index] = record["requested_action"]
+    return requests
 
 
 def load_episode(root, episode=0):
@@ -82,6 +119,7 @@ def load_episode(root, episode=0):
                 raise ValueError("Episode metadata index mismatch")
             length = summary.get("length")
             table = pq.read_table(_local_file(root, f"{directory}/frames.parquet"), columns=columns)
+            requests = _request_rows(root, f"{directory}/safety.jsonl", episode)
         elif info.get("codebase_version") == "v3.0":
             origin = _json(root, "meta/alohamini.json")
             source = origin.get("source_info", {})
@@ -107,6 +145,7 @@ def load_episode(root, episode=0):
             table = ds.dataset(data_files, format="parquet").to_table(
                 columns=columns, filter=selected
             )
+            requests = _request_rows(root, f"meta/safety/episode_{episode:06d}.jsonl", episode)
         else:
             raise ValueError("Replay supports AlohaMini datasets and their LeRobot v3 exports")
     metadata = source.get("robot_metadata", {})
@@ -148,13 +187,28 @@ def load_episode(root, episode=0):
     if actions.shape != (length, len(names)) or not np.isfinite(actions).all():
         raise ValueError("Action vectors have missing, nonfinite or incorrectly sized values")
     actions.setflags(write=False)
-    return ReplayEpisode(root, episode, float(fps), metadata, tuple(names), actions)
+    host_requests = [False] * len(actions)
+    for index, requested in requests.items():
+        if index >= len(actions) or set(requested) != set(names):
+            raise ValueError("Host request annotation does not match the action table")
+        for name in names:
+            finite_number(requested[name], name)
+        if not np.array_equal(
+            np.asarray([requested[name] for name in names], dtype=np.float32), actions[index]
+        ):
+            raise ValueError("Host request annotation does not match the action table")
+        host_requests[index] = True
+    return ReplayEpisode(
+        root, episode, float(fps), metadata, tuple(names), actions, tuple(host_requests)
+    )
 
 
 def check_coordinates(episode, snapshot):
     """A matching model name is insufficient when calibration or units changed."""
     check_calibration(episode.metadata, snapshot)
-    check_target_ranges(episode.actions, episode.names, snapshot)
+    TargetRanges(episode.names, snapshot).check(
+        episode.actions, host_requests=episode.host_requests
+    )
 
 
 def check_calibration(metadata, snapshot):
@@ -213,22 +267,47 @@ class TargetRanges:
         self.lift_min = live["lift_axis"]["soft_min_mm"]
         self.lift_max = live["lift_axis"]["soft_max_mm"]
 
-    def clip(self, action):
-        for name, _, lower, upper, normalization in self.joints:
-            if normalization in ("range_0_100", "range_m100_100"):
-                key = f"{name}.pos"
-                action[key] = min(upper, max(lower, action[key]))
-        action["lift_axis.height_mm"] = min(
-            self.lift_max, max(self.lift_min, action["lift_axis.height_mm"])
-        )
+    def check_policy_action(self, action):
+        """Check degree axes without altering any requested coordinate.
 
-    def check(self, actions):
-        for name, index, lower, upper, _ in self.joints:
-            values = actions[:, index]
+        Host converts normalized targets and the lift controller bounds height.
+        This method expects the caller to have checked names and finite values.
+        """
+        for name, _, lower, upper, normalization in self.joints:
+            if normalization == "degrees":
+                value = action[f"{name}.pos"]
+                if value < lower - 1e-4 or value > upper + 1e-4:
+                    raise ValueError(f"Recorded action exceeds the installed joint range: {name}")
+
+    def saturation_requests(self, action):
+        """Report requests outside saturating ranges; do not transform targets."""
+        outside = {}
+        for name, _, lower, upper, normalization in self.joints:
+            key = f"{name}.pos"
+            if normalization != "degrees" and not lower <= action[key] <= upper:
+                outside[key] = action[key]
+        key = "lift_axis.height_mm"
+        if not self.lift_min <= action[key] <= self.lift_max:
+            outside[key] = action[key]
+        return outside
+
+    def check(self, actions, *, host_requests=()):
+        strict = actions
+        if host_requests:
+            if len(host_requests) != len(actions) or any(
+                type(value) is not bool for value in host_requests
+            ):
+                raise ValueError("Invalid Host request frame mask")
+            if any(host_requests):
+                strict = actions[~np.asarray(host_requests)]
+        for name, index, lower, upper, normalization in self.joints:
+            values = (actions if normalization == "degrees" else strict)[:, index]
+            if not len(values):
+                continue
             if values.min() < lower - 1e-4 or values.max() > upper + 1e-4:
                 raise ValueError(f"Recorded action exceeds the installed joint range: {name}")
-        heights = actions[:, self.lift_index]
-        if heights.min() < self.lift_min or heights.max() > self.lift_max:
+        heights = strict[:, self.lift_index]
+        if len(heights) and (heights.min() < self.lift_min or heights.max() > self.lift_max):
             raise ValueError("Recorded action exceeds the installed lift range")
 
 

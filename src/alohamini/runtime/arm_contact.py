@@ -61,7 +61,7 @@ class ArmJointSpec:
             raise ValueError("Arm commands require explicit device joint limits")
         if isinstance(self.contact, GripperContactCalibration):
             for position in (self.contact.closed_position_rad, self.contact.open_position_rad):
-                self.calibration.position_to_tick(position)
+                self.calibration.validate_position(position)
         elif not isinstance(self.contact, JointContactCalibration):
             raise TypeError("Expected a joint or gripper contact calibration")
 
@@ -134,7 +134,7 @@ class ArmContactGuard:
             if not goals_rad.keys() <= self._joints.keys():
                 raise ValueError("Unknown arm target")
             for name, goal in goals_rad.items():
-                self._joints[name].calibration.position_to_tick(goal)
+                self._joints[name].calibration.validate_position(goal)
                 finite_number(positions_rad[name], "joint position")
                 finite_number(currents_a[name], "joint current")
         except (KeyError, ValueError, TypeError):

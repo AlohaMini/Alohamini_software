@@ -735,17 +735,17 @@ def test_contact_warning_and_release_do_not_pause_evaluation(setup, caplog):
 
 @pytest.mark.parametrize("drive_mode", [0, 1])
 @pytest.mark.parametrize(
-    "key,value,expected",
+    "key,value",
     [
-        ("arm_left_gripper.pos", -0.01, 0.0),
-        ("arm_right_gripper.pos", 100.01, 100.0),
-        ("arm_left_elbow_flex.pos", -100.01, -100.0),
-        ("arm_right_wrist_flex.pos", 1000, 100.0),
-        ("lift_axis.height_mm", -0.01, 0.0),
-        ("lift_axis.height_mm", 600.01, 600.0),
+        ("arm_left_gripper.pos", -0.01),
+        ("arm_right_gripper.pos", 100.01),
+        ("arm_left_elbow_flex.pos", -100.01),
+        ("arm_right_wrist_flex.pos", 1000),
+        ("lift_axis.height_mm", -0.01),
+        ("lift_axis.height_mm", 600.01),
     ],
 )
-def test_policy_targets_saturate_like_motor_bus_and_lift(setup, drive_mode, key, value, expected):
+def test_policy_requests_reach_host_without_client_saturation(setup, drive_mode, key, value):
     _, client, policy, _ = setup
     snapshot = client.state
     for motor in snapshot.payload["_robot_metadata"]["motors"].values():
@@ -753,10 +753,9 @@ def test_policy_targets_saturate_like_motor_bus_and_lift(setup, drive_mode, key,
     names = state_names("alohamini2pro")
     raw = {name: snapshot.payload[name] for name in names}
     raw[key] = value
-    bounded = _action(raw, names, snapshot)
-    assert bounded[key] == expected
+    submitted = _action(raw, names, snapshot)
+    assert submitted == raw
     assert raw[key] == value
-    assert all(bounded[name] == raw[name] for name in names if name != key)
 
 
 def test_degree_joint_retains_strict_host_calibration_limit(setup):
@@ -780,7 +779,7 @@ def test_evaluation_constructs_joint_units_once_for_the_session(setup):
     assert units.call_count == 14
 
 
-def test_clipped_action_and_raw_prediction_are_recorded_without_claiming_ack(
+def test_raw_host_requests_are_recorded_and_replayable_without_claiming_ack(
     setup, tmp_path, caplog
 ):
     _, client, policy, _ = setup
@@ -803,10 +802,18 @@ def test_clipped_action_and_raw_prediction_are_recorded_without_claiming_ack(
     assert len(rows) == len(records) == count
     index = state_names("alohamini2pro").index("arm_left_gripper.pos")
     for row, record in zip(rows, records, strict=True):
-        assert row["action"][index] == record["requested_action"]["arm_left_gripper.pos"] == 0
+        assert row["action"][index] == float(np.float32(-0.01))
+        assert record["requested_action"]["arm_left_gripper.pos"] == -0.01
         assert record["policy_action"]["arm_left_gripper.pos"] == -0.01
+        assert record["action_semantics"] == "host_request_v1"
         assert "accepted_safety" not in record
-    assert len([r for r in caplog.records if "targets clipped" in r.message]) == 1
+    assert all(action["arm_left_gripper.pos"] == -0.01 for _, action, _ in client.sent)
+    assert len([r for r in caplog.records if "Host-side saturation" in r.message]) == 1
+    from alohamini.apps.replay import check_coordinates, load_episode
+
+    episode = load_episode(root)
+    assert all(episode.host_requests)
+    check_coordinates(episode, client.state)
 
 
 def test_duplicate_camera_frames_do_not_block_chunk_execution_or_create_duplicate_rows(
@@ -981,7 +988,11 @@ def test_application_closes_dataset_and_client_after_policy_failure(setup, inter
                     dataset_name="evaluation",
                     episode_time_s=0.2,
                 )
-        assert len(pq.read_table(root / "episodes/episode_000000/frames.parquet")) == 1
+        info = json.loads((root / "meta/info.json").read_text())
+        assert info["codebase_version"] == "v3.0"
+        assert info["total_episodes"] == 1
+        shards = list((root / "data").rglob("*.parquet"))
+        assert sum(pq.read_metadata(path).num_rows for path in shards) == 1
     connection.__exit__.assert_called_once()
     stop.assert_called_once()
 

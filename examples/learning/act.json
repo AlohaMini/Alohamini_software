@@ -1,14 +1,21 @@
 {
-  "dataset": "~/Alohamini_workspace/datasets/task_demo_del",
+  "dataset": "~/Alohamini_workspace/datasets/task_demo_ready",
   "policy": "act",
-  "run_name": "act_local_01",
-  "train_episodes": [0,1,2,3,4,5,6],
-  "val_episodes": [7],
+  "run_name": "act_01",
+  "train_episodes": [
+    0
+  ],
+  "val_episodes": [
+    1
+  ],
   "state": "none",
-  "image_size": [480, 640],
+  "image_size": [
+    480,
+    640
+  ],
   "device": "cuda",
-  "steps": 1000,
-  "batch_size": 8,
+  "steps": 100000,
+  "batch_size": 2,
   "review_note": "",
   "model": {
     "chunk_size": 30,

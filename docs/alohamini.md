@@ -1,6 +1,6 @@
 # AlohaMini 使用手册
 
-先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文以 `alohamini2pro`、树莓派 IP `<数莓派_IP>` 为例。
+先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文以 `alohamini2pro`、树莓派 IP `<树莓派_IP>` 为例。
 
 ## 1. 型号与接线
 
@@ -20,7 +20,6 @@ AM-ARM 主臂使用 5 V、从臂使用 12 V。
 | 左从臂、底盘、升降 | 树莓派 USB | `/dev/am_arm_follower_left` |
 | 右从臂 | 树莓派 USB | `/dev/am_arm_follower_right` |
 | 前视、右腕相机 | 树莓派 USB | `/dev/am_camera_forward`、`/dev/am_camera_wrist_right` |
-
 
 ## 2. 串口与相机
 
@@ -137,7 +136,7 @@ alohamini host --robot_model alohamini2pro
 ```
 Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
 
-开启的相机同时提供 TCP 5557 订阅流，供 ROS2 等客户端使用；仅在有人订阅时额外编码，不需要重复打开相机。
+ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
 
 | 需要调整的内容 | 启动命令后追加 |
 | --- | --- |
@@ -147,14 +146,13 @@ Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
 | 指定串口 | `--left_port /dev/ttyACM0 --right_port /dev/ttyACM1` |
 | 指定整机标定文件 | `--calibration /绝对路径/AlohaMiniRobot.json` |
 
-
 ## 5. PC 查询状态
 
 保持 Host 运行，在 PC 执行：
 
 ```bash
 conda activate alohamini
-alohamini inspect --host <数莓派_IP> --model alohamini2pro
+alohamini inspect --host <树莓派_IP> --model alohamini2pro
 ```
 
 只读取一次状态，不发送运动命令。连接失败时先确认 Host、IP、两端型号；字段单位与 Python 调用见[客户端接口](host-protocol.md)。
@@ -166,7 +164,7 @@ alohamini inspect --host <数莓派_IP> --model alohamini2pro
 ```bash
 conda activate alohamini
 alohamini teleoperate \
-  --host <数莓派_IP> \
+  --host <树莓派_IP> \
   --robot_model alohamini2pro \
   --teleop.id am_leader_bi
 ```
@@ -186,14 +184,14 @@ alohamini teleoperate \
 
 仅用主臂加 `--no_keyboard`；仅用键盘加 `--no_leader`；关闭预览加 `--no_preview`。
 
-PC 终端显示遥操状态和跟踪信息，数莓派终端显示 Host 的 Hz、耗时与硬件故障。同一时间只运行一个运动控制客户端；**退出遥操后再启动数采**。
+PC 终端显示遥操状态和跟踪信息，树莓派终端显示 Host 的 Hz、耗时与硬件故障。同一时间只运行一个运动控制客户端；**退出遥操后再启动数采**。
 
 ## 7. PC 本地数采
 
 ```bash
 conda activate alohamini
 alohamini record \
-  --host <数莓派_IP> \
+  --host <树莓派_IP> \
   --robot_model alohamini2pro \
   --teleop.id am_leader_bi \
   --dataset pickup_01 \
@@ -215,10 +213,6 @@ alohamini record \
 
 数据默认保存到 `~/Alohamini_workspace/datasets/pickup_01/`。自定义位置用 `--root`；继续已有数据集用 `--resume`，型号、标定、相机、任务和帧率须一致。
 
-采集期间原样暂存 Host JPEG，不再转换成 PNG。后台只检查 JPEG 文件头、尺寸和结束标记；
-完整解码在保存时进行，失败会保留暂存资料供恢复。保存时由这些 JPEG 生成 MP4 和抽样图像统计，
-沿用 Host 的色彩约定，不增加一次有损压缩。最终数据仍为 LeRobot v3，旧 PNG 暂存录制仍可恢复。
-
 任务需要固定部分关节时，先遥操摆好位置，退出遥操，再在上述采集命令后追加：
 
 ```bash
@@ -232,7 +226,6 @@ alohamini record \
 
 后续使用相同采集命令加 `--resume`，可省略 `--fixed-dimensions`；程序自动恢复保存的目标。
 
-
 | 文件 | 内容 |
 | --- | --- |
 | `meta/info.json`、`meta/alohamini.json` | 字段定义、型号、标定和单位 |
@@ -241,29 +234,10 @@ alohamini record \
 | `meta/episodes/`、`meta/tasks.parquet`、`meta/stats.json` | episode 索引、任务和统计 |
 | `meta/safety/episode_*.jsonl` | 保护记录、命令标识与实际采样时间 |
 
-
-
-保存完成后默认仅报告总耗时和有效帧数。启用 `--profile_timing` 时，额外输出 `[SAVE TIMING seconds]`，各阶段含义如下：
-
-| 字段 | 工作 |
-| --- | --- |
-| `queue_drain` / `journal_to_parquet` | 等待图片队列完成／整理 journal |
-| `video_encode_headers_hash` | 整个相机线程池的编码、容器检查和哈希墙钟耗时 |
-| `video_index` | 更新临时表中的视频引用 |
-| `image_statistics` | 读取抽样 JPEG（兼容旧 PNG）、累计 RGB 直方图并保存临时摘要 |
-| `image_decode` / `statistics_update` | 发布时的视频统计解码（新录制为 0）／累计数值统计 |
-| `episode_statistics` / `global_statistics` | 生成本段／累计统计结果，包含精确数值分位数 |
-| `v3_data_metadata` / `v3_publish` | 视频复制、表格与元数据写入／发布事务 |
-| `temporary_cleanup` / `cleanup` | 清理临时图片、journal／已发布 episode 暂存目录 |
-| `total` | 本次保存总墙钟时间 |
-
-阶段计时不包含场景复位；相机并行耗时不按各相机累加，`total` 也不应再加到阶段合计中。
-全局精确分位数目前仍在每段保存时生成。
-
 ### 检查与恢复
 
 ```bash
-alohamini dataset check ~/Alohamini_workspace/datasets/pickup_01 --decode-images --decode-videos
+alohamini dataset check ~/Alohamini_workspace/datasets/pickup_01
 ```
 
 自动识别 AlohaMini 和 LeRobot v3 数据；两个解码选项检查完整图像和视频。`--output-json <新文件>` 保存报告。`VALID` 表示结构检查通过；训练前仍须检查缺帧和保护事件等警告。
@@ -286,9 +260,9 @@ alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
 
 保留原数据，重建可确定的索引与媒体引用；缺失图像或配对不明时拒绝修复。修复结果不用于追加录制，也不消除实际漏采与时间偏差。
 
-### 导出 LeRobot v3
+### 导出与选择字段
 
-新录制的数据已经是 LeRobot v3。需要另存或选择 state 字段时，在 `alohamini` 环境中执行，无需安装 LeRobot 或登录 Hub：
+需要另存或选择 state 字段时，在 `alohamini` 环境中执行：
 
 ```bash
 alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
@@ -296,7 +270,7 @@ alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
   --format lerobot-v3
 ```
 
-默认 state 为双臂关节位置、底盘速度、升降高度（alohamini2pro 共 18 维），action 不变，反馈保留。`--state` 选择输入字段；纯视觉副本及训练见 [训练与部署](training.md#导出-v3-与纯视觉副本)。
+默认 state 为双臂关节位置、底盘速度、升降高度（alohamini2pro 共 18 维），action 不变，反馈保留。`--state` 选择输入字段；纯视觉副本及训练见 [训练与部署](training.md#导出与纯视觉副本)。
 
 当前数据的视频在导出时原样复制，不重新编码。恢复与导出须使用新目录；`.pending-*` 表示导出未完成。
 
@@ -310,6 +284,8 @@ alohamini replay --dataset pickup_01 \
 ```
 
 支持 AlohaMini 数据集及其 LeRobot v3 导出；自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。
+
+回放评估数据时应保留完整元数据与 safety 文件。记录的提交动作不等于机器人实际执行轨迹。
 
 默认按数据集帧率回放；`--fps` 覆盖帧率，`--speed` 调整倍率。它们不缩放底盘速度值，包含底盘运动时应保持原帧率。Ctrl+C、关节保护、反馈中断或控制权变化会终止回放，并尝试保持当前位置、停止底盘。
 
@@ -352,7 +328,6 @@ python examples/debug/motors.py get_motors_states --port /dev/ttyACM0
 
 <details>
 <summary>舵机维护：卸力、改 ID、改相位</summary>
-
 
 ```bash
 python examples/debug/motors.py reset_motors_torque --port /dev/ttyACM0 --id 1

@@ -21,6 +21,8 @@ from ..configuration import NormalizationMode, PolicyConfig
 
 def validate_act_config(self):
     """ACT architecture/execution checks, shared with AM-ACT, not other policies."""
+    if type(self.use_camera_embeddings) is not bool:
+        raise ValueError("use_camera_embeddings must be a boolean")
     if any(type(n) is not int or n < 1 for n in (self.chunk_size, self.n_action_steps)):
         raise ValueError("Chunk and execution lengths must be positive")
     if self.dim_model % self.n_heads or self.dim_model % 4:
@@ -91,6 +93,7 @@ class ACTConfig(PolicyConfig):
             `None` means no pretrained weights.
         replace_final_stride_with_dilation: Whether to replace the ResNet's final 2x2 stride with a dilated
             convolution.
+        use_camera_embeddings: Add learned camera identities to action-trunk spatial positions.
         pre_norm: Whether to use "pre-norm" in the transformer blocks.
         dim_model: The transformer blocks' main hidden dimension.
         n_heads: The number of heads to use in the transformer blocks' multi-head attention.
@@ -131,6 +134,8 @@ class ACTConfig(PolicyConfig):
     vision_backbone: str = "resnet18"
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     replace_final_stride_with_dilation: int = False
+    # Learned camera identity in the action trunk, ordered by image_features.
+    use_camera_embeddings: bool = True
     # Transformer layers.
     pre_norm: bool = False
     dim_model: int = 512

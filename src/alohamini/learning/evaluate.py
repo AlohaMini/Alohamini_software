@@ -23,11 +23,12 @@ def evaluate_checkpoint(
     persistent_workers=True,
     log_freq=50,
     video_cache_size=8,
+    allow_unannotated=None,
 ):
     """Compare predicted chunks with recorded actions; never connect to a robot."""
     if type(batch_size) is not int or batch_size < 1:
         raise ValueError("batch_size must be a positive integer")
-    policy = NativePolicy(checkpoint, device=device)
+    policy = NativePolicy(checkpoint, device=device, offline=True)
     manifest = policy.manifest
     samples = AlohaMiniDataset(
         dataset,
@@ -37,6 +38,11 @@ def evaluate_checkpoint(
         cameras=manifest["cameras"],
         image_size=tuple(manifest["image_size"]),
         video_cache_size=video_cache_size,
+        allow_unannotated=(
+            bool(manifest["source_info"].get("training_only"))
+            if allow_unannotated is None
+            else allow_unannotated
+        ),
     )
     return {
         "checkpoint": str(Path(checkpoint).expanduser().resolve()),
@@ -70,6 +76,7 @@ def main(argv=None):
     parser.add_argument("--persistent_workers", type=boolean, default=True)
     parser.add_argument("--log_freq", type=int, default=50)
     parser.add_argument("--video_cache_size", type=int, default=8)
+    parser.add_argument("--dataset.allow_unannotated", dest="allow_unannotated", type=boolean)
     parser.add_argument("--output", type=Path, help="Optional new JSON report; never overwrites")
     args = vars(parser.parse_args(argv))
     output = args.pop("output")

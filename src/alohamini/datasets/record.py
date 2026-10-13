@@ -28,6 +28,10 @@ from alohamini.datasets.images import (
 )
 from alohamini.model import get_robot_model
 
+# Per-frame action is a submitted request, including values saturated by Host.
+# It does not claim acceptance or execution of issued_command.
+HOST_REQUEST_SEMANTICS = "host_request_v1"
+
 FEEDBACK_FIELDS = (
     "position_raw",
     "velocity_raw",

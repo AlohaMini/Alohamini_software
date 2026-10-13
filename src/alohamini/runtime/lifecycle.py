@@ -62,11 +62,16 @@ class CommandSubmission:
     and either stages them in the cycle controller or performs bounded actuator
     I/O; never policy inference or camera work. With CycleControl, targets must
     be staged so supervision runs before the hardware write.
+
+    validate may return a prepared write callback. HostSupervisor consumes it
+    immediately after ownership acceptance, in the same feedback cycle, or
+    discards it on rejection. It is never cached across cycles. Returning None
+    retains the original write callback, which must validate its own inputs.
     """
 
     identity: CommandIdentity
     write: Callable[[], None]
-    validate: Callable[[], None] | None = None
+    validate: Callable[[], Callable[[], None] | None] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, CommandIdentity) or not callable(self.write):
@@ -359,9 +364,14 @@ class HostSupervisor:
                             command = poll_command()
                             if command is not None and not isinstance(command, CommandSubmission):
                                 raise TypeError("Expected CommandSubmission from poller")
+                        write = None if command is None else command.write
                         if command is not None and command.validate is not None:
                             try:
-                                command.validate()
+                                prepared = command.validate()
+                                if prepared is not None:
+                                    if not callable(prepared):
+                                        raise TypeError("Prepared command write must be callable")
+                                    write = prepared
                             except CommandRejectedError as exc:
                                 command_error = str(exc)
                                 command = None
@@ -370,7 +380,7 @@ class HostSupervisor:
                             and command is not None
                             and self._owner.accept(command.identity)
                         ):
-                            command.write()
+                            write()
                             applied = True
                         if applied:
                             # CommandSubmission.write may only stage targets. Complete the

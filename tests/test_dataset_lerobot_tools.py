@@ -396,7 +396,7 @@ def test_cli_checks_and_repairs_the_old_video_format(tmp_path, capsys):
 
 
 def test_native_export_embedded_images_are_checked_and_repair_keeps_metadata(tmp_path):
-    from test_dataset import frame, jpeg, metadata
+    from test_dataset import as_png_v1, frame, jpeg, metadata
 
     from alohamini.datasets.lerobotv3 import export_lerobot
     from alohamini.datasets.record import _EpisodeWriter as LocalDataset
@@ -407,6 +407,9 @@ def test_native_export_embedded_images_are_checked_and_repair_keeps_metadata(tmp
         for _ in range(2):
             dataset.add_frame(frame(dataset), {"forward": jpeg()}, {})
         dataset.save_episode()
+    # Current recordings use video. Exercise the embedded-image compatibility
+    # path deliberately instead of adding a field discarded by the video schema.
+    as_png_v1(native)
     export_lerobot(native, exported)
     report = check_dataset(exported, decode_images=True, decode_videos=True)
     assert report["valid"], report

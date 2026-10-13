@@ -84,29 +84,57 @@ class NativePolicy:
         fixed_dataset=None,
         fixed_current=None,
         calibration_mode="strict",
+        robot_model=None,
+        offline=False,
     ):
-        if calibration_mode not in ("strict", "normalized"):
-            raise ValueError("calibration_mode must be strict or normalized")
+        if calibration_mode not in ("strict", "normalized", "legacy_normalized"):
+            raise ValueError("calibration_mode must be strict, normalized or legacy_normalized")
         self.calibration_mode = calibration_mode
+        self.offline = offline
         self._robot_bound = False
         path, manifest = read_checkpoint(checkpoint)
+        original_v3 = manifest["source_info"].get("training_only")
+        legacy_binding = calibration_mode == "legacy_normalized"
+        if original_v3 and not legacy_binding and not offline:
+            raise ValueError(
+                "This checkpoint is for offline training only: its original LeRobot "
+                "data has no verified Host calibration/action contract. For confirmed "
+                "normalized action units, explicitly select --calibration-mode legacy_normalized"
+            )
+        if legacy_binding and (
+            not isinstance(original_v3, dict)
+            or original_v3.get("source") != "original_lerobot_v3"
+            or robot_model is None
+        ):
+            raise ValueError(
+                "legacy_normalized requires an original LeRobot v3 checkpoint "
+                "and an explicit robot_model"
+            )
         self.checkpoint_path = path
         self.checkpoint_manifest_sha256 = sha256((path / "policy.json").read_bytes()).hexdigest()
         self.manifest = manifest
         self.source = manifest["source_info"]
-        self.robot_metadata = deepcopy(self.source["robot_metadata"])
+        # An incomplete declaration only identifies the intended model. It cannot
+        # pass calibration checks until bind_robot validates a live Host snapshot.
+        self.robot_metadata = (
+            {"robot_model": robot_model, "binding_pending": True}
+            if legacy_binding
+            else deepcopy(self.source.get("robot_metadata"))
+        )
+        if robot_model is not None and (
+            self.robot_metadata is None or robot_model != self.robot_metadata["robot_model"]
+        ):
+            raise ValueError("Declared robot model differs from checkpoint")
         self.fps = self.source["fps"]
         self.names = self.source["features"]["action"]["names"]
-        if self.names != state_names(self.robot_metadata["robot_model"]):
+        if not offline and self.names != state_names(self.robot_metadata["robot_model"]):
             raise ValueError("Checkpoint action coordinates must retain all Host targets")
-        self.selection = (
-            None
-            if manifest["state"] == "none"
-            else StateSelection(
-                self.source,
-                manifest["state"],
-                exclude_fixed=manifest.get("fixed_state_excluded", False),
-            )
+        from alohamini.learning.state import select_state
+
+        self.selection = select_state(
+            self.source,
+            manifest["state"],
+            exclude_fixed=manifest.get("fixed_state_excluded", False),
         )
         if self.selection and (
             self.selection.feature != manifest["state_feature"]
@@ -137,19 +165,36 @@ class NativePolicy:
         self.processor = make_processor(self.model, manifest["stats"], device)
         from alohamini.learning.fixed import configure
 
-        configure(self, fixed_dimensions, fixed_dataset, current=fixed_current)
+        if offline and self.robot_metadata is None:
+            if fixed_dimensions or fixed_dataset or fixed_current:
+                raise ValueError("Unannotated offline inference does not bind Host fixed targets")
+            self.fixed_dimensions = None
+            self.fixed_current = []
+            self.fixed_state_references = {}
+            self.fixed_deployment = {}
+        else:
+            configure(self, fixed_dimensions, fixed_dataset, current=fixed_current)
         self.fixed_deployment["calibration_mode"] = calibration_mode
         self.reset()
 
     def bind_robot(self, snapshot):
         """Bind once before execution; later changes always require strict matching."""
+        if getattr(self, "offline", False):
+            raise ValueError("Offline policy cannot bind to a robot")
         if self.calibration_mode == "strict" or self._robot_bound:
             self._check_calibration(snapshot)
             return None
-        from alohamini.learning.calibration import normalized_transfer
+        from alohamini.learning.calibration import legacy_normalized_binding, normalized_transfer
 
-        metadata, report = normalized_transfer(self.source["robot_metadata"], snapshot)
-        if self.selection:
+        if self.calibration_mode == "legacy_normalized":
+            if self.selection and self.selection.source_names != state_names(snapshot.robot_model):
+                raise ValueError("Legacy state names/order differ from the declared Host model")
+            metadata, report = legacy_normalized_binding(
+                self.source, self.robot_metadata["robot_model"], snapshot
+            )
+        else:
+            metadata, report = normalized_transfer(self.source["robot_metadata"], snapshot)
+        if self.selection and self.calibration_mode != "legacy_normalized":
             live_source = {**self.source, "robot_metadata": metadata}
             self.selection = StateSelection(
                 live_source,
@@ -166,6 +211,15 @@ class NativePolicy:
         return report
 
     def _check_calibration(self, snapshot):
+        if getattr(self, "offline", False):
+            raise ValueError("Offline policy cannot execute on a robot")
+        if (
+            getattr(self, "calibration_mode", "strict") == "legacy_normalized"
+            and not self._robot_bound
+        ):
+            raise ValueError(
+                "Legacy policy must bind to validated Host calibration before execution"
+            )
         # Compare owned copies: in-place changes must invalidate the static check.
         context = (
             snapshot.robot_model,
@@ -302,6 +356,7 @@ def evaluate_robot(
     fixed_dataset=None,
     fixed_current=None,
     calibration_mode="strict",
+    robot_model=None,
     **kwargs,
 ):
     """Explicit real-hardware boundary; importing/loading a model never connects."""
@@ -318,6 +373,7 @@ def evaluate_robot(
         fixed_dataset=fixed_dataset,
         fixed_current=fixed_current,
         calibration_mode=calibration_mode,
+        robot_model=robot_model,
         task=kwargs.get("task"),
     )
     return evaluate(

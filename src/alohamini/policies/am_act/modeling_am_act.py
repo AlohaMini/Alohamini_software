@@ -495,6 +495,9 @@ class ACT(nn.Module):
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
+            if config.use_camera_embeddings:
+                self.encoder_camera_embed = nn.Embedding(len(config.image_features), config.dim_model)
+                nn.init.normal_(self.encoder_camera_embed.weight, std=0.02)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
@@ -626,7 +629,7 @@ class ACT(nn.Module):
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
+            for camera_index, img in enumerate(batch[OBS_IMAGES]):
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
@@ -634,6 +637,10 @@ class ACT(nn.Module):
                 # Rearrange features to (sequence, batch, dim).
                 cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
                 cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                if self.config.use_camera_embeddings:
+                    cam_pos_embed = cam_pos_embed + self.encoder_camera_embed.weight[camera_index].to(
+                        dtype=cam_pos_embed.dtype
+                    )
 
                 # Extend immediately instead of accumulating and concatenating
                 # Convert to list to extend properly

@@ -4,7 +4,24 @@ PC 使用 `alohamini` 环境进行遥操、数采和开发；树莓派使用轻�
 
 ## 准备
 
-两台机器均需安装 Conda，并下载本仓库。以下命令在仓库根目录执行；已有对应环境时无需重复创建。
+两台机器均需安装 Conda，并下载本仓库。未安装 Conda 时，在 Bash 中执行（自动匹配 PC x86_64 / 树莓派 aarch64）：
+
+```bash
+sudo apt update
+sudo apt install -y curl ca-certificates
+curl -fsSL "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-$(uname -m).sh" -o /tmp/miniconda.sh
+bash /tmp/miniconda.sh -b -p "$HOME/miniconda3"
+"$HOME/miniconda3/bin/conda" init bash
+source "$HOME/.bashrc"
+```
+
+新装 Ubuntu / Debian 若提示找不到 `python`，可安装系统命令别名：
+
+```bash
+sudo apt install -y python3 python-is-python3
+```
+
+项目仍使用下方 Conda 环境中的 Python，请先激活对应环境。以下命令在仓库根目录执行；已有对应环境时无需重复创建。
 
 ## 1. PC
 

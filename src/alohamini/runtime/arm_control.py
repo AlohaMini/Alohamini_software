@@ -1,7 +1,7 @@
 """Per-cycle arm supervision using the same feedback sampled by the Host."""
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
 
 from alohamini._validation import identifier
@@ -147,20 +147,27 @@ class ArmController:
 
     def validate_targets(self, positions_rad: Mapping[str, float]) -> None:
         """Validate against this cycle without changing targets or writing devices."""
+        self._prepare_targets(positions_rad)
+
+    def _prepare_targets(self, positions_rad: Mapping[str, float]) -> Callable[[], None]:
+        """Prepare a private staging callback for immediate use in this Host cycle."""
         if not self._fresh:
             raise RuntimeError("Targets require fresh feedback in the current Host cycle")
         positions = dict(positions_rad)
         if not positions or not positions.keys() <= self._joints.keys():
             raise ValueError("Expected nonempty known arm targets")
         for name, position in positions.items():
-            self._joints[name].calibration.position_to_tick(position)
+            self._joints[name].calibration.validate_position(position)
+
+        def stage():
+            self._targets.update(positions)
+            self._new_command = True
+
+        return stage
 
     def set_targets(self, positions_rad: Mapping[str, float]) -> None:
         """Stage one accepted command; validate all joints before changing any target."""
-        positions = dict(positions_rad)
-        self.validate_targets(positions)
-        self._targets.update(positions)
-        self._new_command = True
+        self._prepare_targets(positions_rad)()
 
     def supervise(self) -> None:
         # A watchdog can clear targets after observe() and before this call.
@@ -176,7 +183,7 @@ class ArmController:
         # Check both arms before either bus is written. A hold outside calibrated
         # target bounds faults the Host; its stop backend can hold actual raw position.
         for name, position in limited.items():
-            self._joints[name].calibration.position_to_tick(position)
+            self._joints[name].calibration.validate_position(position)
         for source, group in self._groups.items():
             changed = {
                 name: position

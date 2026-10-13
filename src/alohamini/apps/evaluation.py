@@ -15,13 +15,12 @@ from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
-import numpy as np
-
 from alohamini._validation import finite_number
 from alohamini.apps.replay import TargetRanges, check_calibration
 from alohamini.apps.teleoperation import ready_units, stop_owned_robot
 from alohamini.client import HostClient, control_feedback_valid
 from alohamini.datasets.record import (
+    HOST_REQUEST_SEMANTICS,
     LocalDataset,
     motor_feedback_frame,
     preserve_dataset,
@@ -38,7 +37,7 @@ def _options(fps, duration_s):
 
 
 def _action(value, names, snapshot, *, ranges=None):
-    """Bound normalized targets as MotorsBus._unnormalize and LiftAxis.apply_action do."""
+    """Validate policy requests; Host mapping owns normalized saturation."""
     if not isinstance(value, Mapping) or set(value) != set(names):
         raise ValueError("Policy must return every named absolute Host target, without extra keys")
     for name in names:
@@ -46,9 +45,7 @@ def _action(value, names, snapshot, *, ranges=None):
     action = {name: float(value[name]) for name in names}
     if ranges is None:
         ranges = TargetRanges(names, snapshot)
-    ranges.clip(action)
-    # Degree-based joints retain the Host's strict calibrated encoder bounds.
-    ranges.check(np.asarray([[action[name] for name in names]]))
+    ranges.check_policy_action(action)
     return action
 
 
@@ -123,7 +120,7 @@ class EvaluationGuard:
 
 
 def _bind_calibration(policy, snapshot):
-    if getattr(policy, "calibration_mode", None) != "normalized":
+    if getattr(policy, "calibration_mode", None) not in ("normalized", "legacy_normalized"):
         return
     report = policy.bind_robot(snapshot)
     if report is None:
@@ -132,9 +129,15 @@ def _bind_calibration(policy, snapshot):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"calibration-transfer-{time.time_ns()}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
-    logging.warning(
-        "跨机归一化模式：使用新机器的关节范围，不保证原末端/相机位姿。标定对照：%s", path
-    )
+    if report.get("mode") == "legacy_normalized":
+        logging.warning(
+            "旧数据归一化部署：按声明的动作单位使用当前 Host 标定；原始标定仍未知。部署记录：%s",
+            path,
+        )
+    else:
+        logging.warning(
+            "跨机归一化模式：使用新机器的关节范围，不保证原末端/相机位姿。标定对照：%s", path
+        )
 
 
 def _capture_current_targets(policy, snapshot, client_id):
@@ -189,7 +192,7 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
     commands = 0
     live_metadata = reference = None
     last_snapshot = last_recorded = None
-    last_clip_warning = -math.inf
+    last_saturation_warning = -math.inf
     last_camera_warning = -math.inf
     last_timeout_warning = -math.inf
     wait_reason = None
@@ -341,17 +344,14 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                 continue
             requested = {**value, **fixed_targets} if fixed_targets else value
             action = _action(requested, names, observation, ranges=target_ranges)
-            clipped = {
-                name: (float(requested[name]), action[name])
-                for name in names
-                if requested[name] != action[name]
-            }
-            if clipped and time.monotonic() - last_clip_warning >= 1.0:
+            outside = target_ranges.saturation_requests(action)
+            if outside and time.monotonic() - last_saturation_warning >= 1.0:
                 logging.warning(
-                    "Policy targets clipped to calibrated limits (predicted, submitted): %s",
-                    clipped,
+                    "Policy requests exceed saturating ranges; submitting unchanged for "
+                    "Host-side saturation (not execution acknowledgement): %s",
+                    outside,
                 )
-                last_clip_warning = time.monotonic()
+                last_saturation_warning = time.monotonic()
             submitted = client.send_command(action, based_on=observation)
             if submitted is None:
                 # Like the source send_action() path, a dropped send consumes this
@@ -392,6 +392,7 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                         "motor_feedback": feedback,
                         "robot_metadata": live_metadata,
                         "requested_action": action,
+                        "action_semantics": HOST_REQUEST_SEMANTICS,
                         **({"fixed_dimensions": fixed_config} if fixed_targets else {}),
                         "policy_action": {name: float(value[name]) for name in names},
                         "issued_command": asdict(identity),

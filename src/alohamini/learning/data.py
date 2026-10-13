@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 
@@ -31,6 +32,7 @@ class DatasetInspection:
 
     def __init__(self):
         self.root = self.stamp = self.report = None
+        self.allow_unused_video_tail = False
 
     @staticmethod
     def snapshot(root):
@@ -47,15 +49,22 @@ class DatasetInspection:
             )
         return result
 
-    def check(self, root):
+    def check(self, root, *, allow_unused_video_tail=False):
         stamp = self.snapshot(root)
-        if root != self.root or stamp != self.stamp:
-            report = check_dataset(root, decode_images=True)
+        if (
+            root != self.root
+            or stamp != self.stamp
+            or allow_unused_video_tail != self.allow_unused_video_tail
+        ):
+            report = check_dataset(
+                root, decode_images=True, allow_unused_video_tail=allow_unused_video_tail
+            )
             if self.snapshot(root) != stamp:
                 raise RuntimeError(
                     "Dataset changed during integrity inspection; retry on stable data"
                 )
             self.root, self.stamp, self.report = root, stamp, report
+            self.allow_unused_video_tail = allow_unused_video_tail
         return deepcopy(self.report)
 
 
@@ -204,6 +213,7 @@ class AlohaMiniDataset(Dataset):
         camera_workers=0,
         return_uint8=False,
         inspection=None,
+        allow_unannotated=False,
     ):
         self.root = Path(root).expanduser().resolve()
         if type(camera_workers) is not int or camera_workers < 0:
@@ -213,11 +223,13 @@ class AlohaMiniDataset(Dataset):
         self.camera_workers = camera_workers
         self.return_uint8 = return_uint8
         self.video_cache = VideoFrameCache(video_cache_size, backend=video_backend)
-        with log_stage(f"Checking dataset integrity and decoding media: {self.root}"):
+        with log_stage(f"Checking dataset integrity and media references: {self.root}"):
             self.report = (
-                inspection.check(self.root)
+                inspection.check(self.root, allow_unused_video_tail=allow_unannotated)
                 if inspection is not None
-                else check_dataset(self.root, decode_images=True)
+                else check_dataset(
+                    self.root, decode_images=True, allow_unused_video_tail=allow_unannotated
+                )
             )
         if not self.report["valid"]:
             raise ValueError(f"Dataset integrity check failed: {self.report['issues']}")
@@ -241,7 +253,7 @@ class AlohaMiniDataset(Dataset):
         if self.info.get("codebase_version") == "v3.0":
             from alohamini.learning.lerobot import LeRobotSource
 
-            self._v3 = LeRobotSource(self.root, self.info)
+            self._v3 = LeRobotSource(self.root, self.info, allow_unannotated=allow_unannotated)
             self.info = self._v3.info
         self.episodes = list(episodes)
         if not self.episodes or len(set(self.episodes)) != len(self.episodes):
@@ -284,10 +296,12 @@ class AlohaMiniDataset(Dataset):
                 "Selected v3 has no original state coordinates; "
                 "use state='none' or export default state"
             )
-        self.selection = (
-            None if state == "none" else StateSelection(self.info, state, exclude_fixed=True)
-        )
-        available_cameras = self.info.get("cameras", self.info["robot_metadata"]["cameras"])
+        from alohamini.learning.state import select_state
+
+        self.selection = select_state(self.info, state, exclude_fixed=True)
+        available_cameras = self.info.get("cameras")
+        if available_cameras is None:
+            available_cameras = self.info["robot_metadata"]["cameras"]
         self.cameras = list(available_cameras if cameras is None else cameras)
         if len(set(self.cameras)) != len(self.cameras) or any(
             c not in available_cameras for c in self.cameras
@@ -371,7 +385,11 @@ class AlohaMiniDataset(Dataset):
                             stream, "sha256"
                         ).hexdigest()
             records = []
-            with safety_path.open() as stream:
+            if safety_path is None:
+                # Missing evidence remains missing; never claim feedback validity
+                # or synthesize Host timestamps from the nominal frame rate.
+                records = [{} for _ in rows]
+            with safety_path.open() if safety_path is not None else nullcontext(()) as stream:
                 for line in stream:
                     record = json.loads(line)
                     if record.get("frame_index") is None:
@@ -450,7 +468,9 @@ class AlohaMiniDataset(Dataset):
                 return
             if key == "observation.state":
                 self.selection.frame(row)
-                if any(k == "observation.state" for k, _, _, _ in self.selection.columns):
+                if not (self._v3 and self._v3.unannotated) and any(
+                    k == "observation.state" for k, _, _, _ in self.selection.columns
+                ):
                     if (record["safety"] or {}).get("feedback_valid") is not True:
                         raise ValueError("recorded observation.state feedback_valid is not true")
                 return

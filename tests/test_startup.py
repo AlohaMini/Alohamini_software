@@ -14,6 +14,7 @@ from test_feetech_device import DelayedRegisterSerial, RegisterSerial, Simulated
 
 from alohamini.calibration.servo import MotorCalibration, load_motor_calibration
 from alohamini.errors import CommandRejectedError
+from alohamini.hardware.motors_bus import MotorsBus
 from alohamini.model import get_robot_model
 from alohamini.runtime.lifecycle import CommandSubmission, HostPhase
 from alohamini.runtime.startup import open_host
@@ -96,6 +97,38 @@ class CalibrationFileTests(unittest.TestCase):
                         self.assertAlmostEqual(position, (tick - 2048) * math.tau / 4096)
                         # Deployed degree / normalized wire conversion truncates to int.
                         self.assertLessEqual(abs(units.to_tick(units.from_tick(tick)) - tick), 1)
+
+    def test_startup_installs_units_in_motor_buses_before_opening_io(self):
+        self.write({name: asdict(value) for name, value in self.values.items()})
+        assembled = []
+
+        def inspect_before_start(host):
+            assembled.append(host)
+            raise RuntimeError("assembly inspected without I/O")
+
+        for use_degrees in (False, True):
+            with (
+                patch("alohamini.runtime.host.NativeHost.start", inspect_before_start),
+                patch("serial.Serial") as serial,
+                self.assertRaisesRegex(RuntimeError, "assembly inspected"),
+            ):
+                open_host(
+                    self.model.model_id, calibration_file=self.path,
+                    cameras={}, use_degrees=use_degrees,
+                )
+            serial.assert_not_called()
+            host = assembled[-1]
+            self.assertFalse(hasattr(host, "_units"))
+            for name, bus in host._arm_buses.items():
+                self.assertIsInstance(bus, MotorsBus)
+                mode = (
+                    "range_0_100" if name.endswith("gripper")
+                    else "degrees" if use_degrees else "range_m100_100"
+                )
+                self.assertEqual(bus.position_units[name], self.values[name].position_units(mode))
+                self.assertEqual(
+                    bus.position_calibrations[name], self.values[name].encoder_calibration()
+                )
 
 
 @unittest.skipUnless(
@@ -300,7 +333,7 @@ class StartupTests(unittest.TestCase):
                         identity, lambda: host.control.base_lift.establish_lift_reference(0.1)
                     )
                 )
-                for _ in range(60):
+                for _ in range(math.ceil(host.supervisor.COMMAND_WATCHDOG_TIMEOUT_S / 0.02) + 2):
                     clock.now += 0.02
                     for serial in serials.values():
                         serial.requests.clear()
@@ -445,7 +478,8 @@ class StartupTests(unittest.TestCase):
         try:
             self.assertEqual(prompt.call_count, 3)
             saved = load_motor_calibration(self.path, self.model.actuators)
-            for name, units in host._units.items():
+            for name, bus in host._arm_buses.items():
+                units = bus.position_units[name]
                 self.assertEqual(units, saved[name].position_units(units.normalization))
             self.assertEqual(saved["arm_left_shoulder_pan"].range_min, 800)
             self.assertEqual(saved["arm_right_elbow_flex"].range_max, 3200)
@@ -566,7 +600,7 @@ class StartupTests(unittest.TestCase):
             host = self.open(use_degrees=degrees)
             try:
                 for name, spec in host._joints.items():
-                    wire = host._units[name]
+                    wire = host._arm_buses[name].position_units[name]
                     if name.endswith("gripper"):
                         self.assertEqual(wire.normalization, "range_0_100")
                         self.assertEqual(

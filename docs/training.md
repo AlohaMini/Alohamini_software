@@ -44,26 +44,11 @@ episode 从 0 编号。`--dataset` 指工作区中的名称，也可换成 `--ro
 拆分结果位于 `<output>/train` 等子目录。合并要求 FPS、字段、相机、标定和动作坐标一致。
 训练与验证按完整回合隔离，同一示教的不同处理副本不得分置两边。
 
-先审核数据，再用 `--dataset.episodes` 和 `--dataset.eval_episodes` 明确选择训练与验证回合。
-训练器不根据 `fault`、`watchdog_active`、`joint_holds` 或反馈年龄阈值自动剔除窗口；
-这些记录保留用于审核。所选输入存在缺测或无效 mask 时，会报告 episode、frame 和字段并停止，
-由使用者修复数据、排除该 episode 或调整输入字段；不会填零或悄悄跳过。
-缺失字段、形状、有限数值、单位和媒体对应关系仍执行完整性检查。
-
-每个 episode 内按算法构造窗口，末尾重复边界值并提供 padding mask；不跨 episode 拼接。
-算法自身的尾帧配置仍生效（例如 Diffusion 的 `drop_n_last_frames`），
-日志中的 `window_excluded` 仅计窗口规则排除的起点，不包含安全标志过滤。
-中间坏片段应在数据处理阶段显式处理；不要删除中间时间后把两侧当作连续序列。
-Notebook 的原始反馈诊断图保留全部行，缺测行显示为 NaN 并列出位置。
-
-编辑器输出 AlohaMini 数据格式版本 3，可继续训练、编辑和回放，不支持追加录制。
-速度/电流训练须保留对应反馈、有效性掩码和采样时间。
-
 视频默认 H.264、CRF 18、GOP 2、`yuv420p`，每回合每相机一个 MP4。
 可用 `--operation.rgb_encoder.vcodec`、`.crf`、`.g`、`.preset`、`.pix_fmt` 调整。
 转换保持帧数和时间；`yuv420p` 要求偶数图像尺寸。
 
-`recompute_stats` 排除无效反馈，使用 FP64 数值统计和精确分位数；诊断保存在 `meta/stats_info.json`。
+`recompute_stats` 排除无效反馈，统计诊断保存在 `meta/stats_info.json`。
 `--operation.relative_action true --operation.chunk_size 50` 统计动作块的关节增量分布，不改写 action。
 训练归一化统计只使用训练回合；可自动计算或复用下方提前生成的统计文件。
 
@@ -79,7 +64,8 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 
 ## 3. 选择数据与输入
 
-平台统一录制 LeRobot v3 数据集，图像按相机保存为 MP4，额外舵机反馈作为数值列保留：
+ACT、AM-ACT、Diffusion、FastWAM、SmolVLA 和 π0.5 共用 LeRobot v3 数据读取接口，
+用于训练、验证和离线推理。各算法的 state、语言和动作表示要求见对应章节。
 
 | 目录 | 内容 |
 | --- | --- |
@@ -87,17 +73,14 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 | `videos/` | 各相机的 MP4；读取器按 episode 元数据和时间索引取帧 |
 | `meta/` | 字段定义、任务、统计、episode 索引，以及标定和实际采样时间等平台扩展信息 |
 
+缺少平台标定和安全记录的外部 v3 数据，训练时加 `--dataset.allow_unannotated=true`。
+有 state 时可用 `--state=recorded` 读取原向量，保留字段顺序和数值；纯视觉任务使用 `--state=none`。
+未提供的标定与单位会记为未知，不要求生成平台 sidecar。
+离线推理使用 checkpoint 保存的字段、预处理与缺失元信息声明；真机部署另按动作单位和标定检查。
 
+### 导出与纯视觉副本
 
-### 导出 v3 与纯视觉副本
-
-新录制的数据无需迁移。旧版平台数据若已有完整的 `previews/` 视频，可在仓库根目录运行：
-
-```bash
-python scripts/migrate_dataset_v3.py /path/to/old_dataset \
-  --output /path/to/dataset_v3
-```
-
+需要另存或移除数值观测时：
 
 ```bash
 alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
@@ -105,22 +88,22 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
   --format lerobot-v3 --vision-only
 ```
 
-默认 state 为双臂位置 14 维、底盘速度 3 维、升降高度 1 维。
+以 `alohamini2pro` 为例，默认 state 为双臂位置 14 维、底盘速度 3 维、升降高度 1 维。
 纯视觉副本保留视频和 action，去掉数值观测输入；视频直接复制，不改变配对、帧数或时间戳。早期导出的图片内嵌 Parquet 数据仍可读取，但不是当前采集格式。
 
 ### 输入参数
 
 | 参数 | 含义 |
 | --- | --- |
-| 省略 `--state` | 有位置 state 时使用 18 维，否则使用纯视觉 |
+| 省略 `--state` | 按算法预设选择；自动模式在外部 v3 中读取原 state，无 state 时使用纯视觉 |
 | `--state=none` | 纯视觉，无需另存数据副本 |
+| `--state=recorded` | 外部 v3 的原始 state 向量，不做单位换算 |
 | `--state=joint_position,base_velocity,lift_height` | 18 维位置、底盘速度与高度 |
 | `--state=joint_velocity,joint_current` | 双臂 28 维速度/电流，含夹爪 |
 | `--cameras='["forward","wrist_right"]'` | 使用指定相机；省略时使用全部记录相机 |
 
-字段按参数顺序组装。关节位置使用标定坐标，关节速度为对应坐标单位/秒，电流为 A；
+平台字段按参数顺序组装。关节位置使用标定坐标，关节速度为对应坐标单位/秒，电流为 A；
 底盘速度为 m/s、deg/s，升降高度为 mm。action 为双臂绝对位置目标、底盘速度及升降高度目标。
-
 
 ## 4. 训练
 
@@ -149,7 +132,6 @@ python -m alohamini.learning.train --config /path/to/train.json \
 
 `--stats` 只接受带 `--config` 生成的统计；数据或样本配置不匹配时须重新生成。
 省略 `--stats` 时训练自动计算。新训练均保存 `runs/<名称>/statistics.json`，checkpoint 保留实际使用的统计；恢复训练沿用 checkpoint。
-统计文件只保存汇总值和来源信息，不复制图像、逐帧样本或模型权重。
 
 ### ACT
 
@@ -166,6 +148,13 @@ python -m alohamini.learning.train \
 `--state=none` 使用纯视觉；`--image_size='[480,640]'` 设置高、宽。
 ResNet18 默认加载 ImageNet 权重，首次下载缓存到工作区 `pretrained/`。
 离线使用须提前准备；`--policy.pretrained_backbone_weights=null` 改为随机初始化。
+
+ACT 和 AM-ACT 新训练默认启用相机身份编码，将前视、左腕、右腕等图像与其来源对应。
+训练和推理使用同一组编码，相机名称及顺序随 checkpoint 保存；采集和部署时须保持相机命名一致。
+`--policy.use_camera_embeddings=false` 可关闭，保留原 ACT 的视觉融合方式。
+旧 checkpoint 的推理、续训及默认微调保留原配置；为旧模型补上编码时，在
+`--policy.path=<旧 checkpoint>` 微调命令中增加 `--policy.use_camera_embeddings=true`，
+使用新的输出目录，不使用 `--resume=true`。新增编码从零开始学习，需要微调后才具有区分能力。
 
 ### AM-ACT
 
@@ -246,8 +235,7 @@ state/action 使用训练集 min/max，动作仍是记录的关节目标、底�
 采用该发布基座的 flow shift=5。基座中的机器人输入／输出层缺失或维度不匹配时重新初始化。
 checkpoint 不重复打包冻结的 Wan／UMT5 文件，迁移机器时须保留配置中的资产路径；
 微调时也可用上述三个资源参数指定新路径。从平台 checkpoint 微调会恢复全部机器人输入／输出层。
-完整模型不适合本机 8 GB GPU；上例须在显存充足的机器上运行。
-目前已验证缩小网络的训练与加载，完整基座和真机效果尚未验收。
+完整基座需要较大显存，示例 batch 不保证适用于所有 GPU。
 
 ### SmolVLA
 
@@ -297,8 +285,7 @@ python -m alohamini.learning.train \
 双臂各 6 个关节预测相对当前 state 的增量，执行前还原为绝对目标；夹爪、底盘速度、升降高度保持原义。
 网络参数用 `--policy.network='{"action_horizon":30}'` 覆盖；checkpoint 自带 tokenizer。
 
-SmolVLA／π0.5 已完成小模型训练与保存加载验证，完整基座和真机任务尚未验收；
-完整基座的显存需求须单独评估，示例 batch 不保证适用于 8 GB GPU。
+SmolVLA／π0.5 的完整基座须按可用显存调整 batch 和精度。
 
 ### 日志与配置
 
@@ -308,35 +295,13 @@ cat ~/Alohamini_workspace/logs/training/act_01.pid
 ```
 
 命令行训练默认在后台运行，输出独立的日志、PID、配置路径和可复制的 `tail -f` 命令；输出目录须未使用。
-不再需要添加 `--background`，旧命令带这个选项也兼容。需要直接在当前终端运行时使用 `--foreground`。
+需要直接在当前终端运行时使用 `--foreground`。
 关闭终端或按 Ctrl+C 退出 `tail -f` 只停止日志查看，不会停止后台训练。
 直接由 `torchrun` 启动时，每个 rank 在当前进程运行，不再启动新的后台任务。
-`--config examples/learning/act.json` 可代替长命令；先修改数据路径、输出目录和回合编号，命令行参数优先。
-
-训练控制台沿用 LeRobot 的打印格式：`INFO 日期 时间 源文件:行号 消息`，
-初始化显示配置、数据集、策略、优化器、输出目录、样本/回合数、有效 batch size 和参数量。
-数据校验告警和异常仍会输出；源码位置、配置和指标使用本平台的真实值。
-同次训练的训练集与验证集复用未变化数据的完整性检查结果；文件变化会重新校验，大数据集首次校验可能较久。
-
-`--log_freq=100` 仅在更新步数为 100 的倍数时打印区间平均指标，首步和末步不再额外打印；
-`0` 关闭训练指标行，进度条、验证结果和 checkpoint 提示仍显示。字段顺序为：
-
-```text
-step:1K smpl:2K ep:4 epch:0.20 loss:3.000 grdn:4.000 lr:1.0e-05 updt_s:0.125 data_s:0.500 smp/s:3 mem_gb:1.89 l1:1.0000 kl:0.2000 kl_w:2.0000
-```
-
-`step`、`smpl`、`ep` 使用 K/M 等十进制缩写；`loss`、`grdn`、`lr` 为区间均值，
-`data_s`、`updt_s` 为平均加载/更新耗时，`smp/s` 为样本吞吐量。
-CUDA 下 `mem_gb` 为每步峰值已分配显存的区间均值（GiB）；多卡耗时和显存取各卡区间均值的最大值。
-有效 batch size 包含卡数和梯度累积。`smpl` 保留实际消费样本计数（含重复采样和 AMP 跳过更新时消费的样本），
-`epch` 是相对可用训练样本数的遍历次数，`ep` 按平均回合长度换算，不是完成的回合数。
-
-前台与默认后台模式均使用原生 `tqdm` 进度条，显示百分比、步数、已运行时间、预计剩余时间和速度；
-速度自动显示为 `step/s` 或 `s/step`，按 tqdm 默认平滑方式估算。后台日志也包含回车刷新字符。
-续训进度条从 0 开始，总数为本次剩余训练步数；指标行中的 `step` 仍是累计更新步数。
-设置了 `SLURM_JOB_ID` 时不显示进度条。计时不含初始化和训练循环结束后的最终离线评估。
-验证完成打印总损失和实际计算的分项，例如 `step N: eval_loss=0.1234 l1:0.1234`；保存前打印 `Checkpoint policy after step N`，
-完成时打印 `End of training`。训练期间不额外打印逐批验证和最终 MAE 汇总；最终 MAE 保存在 `offline-evaluation.json`。
+可完全使用命令行参数，也可把 `examples/learning/act.json` 复制到工作区的 `configs/`，
+修改数据路径、运行名称和回合编号后用 `--config /路径/train.json` 加载。
+命令行参数优先，例如 `--steps=150000` 覆盖配置中的总步数。
+个人实验配置留在工作区，不放入仓库的 `examples/`。
 
 每一步的原始指标仍写入运行目录的 `metrics.jsonl`，续训写入 `metrics-from-*.jsonl`：
 
@@ -344,92 +309,17 @@ CUDA 下 `mem_gb` 为每步峰值已分配显存的区间均值（GiB）；多�
 tail -f ~/Alohamini_workspace/runs/act_01/metrics.jsonl
 ```
 
-损失分项默认开启，无需新参数。总损失保留为 `loss`，各策略显示自己的组成：
-
-| 策略 | 控制台分项 |
-|---|---|
-| ACT | `l1`、`kl`、`kl_w`（KL 乘配置权重后的贡献） |
-| AM-ACT | `l1`、`kl`、`kl_w`；配置离散动作时增加 `ce`、`ce_w` |
-| Diffusion | `diffusion` |
-| SmolVLA、π0.5 | `flow` |
-| FastWAM | `video_w`、`action_w`（模型返回的已加权项） |
-
-训练控制台中的总损失和分项均为最近日志窗口内**成功 optimizer step 的均值**。
-每一步先按策略声明的分母合并梯度累积的各 microbatch 和各 rank；ACT L1 按有效动作元素计数，KL 按样本计数。
-AM-ACT 分组 L1 保留模型的组权重；分类损失保留类别权重，按有效分类目标计数。
-未计算的分项不会显示为零：例如 ACT/AM-ACT 验证不计算 KL，关闭 VAE 后训练也不显示 KL。
-策略损失公式、反向传播和归一化统计不受分项日志影响。
-
-`metrics.jsonl` 的 `metrics` 保存分项值，`metric_totals` 保存各项 `sum` 与 `count`；
-AM-ACT 各动作组、各离散头以及 SmolVLA 中间诊断均值也保存在其中，不全部展开到控制台。
-`metrics-schema.json` 记录名称映射、权重、分母含义和汇总口径。
-周期验证另存为 `validation-metrics.jsonl`，按整个验证集的对应分母汇总，不平均 batch 均值。
-续训的这两类附属文件沿用 `metrics-from-*.jsonl` 的步数和运行标识，避免覆盖已有记录。
-SmolVLA 中间诊断保留其包含 padding 零值的均值口径，不应当作为可相加的损失项；
-π0.5 保留 padded action width 和重复尾部目标参与均值，FastWAM 保留先算各样本损失再平均的规则。
-
-ACT／AM-ACT 按记录行构造动作块，仅在 episode 边界补齐，尾部 padding 不参与动作损失。
-相机抖动和控制事件不自动分段；读取器不自动重采样。缺失反馈只影响需要该字段的样本。
-
 ### 验证与视频加载
 
-周期验证与训练结束后的离线 MAE 共用一个按顺序读取的 DataLoader；worker、预取和锁页内存的配置规则与训练相同。
-验证 batch 默认沿用训练 batch，可单独覆盖；例如在原训练命令后追加：
+`--eval_steps` 设置验证间隔，`--eval_batch_size` 设置验证 batch；
+`--eval_num_workers`、`--eval_prefetch_factor` 可独立配置验证加载。
+未指定时沿用对应训练设置，worker 为 0 时关闭多进程预取。
+ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比较。
 
-```text
---eval_batch_size=8 --eval_num_workers=2 --eval_prefetch_factor=2 \
---eval_persistent_workers=true --eval_log_freq=50
-```
-
-这些参数分别设置验证 batch、worker 数、每个 worker 的预取批数、跨验证保留 worker 和进度打印间隔。
-`eval_*` 加载参数未指定时继承对应训练设置；`eval_log_freq` 默认 50。训练控制台遵循上述简洁格式，逐批进度不打印；
-独立离线评估保留逐批进度，每轮首次和末批也打印，中间超过 10 秒会在完成当前批后报告。
-worker 为 0 时关闭多进程预取与持久 worker。增加 worker/预取会增加主机内存需求，具体吞吐以测量为准。
-
-独立离线评估日志显示 `batches`、已处理样本与有效动作步数、`data_s`（平均等待下一批的时间）、
-`compute_s`（预处理、传输、模型及指标计算的平均时间）、吞吐量和剩余时间。
-CUDA 在计时边界同步，避免把异步计算算成数据等待；`compute_s` 不等于纯 GPU kernel 时间。
-
-周期 `eval_loss` 按策略声明的各项有效计数汇总。ACT/AM-ACT 的动作损失按非 padding 的动作步数加权，验证模式不计算 KL；
-与旧版的 batch loss 简单平均有意不同，比较旧日志时应注意统计口径。随机策略还会受模型采样影响，改变 batch 不保证逐值相同。
-离线 `mae_by_action` 继续按有效动作步数累计，字段和单位不变。
-
-训练器自动选择已安装的 TorchCodec，没有安装时使用 PyAV，无需额外选择数据管线。
-默认在每个 worker 内并行读取最多三路视频相机，保留最多 32 个解码器；缓存按进程隔离，淘汰时释放资源。
-训练中的周期验证与最终离线 MAE 使用相同配置。单相机与 Parquet 内嵌图像沿用串行读取。
-所有已注册策略默认以 uint8 传递原尺寸的 8 位 RGB 图像，减少 worker 交付的数据量；各模型 processor 分别适配输入。
-需要 resize 的图像保留原来的 float32 插值路径，避免 uint8 插值/重新量化改变训练输入。
-
-帧索引、时间戳容差和 episode 边界规则保持不变，不插值、不换邻近帧、不跳过解码错误。
-每个解码器使用一个 FFmpeg 解码线程。实际选定的配置随训练配置和 checkpoint 保存；显式配置优先于默认值。
-旧命令中的 `--video_cache_size=8` 会继续覆盖默认值，可删除该项以使用自动默认配置。
-
-仅在排查性能时需要覆盖 `--video_backend=pyav|torchcodec`、`--camera_workers`、`--video_cache_size`
-或 `--return_uint8=true|false`；缓存设为 0 表示逐次打开并关闭指定后端的解码器。
-这些读取选项允许在续训时修改，训练 batch、样本顺序及模型参数的断点一致性要求不变。
-图像交付类型不决定模型预处理：
-
-| 模型 | processor 和模型内的图像处理 |
-|---|---|
-| ACT／AM-ACT | 转 `[0,1]`，再使用 checkpoint 的视觉归一化配置 |
-| Diffusion | 转 `[0,1]`，保留配置中的归一化、resize 和 crop |
-| SmolVLA | 转 `[0,1]`，保留模型内的补边及 SigLIP `[-1,1]` 映射 |
-| FastWAM | 转 `[0,1]`，保留时序窗口、相机拼接和 Wan 内部处理 |
-| π0.5 | 原始 uint8 直接进入 OpenPI 的补边缩放及 `[-1,1]` 映射 |
-
-已插值的 float32 图像仍走原来的浮点路径，不为统一交付类型而重新量化。
-显式 `--return_uint8=false` 可保留旧交付方式；两种方式不会更换已保存的归一化统计。
-
-独立离线评估同样支持加载配置，CLI 默认 4 个 worker（Python API 为 0）：
-
-```bash
-python -m alohamini.learning.evaluate \
-  --policy.path ~/Alohamini_workspace/runs/act_01/checkpoint \
-  --dataset.root ~/Alohamini_workspace/datasets/task_demo_ready \
-  --dataset.episodes '[1]' --device cuda --batch_size 8 \
-  --num_workers 2 --prefetch_factor 2 --persistent_workers true \
-  --log_freq 50 --video_cache_size 8
-```
+训练器优先使用已安装的 TorchCodec，否则使用 PyAV。
+需要调整读取性能时，可设置 `--video_backend=pyav|torchcodec`、`--camera_workers`、
+`--video_cache_size`；增大 worker、预取与缓存会增加主机内存占用。
+图像按各策略的尺寸、裁剪和归一化规则处理，配置随 checkpoint 保存。
 
 ### 优化器、精度与多卡
 
@@ -458,26 +348,19 @@ Diffusion／FastWAM 使用 `diffusers_cosine`；
 多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
 
 FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出分片训练状态和完整推理权重。
-当前仅 ACT／AM-ACT 支持 FSDP2，已验证单卡；实际多 GPU／多节点仍需验收。ZeRO、张量并行未接入。
+当前仅 ACT／AM-ACT 支持 FSDP2；不支持 ZeRO 或张量并行。
 
 ## 5. 保存与续训
 
-每 `save_freq` 步及训练结束时保存 checkpoint：
+### 保存模型
 
-| 路径 | 内容 |
-| --- | --- |
-| `runs/<名称>/train.json` | 训练配置 |
-| `runs/<名称>/metrics*.jsonl` | 训练指标 |
-| `runs/<名称>/checkpoints/<step>/pretrained_model/` | 权重、模型配置、预处理信息、资源与训练配置 |
-| `runs/<名称>/checkpoints/<step>/training_state/` | 优化器、随机数、采样和恢复状态 |
-| `runs/<名称>/checkpoints/last` | 最近完整保存点 |
-| `runs/<名称>/checkpoint` | 最近保存点的模型目录 |
+`--save_freq=5000` 表示每完成 5000 个训练步保存一次，训练结束时也会保存。
+最近保存的模型位于 `runs/<运行名称>/checkpoint`，可用于微调或推理。
+若需要中断续训，保留整个运行目录；仅复制模型权重不足以恢复训练。
 
-模型目录包含 `model.safetensors`、`policy.json`、`config.json`、`preprocessing.json`
-和 `train_config.json`。`policy.json` 保存完整描述与资源清单；后两个 JSON 分别展示模型配置
-和归一化统计、字段、单位、相机及图像尺寸，与完整描述保持一致。旧版仅含 `policy.json`
-及权重／所需资源的模型目录仍可读取，无需转换。SmolVLA 的 tokenizer／骨干配置、π0.5 的
-tokenizer 使用目录内相对路径；FastWAM 的冻结资源保留外部引用。
+### 中断后恢复原训练
+
+数据和训练设置不变，只是进程中断时，使用保存的训练配置恢复：
 
 ```bash
 python -m alohamini.learning.train \
@@ -485,42 +368,107 @@ python -m alohamini.learning.train \
   --resume=true --background
 ```
 
-ACT、AM-ACT、Diffusion、SmolVLA、π0.5、FastWAM 均可从平台 checkpoint 微调。
-`--policy.path` 接受模型目录或其上级步数目录，策略类型自动读取，也可显式指定并校验：
+| 选项 | 作用 |
+| --- | --- |
+| `--config_path` | 读取该次训练保存的配置，无需重新填写数据路径和训练参数 |
+| `--resume=true` | 从最近保存的训练步继续，恢复权重、优化器和学习率进度 |
+| `--background` | 在后台运行；启动后打印日志与 PID 路径 |
+
+恢复时保持训练/验证数据、模型、学习率、调度器、batch、精度及多卡设置一致。
+若原训练使用 `--scheduler.type=none`，可追加 `--steps=150000` 延长训练。
+这里的步数是累计总目标：已训练 100000 步时，设为 150000 表示再训练 50000 步。
+启用学习率调度的原运行须保持原定总步数。
+
+### 补充数据或调整学习率后微调
+
+新增示范、改用合并数据集、更换验证回合，或希望调整学习率时，使用 `--policy.path`
+加载已有模型，并指定一个新的输出目录。此时不加 `--resume=true`。
+六种算法均支持从平台 checkpoint 微调；下面以 ACT／AM-ACT 为例：
 
 ```bash
 python -m alohamini.learning.train \
   --policy.path="$HOME/Alohamini_workspace/runs/act_01/checkpoint" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/new_task_ready" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/merged_task" \
+  --dataset.eval_episodes='[1]' \
   --output_dir="$HOME/Alohamini_workspace/runs/act_finetune_01" \
-  --steps=20000 --batch_size=2 --background
+  --policy.device=cuda \
+  --optimizer.lr=5e-6 \
+  --policy.optimizer_lr_backbone=5e-6 \
+  --scheduler.type=none \
+  --steps=50000 --batch_size=2 \
+  --save_freq=5000 --eval_steps=1000 --log_freq=100 \
+  --background
 ```
 
-模型结构、相机选择、图像尺寸和 state 选择默认沿用 checkpoint，显式参数可覆盖；
-权重严格匹配，动作字段顺序、单位和输入语义不匹配时会报错。加载完整模型时不再下载 ImageNet 骨干。
+替换数据集路径和验证回合编号；合并数据后按合并后的编号选择验证回合。
+验证示范不要与训练示范重复。模型结构、相机、图像尺寸和 state 选择默认沿用旧模型，
+新数据的动作字段、单位和输入含义须与它匹配。
 
-| 微调参数 | 归一化统计 |
+| 选项 | 作用 |
 | --- | --- |
-| 省略或 `--normalization=dataset` | 按本次训练数据重算 |
-| `--stats=/path/to/statistics.json` | 使用与本次训练配置匹配的统计文件 |
-| `--normalization=checkpoint` | 保留来源 checkpoint 的统计；不能同时指定 `--stats`，动作增量及归一化方式须保持一致 |
+| `--policy.path` | 要继续学习的已有模型，策略类型自动读取 |
+| `--dataset.root` | 本次微调使用的数据集目录 |
+| `--dataset.eval_episodes='[1]'` | 留出回合 1 做验证；未指定训练回合时，其余回合用于训练 |
+| `--output_dir` | 新模型的保存目录，须尚不存在；原模型保留 |
+| `--policy.device=cuda` | 使用 GPU 训练；`cpu` 使用 CPU |
+| `--steps=50000` | 本次微调训练 50000 步，不包含旧模型已经训练的步数 |
+| `--batch_size=2` | 每个进程每批读取 2 个样本；增大会增加显存需求 |
+| `--save_freq=5000` | 每 5000 步保存模型 |
+| `--eval_steps=1000` | 每 1000 步在留出的回合上验证；须同时指定验证回合 |
+| `--log_freq=100` | 每 100 步打印一次训练指标 |
 
-这是新训练：步数从 0 开始，优化器和调度器重新初始化，`--steps` 是新训练的总步数。
-恢复原运行使用上面的 `--resume=true`，同时恢复模型、统计和训练状态，不依赖最初微调来源的路径。
+微调保留已有权重，但重新开始优化器和学习率计划。上例中的步数、batch 和学习率均可按任务调整。
 
-平台格式中的 `config.json` 不代表能直接由 LeRobot 或各策略官方加载器读取。
-外部基座仍按各策略章节的格式导入；ACT／AM-ACT 目前仅接受平台 checkpoint。
+### 调整学习率
 
-续训保持数据、模型、输入、优化器、调度器、进程数、累积次数及精度一致。
-未启用调度时可用 `--steps=150000` 增加总步数；启用调度时保持原定总步数。
-仅有权重、没有 `training_state/` 的目录不能恢复完整训练状态。
+学习率控制每次训练更新参数的幅度。较小的值通常使已有模型改变得更缓慢，
+但不保证更高成功率，应结合验证指标选择。`5e-6` 就是 `0.000005`。
 
-当前样本规则版本为 `episode_windows_v2`。新训练的统计按所选 episode 中实际用于算法窗口的
-数据重算；绝对值字段每个物理行只计一次，π0.5 的派生增量继续按其算法窗口统计。
-旧规则生成的 `--stats` 文件须重新生成。
-旧 checkpoint 推理继续使用其保存的统计；从旧过滤规则或未记录规则版本的保存点 `--resume`
-会明确报错，避免改变原实验的样本范围。需要精确续训时使用原版本训练器；
-改用新规则训练时通过 `--policy.path` 开始新运行。
+| 选项 | 作用 |
+| --- | --- |
+| `--optimizer.lr=5e-6` | 设置主学习率；在 ACT／AM-ACT 中用于视觉骨干以外的网络 |
+| `--policy.optimizer_lr_backbone=5e-6` | 单独设置 ACT／AM-ACT 的视觉骨干学习率，控制图像特征提取网络的更新幅度 |
+| `--scheduler.type=none` | 不随训练步数改变学习率，各部分始终使用设定值；不是停止学习 |
+
+**只改 `--optimizer.lr` 不会覆盖 ACT／AM-ACT 的视觉骨干学习率。**
+想让两部分使用同一学习率，就像上例一样同时设置；想让视觉特征变化更小，
+可分别设为 `--optimizer.lr=5e-6 --policy.optimizer_lr_backbone=1e-6`。
+其他算法使用各自的参数分组，不要直接套用 ACT 的骨干选项。
+
+若希望先逐渐提高学习率、再逐渐降低，可将微调命令中的 `--scheduler.type=none` 替换为：
+
+```text
+--scheduler.type=warmup_cosine \
+--scheduler.warmup_steps=1000 \
+--scheduler.decay_steps=50000 \
+--scheduler.decay_lr=5e-7
+```
+
+| 选项 | 作用 |
+| --- | --- |
+| `--scheduler.type=warmup_cosine` | 先预热，再按余弦曲线降低学习率 |
+| `--scheduler.warmup_steps=1000` | 前 1000 步从较小学习率逐渐提高到设定值 |
+| `--scheduler.decay_steps=50000` | 到本次训练第 50000 步时降到目标值，包含预热阶段 |
+| `--scheduler.decay_lr=5e-7` | 主学习率的最终目标；其他参数组按相同比例降低 |
+
+调度器不为 `none` 时，`--optimizer.lr` 指设定的峰值，不代表每一步的实际学习率。
+使用 `none` 时不填写上述预热和衰减参数。
+
+### 选择归一化统计与查看日志
+
+| 微调选项 | 作用 |
+| --- | --- |
+| 省略或 `--normalization=dataset` | 默认按本次训练数据重算统计，验证回合不参与 |
+| `--normalization=checkpoint` | 沿用旧模型的统计，不根据新增数据重算 |
+| `--stats=/路径/statistics.json` | 使用预先生成、与本次数据及训练配置匹配的统计文件，不能与上一项同时使用 |
+
+后台微调的日志和 PID 位于 `~/Alohamini_workspace/logs/training/`。查看上例日志：
+
+```bash
+tail -f ~/Alohamini_workspace/logs/training/act_finetune_01.log
+```
+
+退出 `tail -f` 不会停止训练。恢复原运行时日志名带有续训标识，使用启动时打印的实际日志路径。
 
 ## 6. 离线评估
 
@@ -577,7 +525,7 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
   --policy.path ~/Alohamini_workspace/runs/pretrained_model \
   --device cuda --fps 30 --episode_time 10 \
   --fixed-dimensions arm_right \
-  --fixed-dataset ~/Alohamini_workspace/datasets/module_to_shape_4_cleaned
+  --fixed-dataset ~/Alohamini_workspace/datasets/task_demo_ready
 ```
 
 支持左右臂、升降、底盘组和具名关节，字段与采集选项相同。已有固定配置继续继承，补选只增加固定维度。
@@ -593,14 +541,19 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 表示右臂用原有固定目标或训练动作均值、升降保持启动时高度。同一字段不能同时出现在两组选项中。
 仅省略 `--fixed-dataset` 不会改变 `--fixed-dimensions` 原有的均值语义。
 
+### 标定兼容
 
-### 换机器后的标定兼容
+| `--calibration-mode` | 用途 |
+| --- | --- |
+| `strict`（默认） | 要求训练标定与 Host 一致 |
+| `normalized` | 同型号机器间按归一化关节比例迁移，须有训练标定 |
+| `legacy_normalized` | 原始 LeRobot v3 模型缺少标定时，显式声明动作单位并绑定当前 Host |
 
-默认 `--calibration-mode strict` 要求 checkpoint 与 Host 的标定一致。
-换到另一台同型号机器、希望按关节范围比例迁移策略时，可在评估命令追加：
+`legacy_normalized` 仅适用于普通关节 `[-100,100]`、夹爪 `[0,100]`、
+底盘平移 m/s、旋转 deg/s、升降 mm 的数据，动作名称与顺序须匹配型号。
+使用 state 时，原 state 也须为相同名称与顺序的 Host 位置、底盘速度和升降高度。
+迁移不会恢复旧机器的物理姿态或升降零点；升降零点不明确时，
+可加 `--fixed-current lift_axis` 保持启动高度。
 
-```bash
---calibration-mode normalized
-```
-
-
+使用 `--fixed-current` 前，先遥操摆好位置，再退出遥操并保持同一 Host 进程。
+绑定标定与固定目标报告保存在工作区 `logs/evaluation/`；运行中标定变化会结束评估。

@@ -3,3 +3,11 @@ recursive-include examples/debug *.py
 include environment.yml
 recursive-include docs *.md
 recursive-include env *.lock *.txt *.in *.yml *.py
+include examples/learning/act.json
+include examples/learning/am_act_cvae.json
+include examples/learning/custom_policy.py
+include examples/learning/local_act.ipynb
+prune .local
+prune configs
+global-exclude *.local.json
+prune examples/learning/.ipynb_checkpoints

@@ -1,6 +1,8 @@
-# 客户端接口
+# 客户端接口参考
 
 `alohamini.client.HostClient` 读取状态和图像、发送具名运动目标。命令行只读查询使用 `alohamini inspect`。
+
+本文面向自定义客户端与策略开发；日常遥操、数采和评估见[使用手册](alohamini.md)与[训练与部署](training.md)。
 
 ## Python 读取
 
@@ -9,7 +11,7 @@
 ```python
 from alohamini.client import HostClient
 
-with HostClient("192.168.8.161", expected_model="alohamini2pro") as robot:
+with HostClient("robot-host", expected_model="alohamini2pro") as robot:
     snapshot = robot.read()
     print(snapshot.robot_model)
     print(snapshot.payload["_safety"])
@@ -87,7 +89,7 @@ Host 对有效且获准的命令完成控制器硬件写入后，才更新命令
 ## Python 策略评估
 
 ```bash
-alohamini evaluate --host 192.168.8.161 --robot_model alohamini2pro \
+alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
   --policy my_policy:load --episode_time 30
 ```
 
@@ -100,7 +102,11 @@ alohamini evaluate --host 192.168.8.161 --robot_model alohamini2pro \
 
 策略负责模型加载、图像解码、预后处理和输出坐标转换。示例见 `examples/learning/custom_policy.py`。
 
-默认一回合、60 秒、30 Hz；`--num_episodes`、`--reset_time` 设置回合数和复位时间。`--dataset 名称 --task "任务"` 保存输入、已接受目标和实际采样时间；实际频率受推理耗时限制。
+默认一回合、60 秒、30 Hz；`--num_episodes`、`--reset_time` 设置回合数和复位时间。`--dataset 名称 --task "任务"` 保存输入、已提交请求和实际采样时间；实际频率受推理耗时限制。
+
+策略返回有限的具名目标。Host 按标定将普通归一化关节限制到 `[-100,100]`、夹爪限制到 `[0,100]`，并限制升降行程；degree 关节越界会被拒绝。评估记录保留原始提交值。
+
+评估帧的 `action`／`requested_action` 保存实际提交的请求（包括可能越界的归一化值），并在 safety sidecar 中标记 `action_semantics="host_request_v1"`。`policy_action` 保存固定维度覆盖之前的预测。这些字段不表示执行确认；本帧的 `_safety` 是发命令之前的反馈，须用后续反馈的完整命令身份匹配 `accepted_targets`，不能直接当作当前请求的结果。训练读取不会自动把请求改成接受目标。
 
 评估使用 Host 已开启的相机。关节保护或持续失联时暂停，恢复后清空旧策略缓存并继续；Host 重启、其他客户端接管、标定或升降参考变化时结束。结束时在仍持有控制权的条件下请求位置保持和底盘归零。Host 看门狗在推理期间持续生效。
 

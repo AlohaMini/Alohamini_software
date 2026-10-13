@@ -133,6 +133,7 @@ def _open_host(
             position_calibrations={
                 m.name: positions[m.name] for m in motors if m.name in positions
             },
+            position_units={m.name: units[m.name] for m in motors if m.name in units},
             velocity_limits={
                 m.name: 1300 if m.name == "lift_axis" else 3000
                 for m in motors
@@ -151,7 +152,6 @@ def _open_host(
         devices,
         joints,
         LiftAxisSpec(lift, model.lift_lead_m_per_rev, -1),
-        units,
         cameras={name: OpenCVCamera(config) for name, config in cameras.items()},
         bind_host=bind_host,
         command_port=command_port,

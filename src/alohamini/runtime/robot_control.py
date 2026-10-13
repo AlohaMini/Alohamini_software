@@ -1,6 +1,7 @@
 """Whole-robot coordination over the existing arm and base/lift controllers."""
 
 import time
+from collections.abc import Callable
 
 from alohamini.errors import CommandRejectedError
 from alohamini.hardware.feedback import FeedbackBatch
@@ -46,48 +47,51 @@ class RobotController:
         return BodyVelocity() if previous is None else previous.body_velocity
 
     def validate_targets(self, command: RobotCommand) -> None:
+        self._prepare_write(command)
+
+    def _prepare_write(self, command: RobotCommand) -> Callable[[], None]:
+        """Validate all subsystems before returning a cycle-local staging callback."""
+        started = time.perf_counter()
         if not isinstance(command, RobotCommand):
             raise TypeError("Expected RobotCommand")
         if self.base_lift.lift_homing:
             raise CommandRejectedError("Lift homing is in progress")
+        stages = []
         try:
             if command.positions_rad:
-                self.arms.validate_targets(command.positions_rad)
+                stages.append(self.arms._prepare_targets(command.positions_rad))
             if (
                 command.base_velocity is not None
                 or command.lift_height_m is not None
                 or command.lift_stop
             ):
-                self.base_lift.validate_targets(
-                    self._base_target(command),
-                    lift_height_m=command.lift_height_m,
-                    lift_stop=command.lift_stop,
+                stages.append(
+                    self.base_lift._prepare_targets(
+                        self._base_target(command),
+                        lift_height_m=command.lift_height_m,
+                        lift_stop=command.lift_stop,
+                    )
                 )
         except (ValueError, RuntimeError) as exc:
             raise CommandRejectedError(str(exc)) from exc
+        prepared_s = time.perf_counter() - started
+
+        def stage():
+            started = time.perf_counter()
+            for apply in stages:
+                apply()
+            self.timing_ms["prepare"] = (prepared_s + time.perf_counter() - started) * 1e3
+
+        return stage
 
     def set_targets(self, command: RobotCommand) -> None:
-        started = time.perf_counter()
-        self.validate_targets(command)
-        if command.positions_rad:
-            self.arms.set_targets(command.positions_rad)
-        if (
-            command.base_velocity is not None
-            or command.lift_height_m is not None
-            or command.lift_stop
-        ):
-            self.base_lift.set_targets(
-                self._base_target(command),
-                lift_height_m=command.lift_height_m,
-                lift_stop=command.lift_stop,
-            )
-        self.timing_ms["prepare"] = (time.perf_counter() - started) * 1e3
+        self._prepare_write(command)()
 
     def submission(self, identity: CommandIdentity, command: RobotCommand) -> CommandSubmission:
         return CommandSubmission(
             identity,
             lambda: self.set_targets(command),
-            lambda: self.validate_targets(command),
+            lambda: self._prepare_write(command),
         )
 
     def supervise(self) -> None:

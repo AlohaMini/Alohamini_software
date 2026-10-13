@@ -133,8 +133,25 @@ class EncoderCalibrationTests(unittest.TestCase):
         for value in (float("nan"), float("inf"), True, "1", 10**400):
             for method in (
                 self.calibration.position_to_tick,
+                self.calibration.validate_position,
                 self.calibration.velocity_from_ticks_per_second,
             ):
+                with self.subTest(value=value, method=method), self.assertRaises(ValueError):
+                    method(value)
+
+    def test_validation_preserves_encoding_limits_and_overflow_rejection(self):
+        for value in (-2.00005, 0, 2.00005):
+            self.calibration.validate_position(value)
+        overflowing = replace(
+            self.calibration, reference_position_rad=-1e308,
+            position_min_rad=0, position_max_rad=1e308,
+        )
+        for calibration, value in (
+            (self.calibration, 2.001),
+            (self.calibration, -2.001),
+            (overflowing, 1e308),
+        ):
+            for method in (calibration.validate_position, calibration.position_to_tick):
                 with self.subTest(value=value, method=method), self.assertRaises(ValueError):
                     method(value)
 
