@@ -451,6 +451,10 @@ def evaluate(
     path = WorkspacePaths().dataset(dataset_name) if dataset_name is not None else None
     if path is not None and Path(path).exists():
         raise FileExistsError(f"Evaluation dataset already exists: {path}")
+    if path is not None:
+        from alohamini.analysis.provenance import capture_policy, write_evaluation
+
+        evaluation_context = capture_policy(policy)
     fixed_config = getattr(policy, "fixed_dimensions", None)
     if not isinstance(fixed_config, Mapping):
         fixed_config = None
@@ -483,6 +487,9 @@ def evaluate(
                 **({"fixed_dimensions": fixed_config} if fixed_config else {}),
             )
             cleanup.enter_context(preserve_dataset(dataset))
+            write_evaluation(
+                path, policy, evaluation_context, fps=fps, task=task, num_episodes=num_episodes
+            )
         for episode in range(num_episodes):
             if dataset is not None:
                 dataset.begin_episode()

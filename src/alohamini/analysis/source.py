@@ -62,7 +62,7 @@ def _dataset_path(root, template, **values):
     return path
 
 
-def load_episode(root: Path, episode: int) -> Episode:
+def load_episode(root: Path, episode: int, *, all_numeric=False) -> Episode:
     root = root.expanduser().resolve()
     info_path = root / "meta/info.json"
     signatures = {info_path: file_signature(info_path)}
@@ -123,6 +123,15 @@ def load_episode(root: Path, episode: int) -> Episode:
             for c in (*NUMERIC_COLUMNS, "timestamp", "frame_index", "episode_index")
             if c in file.schema_arrow.names
         ]
+        if all_numeric:
+            columns += [
+                k
+                for k in info["features"]
+                if k not in columns
+                and not k.startswith(IMAGE_PREFIX)
+                and k in file.schema_arrow.names
+                and info["features"][k].get("dtype") not in ("string", "image", "video")
+            ]
         if native:
             columns += [
                 IMAGE_PREFIX + c for c in cameras if IMAGE_PREFIX + c in file.schema_arrow.names

@@ -15,10 +15,42 @@ from alohamini.paths import WorkspacePaths
 
 def parser():
     command = argparse.ArgumentParser(
-        prog="alohamini dataset analyze", description="同步查看评估画面、动作和反馈，导出离线报告"
+        prog="alohamini dataset analyze", description="关联评估 checkpoint，对比训练示范与模型动作"
     )
     command.add_argument("root", type=Path, help="本地原生或 LeRobot v3 数据集目录")
     command.add_argument("--episode", type=int, default=0)
+    command.add_argument(
+        "--checkpoint", type=Path, help="旧评估补充模型关联，或重定位已记录的 checkpoint"
+    )
+    command.add_argument(
+        "--training-root", type=Path, help="训练数据搬迁后的本地路径，须通过 checkpoint 指纹检查"
+    )
+    command.add_argument("--reference-split", choices=("train", "val"), default="train")
+    command.add_argument(
+        "--reference-episode", type=int, help="示范 episode；默认 checkpoint 划分中的首条"
+    )
+    command.add_argument("--reference-segment", type=int, default=0)
+    command.add_argument("--reference-time-range", nargs=2, type=float, metavar=("START", "END"))
+    command.add_argument(
+        "--align",
+        nargs=2,
+        type=float,
+        metavar=("EVAL_S", "DEMO_S"),
+        help="把评估与示范中对应任务阶段的两个秒数对齐到 0；默认仅按各自起点并排",
+    )
+    command.add_argument(
+        "--control-diagnostics",
+        action="store_true",
+        help="额外显示命令、Host 反馈、电流和耗时；默认隐藏",
+    )
+    command.add_argument(
+        "--probe-samples",
+        type=int,
+        default=0,
+        help="显式加载 ACT/AM-ACT 模型，抽取若干示范观测预测 Chunk 并计算误差",
+    )
+    command.add_argument("--probe-device", default="cpu", choices=("cpu", "cuda"))
+    command.add_argument("--probe-seed", type=int, default=0)
     command.add_argument("--segment", type=int, default=0, help="时钟重置后的时间段编号，默认 0")
     command.add_argument(
         "--time-range", nargs=2, type=float, metavar=("START", "END"), help="所选时间段内的起止秒数"
@@ -68,6 +100,8 @@ def main(argv=None):
     args = parser().parse_args(argv)
     if args.media_budget_mb <= 0:
         raise ValueError("--media-budget-mb 必须大于 0")
+    if args.probe_samples < 0 or not 0 <= args.probe_seed < 2**32:
+        raise ValueError("probe-samples 必须非负，probe-seed 须在 [0, 2^32) 内")
     if args.assume_n_action_steps is None and (
         args.first_command_sequence is not None or args.assume_no_resets
     ):
@@ -92,10 +126,35 @@ def main(argv=None):
                 fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise RuntimeError("数据集正在录制/编辑，请结束后分析") from exc
+        from .comparison import prepare
         from .media import MediaReader
         from .metrics import analyze
+        from .provenance import reference_episode, resolve_context, verify_reference
         from .report import export_html, write_summary
         from .source import load_episode
+
+        context = resolve_context(
+            root,
+            checkpoint=args.checkpoint,
+            training_root=args.training_root,
+            reference_split=args.reference_split,
+        )
+        reference_index = reference_episode(context, args.reference_episode)
+        reference = None
+        if context["training_available"] and reference_index is not None:
+            reference_root = Path(context["training_root"])
+            if output.is_relative_to(reference_root):
+                raise ValueError("分析结果必须保存在训练数据集之外")
+            if (reference_root / "recording.lock").is_file() and reference_root != root:
+                reference_lock = stack.enter_context((reference_root / "recording.lock").open("rb"))
+                fcntl.flock(reference_lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            reference_data = load_episode(
+                reference_root, reference_index, all_numeric=args.probe_samples > 0
+            )
+            verify_reference(context, reference_data)
+            reference = analyze(
+                reference_data, segment=args.reference_segment, time_range=args.reference_time_range
+            )
 
         data = load_episode(root, args.episode)
         if args.cameras and (
@@ -111,11 +170,32 @@ def main(argv=None):
             first_command=args.first_command_sequence,
             no_resets=args.assume_no_resets,
         )
+        prepare(
+            result,
+            context,
+            reference=reference,
+            anchors=args.align,
+            diagnostics=args.control_diagnostics,
+        )
+        if args.probe_samples and reference is None:
+            raise ValueError("模型探针需要 checkpoint 对应的示范数据集在本机可用")
         if any(not result.times[0] <= t <= result.times[-1] for t in args.keyframes):
             raise ValueError("关键帧时间必须位于所选时间范围内")
         output.mkdir(parents=True)
         reader = MediaReader(workspace / "cache/evaluation-keyframes")
         stack.callback(reader.close)
+        if args.probe_samples:
+            from .probe import probe_reference
+
+            result.summary["demonstration_probe"] = probe_reference(
+                context,
+                reference,
+                reader,
+                output,
+                samples=args.probe_samples,
+                device=args.probe_device,
+                seed=args.probe_seed,
+            )
         if args.viewer == "rerun" or args.save_rrd:
             from .viewer import show
 
@@ -130,6 +210,9 @@ def main(argv=None):
         if args.export_html or args.keyframes:
             export_html(result, output, reader, keyframe_times=args.keyframes, cameras=args.cameras)
         data.unchanged()
+        if reference is not None:
+            reference.data.unchanged()
+            result.summary["warnings"].extend(reference.summary["warnings"])
         result.summary["performance"] = dict(
             elapsed_s=time.perf_counter() - started,
             keyframe_requests=reader.keyframe_requests,
