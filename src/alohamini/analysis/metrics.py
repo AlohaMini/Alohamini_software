@@ -17,6 +17,8 @@ class Analysis:
     summary: dict
     events: list[dict]
     series: dict[str, dict[str, np.ndarray]]
+    reference: Analysis | None = None
+    anchor_s: float = 0.0
 
 
 def finite(value):

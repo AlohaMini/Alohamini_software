@@ -1,4 +1,4 @@
-"""Rerun 0.26 views using original compressed video assets and a measured timeline."""
+"""Checkpoint-centered Rerun views: recorded evaluation and reference demonstration."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 
 import numpy as np
 
+from .provenance import display_config
 from .source import file_signature
 
 
@@ -19,67 +20,123 @@ def show(analysis, reader, *, spawn=True, rrd=None, cameras=None, media_budget_m
         stream.save(str(rrd))
     elif spawn:
         stream.spawn(memory_limit="25%")
-    series_views = []
-    for name in analysis.series:
-        if name.startswith("actions/"):
-            field = name.split("/", 1)[1]
-            units = analysis.summary["actions"][field]["unit"]
-            series_views.append(rrb.TimeSeriesView(origin=name, name=f"{field} [{units}]"))
-    blueprint = rrb.Blueprint(
-        rrb.Vertical(
-            rrb.Grid(*[rrb.Spatial2DView(origin=f"cameras/{c}", name=c) for c in cameras]),
-            rrb.Tabs(
-                *series_views,
-                rrb.TimeSeriesView(origin="currents_ma", name="Motor current (mA)"),
-                rrb.TimeSeriesView(origin="timing/select_action_ms", name="Select action (ms)"),
-                rrb.TimeSeriesView(origin="timing/camera_skew_ms", name="Camera skew (ms)"),
-                rrb.TimeSeriesView(
-                    origin="camera_state_offset_ms", name="State minus capture (ms)"
+    runs = [("evaluation", "评估", analysis)]
+    if analysis.reference is not None:
+        runs.append(("reference", "示范", analysis.reference))
+    images = rrb.Grid(
+        *[
+            rrb.Spatial2DView(origin=f"{prefix}/cameras/{camera}", name=f"{label} · {camera}")
+            for prefix, label, run in runs
+            for camera in cameras
+            if camera in run.data.media
+        ],
+        grid_columns=len(cameras) or 1,
+    )
+    views = []
+    for path in analysis.series:
+        if path.startswith("actions/"):
+            name = path.split("/", 1)[1]
+            units = analysis.summary["actions"][name]["unit"]
+            views.append(rrb.TimeSeriesView(origin=f"comparison/{path}", name=f"{name} [{units}]"))
+    if analysis.reference is not None:
+        for field in analysis.summary.get("comparison", {}).get(
+            "unverified_or_incompatible_fields", []
+        ):
+            if f"actions/{field}" in analysis.reference.series:
+                views.append(
+                    rrb.TimeSeriesView(
+                        origin=f"reference/actions/{field}", name=f"示范 · {field}（单独单位）"
+                    )
+                )
+    if analysis.summary.get("control_diagnostics", True):
+        views.extend(
+            rrb.TimeSeriesView(origin=f"evaluation/{path}", name=path)
+            for path in ("currents_ma", "timing/select_action_ms", "recording/command_sequence")
+        )
+    stream.send_blueprint(
+        rrb.Blueprint(
+            rrb.Vertical(
+                images,
+                rrb.Tabs(*views),
+                rrb.Horizontal(
+                    rrb.TextLogView(origin="evaluation/events", name="动作变化 / 当前帧"),
+                    rrb.TextDocumentView(origin="summary", name="模型与示范"),
                 ),
-                rrb.TimeSeriesView(origin="recording/command_sequence", name="Command sequence"),
+                row_shares=[4, 3, 2],
             ),
-            rrb.Horizontal(
-                rrb.TextLogView(origin="events", name="事件 / 当前帧"),
-                rrb.TextDocumentView(origin="summary", name="记录与解释"),
-            ),
-            row_shares=[4, 3, 2],
+            rrb.TimePanel(timeline="comparison_time", duration_cursor=0.0),
         )
     )
-    stream.send_blueprint(blueprint)
-    column = rr.TimeColumn("episode_time", duration=analysis.times)
+    budget = int(media_budget_mb * 1024 * 1024)
+    assets = {}
+    for prefix, _, run in runs:
+        selected_cameras = [c for c in cameras if c in run.data.media]
+        budget = _log_run(
+            stream,
+            run,
+            reader,
+            prefix,
+            selected_cameras,
+            budget,
+            analysis.summary.get("comparison", {}).get("comparable_fields", []),
+            assets,
+        )
+    context = analysis.summary.get("model_context", {})
+    checkpoint = context.get("checkpoint") or {}
+    details = {
+        "checkpoint": checkpoint.get("path"),
+        "kind": checkpoint.get("kind"),
+        "model_source": context.get("checkpoint_source"),
+        "effective_policy_config": display_config(context.get("effective_policy_config")),
+        "checkpoint_config": display_config(checkpoint.get("config")),
+        "camera_order": checkpoint.get("cameras"),
+        "demonstration_probe": analysis.summary.get("demonstration_probe"),
+        "comparison": {
+            k: v
+            for k, v in analysis.summary.get("comparison", {}).items()
+            if k != "reference_actions"
+        },
+        "warnings": analysis.summary["warnings"],
+        "interpretation": analysis.summary["interpretation"],
+    }
+    stream.log(
+        "summary", rr.TextDocument(json.dumps(details, ensure_ascii=False, indent=2)), static=True
+    )
+    stream.flush()
+    return stream
+
+
+def _log_run(stream, analysis, reader, prefix, cameras, budget, comparable, loaded):
+    import rerun as rr
+
+    stream.reset_time()
+    column = rr.TimeColumn("comparison_time", duration=analysis.times - analysis.anchor_s)
     frame_column = rr.TimeColumn(
-        "frame", sequence=[analysis.data.rows[i]["frame_index"] for i in analysis.indices]
+        f"{prefix}_frame", sequence=[analysis.data.rows[i]["frame_index"] for i in analysis.indices]
     )
     for path, series in analysis.series.items():
         for name, values in series.items():
+            destination = (
+                f"comparison/{path}/{prefix}_{name}"
+                if path.startswith("actions/")
+                and (prefix == "evaluation" or path.split("/", 1)[1] in comparable)
+                else f"{prefix}/{path}/{name}"
+            )
             stream.send_columns(
-                f"{path}/{name}",
+                destination,
                 indexes=[column, frame_column],
                 columns=rr.Scalars.columns(scalars=values),
             )
     for event in analysis.events:
-        stream.set_time("episode_time", duration=event["time_s"])
-        stream.set_time("frame", sequence=event["frame_index"])
-        stream.log("events/diagnostics", rr.TextLog(json.dumps(event, ensure_ascii=False)))
-    for position, i in enumerate(analysis.indices):
-        side = analysis.data.sidecars[i]
-        stream.set_time("episode_time", duration=float(analysis.times[position]))
-        stream.set_time("frame", sequence=analysis.data.rows[i]["frame_index"])
+        stream.set_time("comparison_time", duration=event["time_s"] - analysis.anchor_s)
+        stream.set_time(f"{prefix}_frame", sequence=event["frame_index"])
+        stream.log(f"{prefix}/events", rr.TextLog(json.dumps(event, ensure_ascii=False)))
+    for p, i in enumerate(analysis.indices):
+        stream.set_time("comparison_time", duration=float(analysis.times[p] - analysis.anchor_s))
+        stream.set_time(f"{prefix}_frame", sequence=analysis.data.rows[i]["frame_index"])
         stream.log(
-            "events/frame",
-            rr.TextLog(
-                json.dumps(
-                    {
-                        "frame": analysis.data.rows[i]["frame_index"],
-                        "issued_command": side.get("issued_command"),
-                        "feedback_command": side.get("safety", {}).get("command"),
-                    },
-                    ensure_ascii=False,
-                )
-            ),
+            f"{prefix}/events/frame", rr.TextLog(f"frame {analysis.data.rows[i]['frame_index']}")
         )
-    budget = int(media_budget_mb * 1024 * 1024)
-    loaded = {}
     for camera in cameras:
         if budget <= 0:
             analysis.summary["warnings"].append(f"{camera}: 媒体预算已用尽，未加载画面。")
@@ -103,7 +160,7 @@ def show(analysis, reader, *, spawn=True, rrd=None, cameras=None, media_budget_m
                     signature = file_signature(path)
                     asset = rr.AssetVideo(path=path)
                     stamps = asset.read_frame_timestamps_nanos()
-                    asset_entity = f"assets/video_{len(loaded)}"
+                    asset_entity = f"{prefix}/assets/video_{len(loaded)}"
                     stream.log(asset_entity, asset, static=True)
                     if file_signature(path) != signature:
                         raise ValueError("读取期间视频发生变化")
@@ -121,10 +178,14 @@ def show(analysis, reader, *, spawn=True, rrd=None, cameras=None, media_budget_m
                 # Explicit source PTS, never host seconds substituted as media PTS.
                 for p, pts in zip(selected, np.asarray(stamps)[source_frames], strict=True):
                     i = analysis.indices[p]
-                    stream.set_time("episode_time", duration=float(analysis.times[p]))
-                    stream.set_time("frame", sequence=analysis.data.rows[i]["frame_index"])
+                    stream.set_time(
+                        "comparison_time", duration=float(analysis.times[p] - analysis.anchor_s)
+                    )
+                    stream.set_time(
+                        f"{prefix}_frame", sequence=analysis.data.rows[i]["frame_index"]
+                    )
                     stream.log(
-                        f"cameras/{camera}",
+                        f"{prefix}/cameras/{camera}",
                         rr.VideoFrameReference(nanoseconds=int(pts), video_reference=entity),
                     )
             except (OSError, ValueError, RuntimeError) as exc:
@@ -133,8 +194,10 @@ def show(analysis, reader, *, spawn=True, rrd=None, cameras=None, media_budget_m
             ref = refs[i]
             if ref is not None and ref.kind == "video":
                 continue
-            stream.set_time("episode_time", duration=float(analysis.times[p]))
-            stream.set_time("frame", sequence=analysis.data.rows[i]["frame_index"])
+            stream.set_time(
+                "comparison_time", duration=float(analysis.times[p] - analysis.anchor_s)
+            )
+            stream.set_time(f"{prefix}_frame", sequence=analysis.data.rows[i]["frame_index"])
             try:
                 if ref is None:
                     raise ValueError("该帧没有图像引用")
@@ -154,17 +217,17 @@ def show(analysis, reader, *, spawn=True, rrd=None, cameras=None, media_budget_m
                 else:
                     raise ValueError("Rerun 压缩图像显示仅支持此数据中的 PNG/JPEG")
                 stream.log(
-                    f"cameras/{camera}", rr.EncodedImage(contents=encoded, media_type=media_type)
+                    f"{prefix}/cameras/{camera}",
+                    rr.EncodedImage(contents=encoded, media_type=media_type),
                 )
             except (OSError, ValueError) as exc:
-                stream.log(f"cameras/{camera}", rr.Clear(recursive=True))
+                stream.log(f"{prefix}/cameras/{camera}", rr.Clear(recursive=True))
                 analysis.summary["warnings"].append(f"{camera} frame {i}: {exc}")
                 if budget <= 0:
                     break
-    stream.log(
-        "summary",
-        rr.TextDocument(json.dumps(analysis.summary, ensure_ascii=False, indent=2)),
-        static=True,
+    stream.set_time(
+        "comparison_time", duration=float(analysis.times[-1] - analysis.anchor_s + 1e-6)
     )
-    stream.flush()
-    return stream
+    stream.disable_timeline(f"{prefix}_frame")
+    stream.log(f"{prefix}/cameras", rr.Clear(recursive=True))
+    return budget
