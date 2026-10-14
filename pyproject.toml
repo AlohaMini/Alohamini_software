@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+analysis = ["numpy>=2,<3", "pyarrow>=18", "pillow>=11", "rerun-sdk==0.26.2", "av==15.1.0", "matplotlib==3.10.8"]
 smolvla = ["alohamini-platform[learning]"]
 pi05 = ["alohamini-platform[learning]"]
 learning = [

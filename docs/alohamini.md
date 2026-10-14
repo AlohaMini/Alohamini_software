@@ -260,6 +260,58 @@ alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
 
 保留原数据，重建可确定的索引与媒体引用；缺失图像或配对不明时拒绝修复。修复结果不用于追加录制，也不消除实际漏采与时间偏差。
 
+### 可视化分析评估记录
+
+同步查看相机、动作请求、观测反馈、电流、耗时和保护事件：
+
+```bash
+alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 --episode 0
+```
+
+默认打开 Rerun，按相机名称显示画面，关节曲线在标签页中切换。无需连接机器人或加载模型。
+已有 PC 环境包含所需依赖；独立分析环境可在仓库目录运行 `pip install -e '.[analysis]'`。
+
+只分析关注的片段，并导出可用浏览器打开的报告：
+
+```bash
+alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
+  --episode 0 --time-range 20 35 --viewer none --export-html \
+  --keyframes 21 25 30
+```
+
+结果默认位于 `~/Alohamini_workspace/reports/<数据集>/episode_<编号>/<时间编号>/`。
+`ALOHAMINI_WORKSPACE` 可改变工作区位置，`--output <新目录>` 可指定其他位置；原数据不变。
+
+| 选项 | 作用 |
+| --- | --- |
+| `--time-range START END` | 选择时间段内的起止秒数；存在 Host 时间时使用实际观测时间 |
+| `--segment 0` | 选择时钟段；检测到时钟重置或会话变化时分段，不跨段拼接 |
+| `--viewer none` | 仅导出数值摘要 `summary.json` 和事件 `events.csv`，不解码图像 |
+| `--export-html` | 增加 `report.html` 和 `plots/` 动作曲线 |
+| `--keyframes 21 25` | 导出最接近这些秒数的画面，并启用 HTML 报告 |
+| `--cameras wrist_left wrist_right` | 指定显示或导出的相机和排列顺序 |
+| `--save-rrd` | 保存 `recording.rrd`，完成后用打印的 `rerun` 命令打开；包含压缩媒体 |
+| `--media-budget-mb 256` | Rerun 媒体累计预算；超过预算的画面跳过并提示 |
+
+MP4 直接作为压缩资源交给 Rerun，视频帧时间单独映射到分析时间，不先逐帧解码再转码。
+共享 MP4 分片需要整文件载入，因此缩短时间范围不一定减少该视频资源的大小。
+关键帧按需读取并缓存；旧原生 Host JPEG 需要一次颜色通道校正，校正结果也会缓存。
+缓存位于工作区 `cache/evaluation-keyframes/`，最多保留约 1 GiB，可以删除后重新生成。
+
+报告中的录制频率、命令频率估计、`select_action` 耗时含义不同。同行反馈在本次请求前采样，
+不能直接把 action 与 state 的差当作执行误差；动作最大变化排名也不代表失败原因。
+缺少 Host sidecar 时，仍可查看画面和动作，但真实运行速度、保护状态等显示为不可用。
+
+旧记录未保存完整预测 Chunk 和有效运行配置。只有明确知道首次预测对应的命令序号，
+并确认关闭时序融合、每个控制 tick 发出一个命令、全程无队列重置，才可额外指定：
+
+```bash
+--assume-n-action-steps 100 --first-command-sequence 33 --assume-no-resets
+```
+
+这些参数只用于离线推断，不修改模型。交接事件表示“边界后的首个录制帧”，始终标为推断；
+不能直接用首个录制帧的序号替代真正的首次预测命令序号。
+
 ### 导出与选择字段
 
 需要另存或选择 state 字段时，在 `alohamini` 环境中执行：
