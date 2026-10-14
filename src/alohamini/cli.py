@@ -39,6 +39,15 @@ def _ensemble_coefficient(value: str) -> float | None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:2] == ["dataset", "analyze"]:
+        try:
+            from alohamini.analysis.cli import main as analyze_dataset
+
+            analyze_dataset(argv[2:])
+            return 0
+        except (OSError, ValueError, RuntimeError, ImportError) as exc:
+            print(f"alohamini: {exc}", file=sys.stderr)
+            return 1
     if argv[:2] == ["dataset", "edit"]:
         try:
             from alohamini.datasets.edit import main as edit_dataset
@@ -60,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     cameras.add_argument("--record-time-s", type=float, default=6.0, help="采样时长；0 表示仅列出")
     datasets = commands.add_parser("dataset", help="本地数据检查、修复、视频预览和导出")
     dataset_commands = datasets.add_subparsers(dest="operation", required=True)
+    dataset_commands.add_parser("analyze", help="Rerun 同步查看评估数据，导出图表和报告")
     dataset_commands.add_parser(
         "edit", help="本地数据集编辑：删除、拆分、合并、任务、字段、统计和视频"
     )
