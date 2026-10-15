@@ -190,6 +190,39 @@ def test_cli_generates_comparison_from_saved_checkpoint_without_model_load(examp
     assert summary["performance"]["video_keyframe_reads"] == 0
 
 
+@pytest.mark.parametrize("missing", ["validation_split", "dataset", "checkpoint"])
+def test_probe_reports_missing_prerequisite_before_reading_frames(example, tmp_path, missing):
+    from alohamini.analysis.cli import main
+
+    args = [
+        str(example.evaluation),
+        "--reference-split",
+        "val",
+        "--probe-samples",
+        "8",
+        "--viewer",
+        "none",
+        "--output",
+        str(tmp_path / "report"),
+    ]
+    if missing == "validation_split":
+        example.manifest["training"]["val_episodes"] = []
+        (example.checkpoint / "policy.json").write_text(json.dumps(example.manifest))
+        args += ["--training-root", str(example.root)]
+        expected = "val_episodes.*--reference-split train"
+    elif missing == "dataset":
+        example.root.rename(tmp_path / "moved")
+        expected = "示范数据集不在本机.*--training-root"
+    else:
+        expected = "需要关联 checkpoint.*--checkpoint"
+    if missing != "checkpoint":
+        args += ["--checkpoint", str(example.checkpoint)]
+    with patch("alohamini.analysis.source.load_episode", side_effect=AssertionError("no reads")):
+        with pytest.raises(ValueError, match=expected):
+            main(args)
+    assert not (tmp_path / "report").exists()
+
+
 def test_rerun_and_html_reference_export(example, tmp_path):
     import rerun as rr
 

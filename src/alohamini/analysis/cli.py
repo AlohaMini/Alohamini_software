@@ -140,6 +140,24 @@ def main(argv=None):
             reference_split=args.reference_split,
         )
         reference_index = reference_episode(context, args.reference_episode)
+        if args.probe_samples:
+            if not context["checkpoint"]:
+                raise ValueError(
+                    "模型探针需要关联 checkpoint；请用 --checkpoint 指定评估使用的模型"
+                )
+            if reference_index is None:
+                split_key = f"{args.reference_split}_episodes"
+                hint = (
+                    "；可用 --reference-split train 检查训练拟合，但不能作为验证集误差"
+                    if args.reference_split == "val"
+                    else "；无法确认用于模型探针的训练示范"
+                )
+                raise ValueError(f"checkpoint 没有可用的 {split_key} 划分{hint}")
+            if not context["training_available"]:
+                raise ValueError(
+                    f"模型探针对应的示范数据集不在本机：{context['training_root']}；"
+                    "请用 --training-root 指定原数据集的本地副本"
+                )
         reference = None
         if context["training_available"] and reference_index is not None:
             reference_root = Path(context["training_root"])
@@ -177,8 +195,6 @@ def main(argv=None):
             anchors=args.align,
             diagnostics=args.control_diagnostics,
         )
-        if args.probe_samples and reference is None:
-            raise ValueError("模型探针需要 checkpoint 对应的示范数据集在本机可用")
         if any(not result.times[0] <= t <= result.times[-1] for t in args.keyframes):
             raise ValueError("关键帧时间必须位于所选时间范围内")
         output.mkdir(parents=True)

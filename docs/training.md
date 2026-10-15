@@ -64,8 +64,7 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 
 ## 3. 选择数据与输入
 
-ACT、AM-ACT、Diffusion、FastWAM、SmolVLA 和 π0.5 共用 LeRobot v3 数据读取接口，
-用于训练、验证和离线推理。各算法的 state、语言和动作表示要求见对应章节。
+数据集采用 LeRobot v3 格式：
 
 | 目录 | 内容 |
 | --- | --- |
@@ -234,12 +233,54 @@ python -m alohamini.learning.train \
   --batch_size=2 --save_freq=10000 --log_freq=100 --background
 ```
 
-默认使用 2 帧历史观测、16 步预测窗口、每次执行 8 步、DDPM 100 步去噪、
-GroupNorm 与 EMA；state 必须存在。数值按训练集 min/max 归一化，
-图像缩放至 96×96、训练随机裁剪至 84×84，评估使用中心裁剪。
-不使用预训练视觉权重。序列末尾默认不取最后 7 个采样起点，剩余尾部重复目标参与损失。
-可用 `--policy.n_action_steps`、`--policy.num_inference_steps` 调整执行块和去噪步数；
-checkpoint 同时保存训练权重、EMA 权重及其更新步数。
+默认 2 帧观测、64 步预测、执行 32 步，DDPM 100 步；视觉配置参考
+[LeRobot PR #3202](https://github.com/huggingface/lerobot/pull/3202)。
+RGB 使用 ImageNet `MEAN_STD`，state/action 使用训练集 `MIN_MAX`。
+`--policy.n_action_steps` 调整执行步数，`--policy.num_inference_steps` 调整去噪步数。
+
+尾部排除数默认按 `horizon - n_action_steps - n_obs_steps + 1` 计算，为 **31**；
+`--policy.drop_n_last_frames` 可显式覆盖，设为 `0` 保留所有采样起点。
+EMA 默认关闭，使用 `--ema.enable=true` 开启。
+
+### Multi-Task DiT
+
+```bash
+conda activate alohamini
+python -m alohamini.learning.train \
+  --policy.type=multi_task_dit --policy.device=cuda \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --dataset.eval_episodes='[1]' --eval_steps=1000 \
+  --cameras='["forward","wrist_right"]' \
+  --output_dir="$HOME/Alohamini_workspace/runs/multi_task_dit_01" \
+  --batch_size=2 --gradient_accumulation_steps=8 --steps=100000 \
+  --ema.enable=true --save_freq=10000 --log_freq=100 --background
+```
+
+| 项目 | 默认配置 |
+| --- | --- |
+| 观测／预测／执行 | 2 帧／32 步／24 步；排除最后 7 个采样起点 |
+| DiT | 隐藏维度 512、6 层、8 heads、AdaLN-Zero、RoPE |
+| 视觉 | CLIP ViT-B/16，共享相机编码器；缩放 256×256，训练随机／推理中心裁剪至 224×224 |
+| 语言 | 必需的非空 `task`，最长 77 tokens；文本编码器冻结，投影层训练 |
+| 归一化 | RGB：CLIP `MEAN_STD`；state/action：训练集 `MIN_MAX`，保留原字段与单位 |
+| 优化 | Adam `2e-5`，视觉学习率 ×0.1；cosine，无 warmup |
+| 生成目标 | diffusion，DDPM 100 步 |
+
+state 必须存在。CLIP 权重默认使用 `openai/clip-vit-base-patch16`；
+`--policy.vision_encoder_name`、`--policy.text_encoder_name` 可指定本地目录。
+尾部排除数按同一时序公式计算；`--policy.do_mask_loss_for_padding=true` 可屏蔽补齐动作的损失。
+
+```bash
+# DDIM
+--policy.noise_scheduler_type=DDIM --policy.num_inference_steps=10
+
+# Flow matching；integration_method 也支持 rk4
+--policy.objective=flow_matching --policy.num_integration_steps=10 \
+  --policy.integration_method=euler --policy.timestep_sampling_strategy=beta
+```
+
+支持单设备、DDP 和训练器 EMA，暂不支持 FSDP2。
+checkpoint 打包权重、CLIP 配置和 tokenizer；EMA 部署使用 `checkpoint-ema`，续训使用在线 checkpoint。
 
 ### FastWAM
 
@@ -391,6 +432,16 @@ Diffusion／FastWAM 使用 `diffusers_cosine`；
 FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出分片训练状态和完整推理权重。
 当前仅 ACT／AM-ACT 支持 FSDP2；不支持 ZeRO 或张量并行。
 
+### 训练器 EMA
+
+EMA 默认关闭，使用 `--ema.enable=true` 开启。
+默认衰减参数为 `inv_gamma=1.0`、`power=0.75`、`min_decay=0`、`max_decay=0.9999`、`update_after_step=0`。
+固定衰减可设 `--ema.decay=0.99`，与自定义 `min_decay/max_decay` 互斥。
+
+EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
+验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
+支持单设备与 DDP，不支持 FSDP2；需额外的参数存储及评估／导出临时内存。
+
 ## 5. 保存与续训
 
 ### 保存模型
@@ -398,6 +449,19 @@ FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出
 `--save_freq=5000` 表示每完成 5000 个训练步保存一次，训练结束时也会保存。
 最近保存的模型位于 `runs/<运行名称>/checkpoint`，可用于微调或推理。
 若需要中断续训，保留整个运行目录；仅复制模型权重不足以恢复训练。
+
+启用训练器 EMA 后，每个完整 checkpoint 同时保存：
+
+| 路径 | 用途 |
+| --- | --- |
+| `pretrained_model/` | 在线模型，与优化器状态对应，用于恢复训练 |
+| `ema_pretrained_model/` | 可直接部署的 EMA 模型，包含同一套预处理信息 |
+| `training_state/state.pt` 中的 `ema` | FP32 影子参数、复制的 buffer、衰减配置和更新计数 |
+
+运行目录中的 `checkpoint` 指向最新在线模型，`checkpoint-ema` 指向最新 EMA 模型。
+评估或部署 EMA 时指定 `--policy.path=<运行目录>/checkpoint-ema`。
+续训仍使用 `checkpoint/train_config.json`，并保持 EMA 配置不变。
+缺失或不匹配的 EMA 状态会拒绝续训。
 
 ### 中断后恢复原训练
 
@@ -598,3 +662,112 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 
 使用 `--fixed-current` 前，先遥操摆好位置，再退出遥操并保持同一 Host 进程。
 绑定标定与固定目标报告保存在工作区 `logs/evaluation/`；运行中标定变化会结束评估。
+
+## 8. 对比评估与训练示范
+
+`alohamini dataset analyze` 在本地查看已保存的评估记录，并与评估所用 checkpoint 的训练或验证示范对比。无需连接机器人。
+
+| 功能 | 支持算法 |
+| --- | --- |
+| Rerun 画面与动作曲线、示范对比、报告导出 | 平台各算法，包括 ACT、AM-ACT、Diffusion Policy、FastWAM、SmolVLA、π0.5 |
+| 加 `--probe-samples`，重新预测示范动作并计算误差 | 目前仅 ACT／AM-ACT |
+
+以下以评估数据集 `eval_01` 为例。请替换数据集路径、episode 编号和时间点；episode 编号从 0 开始。
+
+### 打开评估记录
+
+```bash
+alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
+  --episode 0
+```
+
+默认打开 Rerun，显示评估第 0 条回合的相机画面和动作曲线。
+有模型关联记录时，自动找到对应 checkpoint 和原训练数据集，并显示保存的训练划分中的首条示范。
+普通查看不运行模型，也不需要 GPU。命令、Host 反馈、电流和耗时默认隐藏。
+
+如果评估记录没有保存模型关联，使用 `--checkpoint` 指定**当时评估使用的模型**。
+模型或原训练数据搬到其他目录时，可分别补充这两个路径：
+
+```bash
+alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
+  --episode 0 \
+  --checkpoint ~/Alohamini_workspace/runs/pickup_01/checkpoint \
+  --training-root ~/Alohamini_workspace/datasets/pickup_train
+```
+
+`--training-root` 应指向原训练数据集的本地副本；它不用于替换成另一份训练数据。
+
+### 选择示范并对齐抓取阶段
+
+假设评估回合 0 在第 20 秒开始抓取，训练示范 12 在第 8 秒开始抓取，可以对比各自接下来的 15 秒：
+
+```bash
+alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
+  --episode 0 --reference-split train --reference-episode 12 \
+  --time-range 20 35 --reference-time-range 8 23 \
+  --align 20 8
+```
+
+| 选项 | 本例含义 |
+| --- | --- |
+| `--episode 0` | 查看评估数据集中的回合 0 |
+| `--reference-split train` | 从 checkpoint 保存的训练划分中选择示范；`val` 选择验证划分 |
+| `--reference-episode 12` | 对照原训练数据集中的回合 12，须属于所选划分 |
+| `--time-range 20 35` | 截取评估第 20～35 秒 |
+| `--reference-time-range 8 23` | 截取示范第 8～23 秒 |
+| `--align 20 8` | 将评估第 20 秒与示范第 8 秒对齐到公共时间轴的 0 秒 |
+
+省略 `--reference-episode` 时选择该划分的首条示范。省略 `--align` 时只按回合起点并排，抓取阶段可能并不同步。
+对齐不会改变播放速度。画面和曲线用于观察动作顺序、选臂及轨迹差异；两次运行不计算逐帧动作误差。
+
+### 导出图表与画面报告
+
+沿用上面的片段，导出评估第 21、25、30 秒的画面及对齐后的示范画面：
+
+```bash
+alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
+  --episode 0 --reference-split train --reference-episode 12 \
+  --time-range 20 35 --reference-time-range 8 23 --align 20 8 \
+  --viewer none --export-html --keyframes 21 25 30 \
+  --output ~/Alohamini_workspace/reports/eval_01_compare
+```
+
+`--viewer none` 不打开 Rerun；用浏览器打开输出目录中的 `report.html` 查看图表和画面。
+`--output` 须为数据集目录之外的新目录。省略时，结果保存在
+`~/Alohamini_workspace/reports/<数据集>/episode_<编号>/<时间编号>/`。
+每次分析都会保存 `summary.json` 和 `events.csv`，HTML 报告的图表另存于 `plots/`。
+
+### 检查模型在示范上的预测（仅 ACT／AM-ACT）
+
+以下命令加载评估对应的 checkpoint，从其验证划分的首条示范中均匀抽取最多 8 个观测，重新预测动作：
+
+```bash
+alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
+  --episode 0 --reference-split val \
+  --probe-samples 8 --probe-device cuda \
+  --viewer none --export-html
+```
+
+需要 checkpoint 保存过非空的验证划分；可加 `--reference-episode` 选择其中某条示范。
+如果训练时全部示范都用于训练、没有留出验证回合，改用 `--reference-split train` 检查训练拟合。
+`--training-root` 只指定数据位置，不会创建验证划分。
+`--probe-device cuda` 使用 GPU，改为 `cpu` 可在 CPU 上运行。
+
+报告逐个动作维度显示首步预测和整个动作块的平均绝对误差（MAE），单位与示范动作一致。
+预测使用示范中的观测，对照的是**同一条示范的后续真实动作**，不是评估回合的动作。
+预测数据保存为 `demonstration_predictions.npz`。这项误差用于检查模型预测，不代表真机成功率。
+改用 `--reference-split train` 可检查训练拟合；检查泛化优先使用验证示范。
+不加 `--probe-samples` 就不会加载模型。
+
+### 其他查看选项
+
+| 选项 | 作用 |
+| --- | --- |
+| `--cameras wrist_left wrist_right` | 只显示或导出指定相机，并按给定顺序排列 |
+| `--save-rrd` | 保存 `recording.rrd`，随后用终端打印的 `rerun` 命令打开 |
+| `--control-diagnostics` | 额外显示命令、Host 反馈、电流和耗时 |
+| `--probe-seed 0` | 设置重新预测时的随机种子，便于重复比较 |
+| `--segment 0` / `--reference-segment 0` | 数据有时钟重置时，选择评估／示范的时间段 |
+
+已有 PC 环境包含查看依赖；独立分析环境可在仓库目录运行 `pip install -e '.[analysis]'`。
+重新预测还需要对应策略的运行依赖。
