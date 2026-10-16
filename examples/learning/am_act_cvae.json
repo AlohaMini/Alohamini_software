@@ -8,7 +8,7 @@
   "steps": 100000,
   "batch_size": 2,
   "model": {
-    "chunk_size": 30,
+    "chunk_size": 100,
     "n_action_steps": 10,
     "n_decoder_layers": 7,
     "base_classification": true,

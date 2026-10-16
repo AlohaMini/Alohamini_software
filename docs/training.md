@@ -138,7 +138,7 @@ python -m alohamini.learning.train --config /path/to/train.json \
 python -m alohamini.learning.train \
   --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
   --dataset.eval_episodes='[1]' \
-  --policy.type=act --policy.device=cuda --policy.chunk_size=30 \
+  --policy.type=act --policy.device=cuda --policy.chunk_size=100 \
   --output_dir="$HOME/Alohamini_workspace/runs/act_01" \
   --steps=100000 --batch_size=2 --save_freq=10000 --log_freq=100 \
   --eval_steps=1000 --background
@@ -161,7 +161,7 @@ ACT 和 AM-ACT 新训练默认启用相机身份编码，将前视、左腕、�
 python -m alohamini.learning.train \
   --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_vision" \
   --dataset.eval_episodes='[1]' \
-  --policy.type=am_act --policy.device=cuda --policy.chunk_size=30 \
+  --policy.type=am_act --policy.device=cuda --policy.chunk_size=100 \
   --output_dir="$HOME/Alohamini_workspace/runs/am_act_vision_01" \
   --steps=100000 --batch_size=2 --save_freq=10000 --log_freq=100 \
   --eval_steps=1000 --background
