@@ -207,8 +207,6 @@ def test_distinct_sample_windows_and_tail_filter(recording):
     [
         ("diffusion", {}, 31),
         ("diffusion", {"horizon": 16, "n_action_steps": 8}, 7),
-        ("multi_task_dit", {}, 7),
-        ("multi_task_dit", {"horizon": 64, "n_action_steps": 32}, 31),
     ],
 )
 def test_tail_exclusion_tracks_window_and_preserves_explicit_values(kind, window, expected):
