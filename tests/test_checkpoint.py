@@ -29,12 +29,26 @@ from alohamini.policies.registry import algorithm
 
 
 @pytest.fixture(
-    params=["act", "am_act", "diffusion", "smolvla", "pi05", "fastwam", "multi_task_dit"]
+    params=[
+        "act",
+        "am_act",
+        "diffusion",
+        "smolvla",
+        "pi05",
+        "fastwam",
+        "multi_task_dit",
+        "cdp",
+        "dit_policy",
+    ]
 )
 def native(request, recording, tmp_path, monkeypatch, tiny_assets):
     kind = request.param
     component = algorithm(kind)
     options = model_options() if kind in ("act", "am_act") else {}
+    if kind in ("cdp", "dit_policy"):
+        from test_cdp_dit_policy import small_options
+
+        options = small_options(kind)
     if kind == "multi_task_dit":
         from test_multi_task_dit import dit_options
 
