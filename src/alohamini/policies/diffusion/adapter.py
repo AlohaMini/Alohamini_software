@@ -6,12 +6,18 @@ import numpy as np
 from safetensors.torch import load_file, save_file
 
 from alohamini.learning.metrics import MetricSpec, loss_count
-from alohamini.learning.processor import Processor, limits_statistics, validate_statistics
+from alohamini.learning.processor import (
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    Processor,
+    limits_statistics,
+    validate_statistics,
+)
 
 
 class DiffusionAlgorithm:
     include_task = False
-    fsdp_classes = ()  # EMA needs a separate sharded-state integration.
+    fsdp_classes = ()  # Diffusion FSDP2 boundaries are not adapted yet.
 
     @staticmethod
     def metric_specs(config):
@@ -35,6 +41,8 @@ class DiffusionAlgorithm:
 
     def apply_preset(self, settings):
         cfg = deepcopy(settings)
+        if cfg.get("resume") and cfg.get("paper_preset"):
+            return cfg  # Preserve the recipe recorded by the original training run.
         cfg.setdefault("state", "auto")
         cfg.setdefault("seed", 42)
         cfg.setdefault("batch_size", 64)
@@ -48,11 +56,13 @@ class DiffusionAlgorithm:
             **(cfg.get("scheduler") or {}),
         }
         cfg["paper_preset"] = {
-            "name": "diffusion-unet-robot",
+            "name": "diffusion-unet-pretrained-robot",
             "source": "https://github.com/real-stanford/diffusion_policy",
             "implementation": "LeRobot/AlohaMini 524420cde405b7bfacb9b08f804186789eb5d742",
             "reference": "train_diffusion_unet_hybrid_workspace.yaml",
             "reference_revision": "5ba07ac6661db573af695b419a7947ecb704690f",
+            "defaults_source": "https://github.com/huggingface/lerobot/pull/3202",
+            "defaults_revision": "eaf0218bc8ab12e2119b8b837c9b66eb9a7e3823",
             "overrides": deepcopy(
                 settings.get("paper_preset", {}).get(
                     "overrides", {k: v for k, v in settings.items() if k != "paper_preset"}
@@ -60,8 +70,9 @@ class DiffusionAlgorithm:
             ),
             "observation": "history ending at current row; no timestamp resampling",
             "action": "recorded named Host targets, with dataset units; no TCP conversion",
-            "normalization": "numeric limits [-1,1]; RGB [0,1] to [-1,1]",
-            "adaptation": "AlohaMini cameras at 96x96, crop 84x84 instead of lift_image_abs 84/76; recorded action coordinates",
+            "normalization": "default numeric limits [-1,1]; RGB [0,1] with ImageNet MEAN_STD; explicit modes saved in model config",
+            "language": "unused",
+            "adaptation": "AlohaMini cameras at 96x96, crop 84x84 instead of lift_image_abs 84/76; recorded action coordinates; pretrained defaults below replace the original paper recipe; tail exclusion is derived from the temporal window instead of upstream's fixed 7",
             "reference_recipe": {
                 "n_obs_steps": 2,
                 "horizon": 16,
@@ -69,6 +80,17 @@ class DiffusionAlgorithm:
                 "ddpm_steps": 100,
                 "ema_power": 0.75,
                 "group_norm": True,
+            },
+            "default_recipe": {
+                "n_obs_steps": 2,
+                "horizon": 64,
+                "n_action_steps": 32,
+                "drop_n_last_frames": 31,
+                "ddpm_steps": 100,
+                "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1",
+                "use_group_norm": False,
+                "trainer_ema_enabled": False,
+                "use_separate_rgb_encoder_per_camera": True,
             },
         }
         return cfg
@@ -79,8 +101,10 @@ class DiffusionAlgorithm:
         return options
 
     def sample_spec(self, options, *, cameras=()):
-        n = options.get("n_obs_steps", 2)
-        horizon = options.get("horizon", 16)
+        n = options.get("n_obs_steps", self.config_class.n_obs_steps)
+        horizon = options.get("horizon", self.config_class.horizon)
+        actions = options.get("n_action_steps", self.config_class.n_action_steps)
+        drop = options.get("drop_n_last_frames")
         observations = list(range(1 - n, 1))
         return dict(
             delta_indices={
@@ -88,11 +112,20 @@ class DiffusionAlgorithm:
                 **{f"observation.images.{c}": observations for c in cameras},
                 "action": list(range(1 - n, 1 - n + horizon)),
             },
-            drop_n_last_frames=options.get("drop_n_last_frames", 7),
+            drop_n_last_frames=horizon - actions - n + 1 if drop is None else drop,
         )
 
     def statistics(self, samples, options=None):
-        return limits_statistics(samples)
+        stats = limits_statistics(samples)
+        # Fit numeric limits, but use the pretrained encoder's fixed RGB statistics.
+        # MIN_MAX overrides still use [0,1]; checkpoint loading uses saved stats.
+        for key, feature in samples.input_features.items():
+            if feature.type == "VISUAL":
+                stats[key].update(
+                    mean=[[[value]] for value in IMAGENET_MEAN],
+                    std=[[[value]] for value in IMAGENET_STD],
+                )
+        return stats
 
     @staticmethod
     def validate_statistics(stats, expected, names, *, manifest=None):

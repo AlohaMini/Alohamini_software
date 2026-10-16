@@ -64,6 +64,10 @@ def features():
 def diffusion_options():
     return dict(
         **features(),
+        # Small offline networks; pretrained defaults have their own integration test.
+        pretrained_backbone_weights=None,
+        use_group_norm=True,
+        normalization_mapping=dict.fromkeys(("VISUAL", "STATE", "ACTION"), "MIN_MAX"),
         horizon=8,
         n_obs_steps=2,
         n_action_steps=2,
@@ -198,7 +202,30 @@ def test_distinct_sample_windows_and_tail_filter(recording):
     assert len(shorter) == len(data) - 2
 
 
-def test_diffusion_real_loss_queue_ema_and_checkpoint(recording, tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "kind,window,expected",
+    [
+        ("diffusion", {}, 31),
+        ("diffusion", {"horizon": 16, "n_action_steps": 8}, 7),
+        ("multi_task_dit", {}, 7),
+        ("multi_task_dit", {"horizon": 64, "n_action_steps": 32}, 31),
+    ],
+)
+def test_tail_exclusion_tracks_window_and_preserves_explicit_values(kind, window, expected):
+    recipe = algorithm(kind)
+    for override, result in (
+        ({}, expected),
+        ({"drop_n_last_frames": None}, expected),
+        ({"drop_n_last_frames": 0}, 0),
+        ({"drop_n_last_frames": 7}, 7),
+    ):
+        options = {**window, **override}
+        config = recipe.config_class(**features(), **options)
+        assert config.drop_n_last_frames == result
+        assert recipe.sample_spec(options)["drop_n_last_frames"] == result
+
+
+def test_diffusion_real_loss_queue_and_checkpoint(recording, tmp_path, monkeypatch):
     recipe = algorithm("diffusion")
     options = diffusion_options()
     data = AlohaMiniDataset(
@@ -216,9 +243,7 @@ def test_diffusion_real_loss_queue_ema_and_checkpoint(recording, tmp_path, monke
     loss.backward()
     assert torch.isfinite(loss)
     assert any(p.grad is not None for p in model.diffusion.parameters())
-    assert all(p.grad is None for p in model.ema.parameters())
-    model.update()
-    assert int(model.ema_step) == 1
+    assert not any(name.startswith("ema") for name in model.state_dict())
     predicted = model.predict_action_chunk(batch)
     assert predicted.shape == (2, 8, 18)
     target = tmp_path / "checkpoint"
@@ -240,6 +265,78 @@ def test_diffusion_real_loss_queue_ema_and_checkpoint(recording, tmp_path, monke
     assert model.select_action(live)[0, 0] == 2
     model.reset()
     assert all(not q for q in model._queues.values())
+
+
+def test_diffusion_pretrained_defaults_pipeline(recording, tmp_path, monkeypatch):
+    import torchvision
+
+    recipe = algorithm("diffusion")
+    options = diffusion_options()
+    for key in (
+        "horizon",
+        "n_action_steps",
+        "pretrained_backbone_weights",
+        "use_group_norm",
+        "normalization_mapping",
+    ):
+        options.pop(key)
+    # Exercise the default horizon at the dataset/model boundary, with a small U-Net.
+    spec = recipe.sample_spec(options, cameras=["forward"])
+    assert spec["delta_indices"]["action"] == list(range(-1, 63))
+    data = AlohaMiniDataset(
+        recording,
+        episodes=[0, 1],
+        state="joint_position,base_velocity,lift_height",
+        image_size=(32, 32),
+        **spec,
+    )
+    stats = recipe.statistics(data)
+    resnet18 = torchvision.models.resnet18
+    requested_weights = []
+
+    def offline_resnet18(*, weights):
+        requested_weights.append(weights)
+        # Keep real BatchNorm/network behavior while avoiding a network download.
+        backbone = resnet18(weights=None)
+        backbone.bn1.running_mean.fill_(0.25)
+        return backbone
+
+    monkeypatch.setattr(torchvision.models, "resnet18", offline_resnet18)
+    model = recipe.build(options)
+    assert requested_weights == ["ResNet18_Weights.IMAGENET1K_V1"]
+    assert not any(name.startswith("ema") for name in model.state_dict())
+    backbone = model.diffusion.rgb_encoder[0].backbone
+    bn = next(m for m in backbone.modules() if isinstance(m, torch.nn.BatchNorm2d))
+    # Shape probing during construction must not modify pretrained BN statistics.
+    torch.testing.assert_close(bn.running_mean, torch.full_like(bn.running_mean, 0.25))
+    assert bn.num_batches_tracked.item() == 0
+    processor = recipe.processor(model, stats, "cpu")
+    pixels = torch.tensor([0, 128, 255], dtype=torch.uint8).view(1, 3, 1, 1)
+    expected = pixels.float() / 255 - torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    expected /= torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    torch.testing.assert_close(
+        processor({"observation.images.forward": pixels})["observation.images.forward"], expected
+    )
+    batch = processor(next(iter(torch.utils.data.DataLoader(data, batch_size=2))))
+    loss, _ = model(batch)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert bn.num_batches_tracked.item() == 1
+    model.eval()
+    noise = torch.randn(2, 64, 18)
+    torch.manual_seed(7)  # DDPM also samples noise during the reverse steps.
+    expected_actions = model.predict_action_chunk(batch, noise=noise)
+    target = tmp_path / "pretrained-checkpoint"
+    save_checkpoint(target, model, stats, data, training={})
+    loaded = NativePolicy(target)
+    assert requested_weights == ["ResNet18_Weights.IMAGENET1K_V1", None]
+    torch.manual_seed(7)
+    torch.testing.assert_close(
+        loaded.model.predict_action_chunk(batch, noise=noise), expected_actions
+    )
+    assert loaded.manifest["stats"] == stats
+    assert loaded.model.config.n_action_steps == 32
+    check_named_action(loaded, data)
 
 
 @pytest.mark.parametrize("precision", ["float32", "bfloat16"])
@@ -335,6 +432,8 @@ def test_detached_training_resume(recording, tmp_path, monkeypatch, kind):
     from alohamini.learning.train_config import parse_training_args
 
     options = diffusion_options() if kind == "diffusion" else fastwam_options()
+    if kind == "diffusion":
+        options["use_group_norm"] = False  # Trainer EMA supports the default BN backbone.
     if kind == "fastwam":
         fake_frozen_assets(monkeypatch)
         for key in ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id"):
@@ -361,6 +460,7 @@ def test_detached_training_resume(recording, tmp_path, monkeypatch, kind):
         seed=31,
         deterministic_algorithms=True,
         scheduler={"type": "none"},
+        ema={"enable": True},
     )
 
     def run(settings, label, stop=False):
@@ -399,6 +499,17 @@ def test_detached_training_resume(recording, tmp_path, monkeypatch, kind):
     assert left.keys() == right.keys()
     for key in left:
         torch.testing.assert_close(left[key], right[key], rtol=0, atol=0)
+    ema_states = [
+        torch.load(path.resolve().parent / "training_state/state.pt", weights_only=True)["ema"]
+        for path in (full, resumed)
+    ]
+    assert ema_states[0]["num_updates"] == ema_states[1]["num_updates"] == 2
+    for group in ("parameters", "buffers"):
+        for key, tensor in ema_states[0][group].items():
+            torch.testing.assert_close(tensor, ema_states[1][group][key], rtol=0, atol=0)
+    for path in (full, resumed):
+        loaded = NativePolicy(path.parent / "checkpoint-ema")
+        assert loaded.manifest["training"]["weights"] == "ema"
     report = json.loads((tmp_path / "resumed/offline-evaluation.json").read_text())
     assert report["valid_action_steps"] > 0
     expected_keys = (

@@ -312,6 +312,7 @@ def test_periodic_checkpoint_resume_exact_and_no_data_mutation(
     workers,
     backend="ddp",
     kind="am_act",
+    ema_settings=None,
 ):
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA unavailable")
@@ -351,6 +352,8 @@ def test_periodic_checkpoint_resume_exact_and_no_data_mutation(
         image_size=[32, 32],
         model={**model_options(state=False), "dropout": 0.2},
     )
+    if ema_settings is not None:
+        cfg["ema"] = ema_settings
 
     def run(settings):
         job = launch_training(settings)
@@ -404,6 +407,31 @@ def test_periodic_checkpoint_resume_exact_and_no_data_mutation(
         for p in (baseline.resolve(), resumed.resolve())
     ]
     identical(states[0], states[1])
+    if ema_settings is not None:
+        assert states[0]["ema"]["num_updates"] == 3
+        exports = [
+            p.parent / "ema_pretrained_model" for p in (baseline.resolve(), resumed.resolve())
+        ]
+        for online, exported in zip((baseline, resumed), exports, strict=True):
+            assert (online.parent / "checkpoint-ema").resolve() == exported
+        ema_weights = [load_file(path / "model.safetensors") for path in exports]
+        identical(ema_weights[0], ema_weights[1])
+        assert any(
+            not torch.equal(ema_weights[0][key], value) for key, value in baseline_weights.items()
+        )
+        from alohamini.learning.policy import NativePolicy
+
+        deployed = NativePolicy(exports[1], device="cpu")
+        assert deployed.manifest["training"]["weights"] == "ema"
+        expected_weights = "ema" if ema_settings.get("use_for_eval", True) else "online"
+        validation_log = tmp_path / "baseline/validation-metrics.jsonl"
+        assert {
+            json.loads(line)["weights"] for line in validation_log.read_text().splitlines()
+        } == {expected_weights}
+        assert (
+            json.loads((tmp_path / "resumed/offline-evaluation.json").read_text())["weights"]
+            == expected_weights
+        )
     if backend == "fsdp2":
         from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
 
@@ -443,6 +471,34 @@ def test_periodic_checkpoint_resume_exact_and_no_data_mutation(
     saved_cfg["steps"] = 4
     with pytest.raises(ValueError, match="latest"):
         load_training_checkpoint(first.parent, saved_cfg, data, None)
+    if ema_settings is not None:
+        changed = {**saved_cfg, "ema": {**saved_cfg["ema"], "decay": 0.8}}
+        with pytest.raises(ValueError, match="Resume configuration changed"):
+            load_training_checkpoint(resumed.resolve().parent, changed, data, None)
+        state_path = resumed.resolve().parent / "training_state/state.pt"
+        missing = {key: value for key, value in states[1].items() if key != "ema"}
+        try:
+            torch.save(missing, state_path)
+            with pytest.raises(ValueError, match="missing complete EMA state"):
+                load_training_checkpoint(resumed.resolve().parent, saved_cfg, data, None)
+        finally:
+            torch.save(states[1], state_path)
+
+
+@pytest.mark.parametrize("processes,use_for_eval", [(1, True), (2, False)])
+def test_trainer_ema_checkpoint_resume(recording, tmp_path, monkeypatch, processes, use_for_eval):
+    test_periodic_checkpoint_resume_exact_and_no_data_mutation(
+        recording,
+        tmp_path,
+        monkeypatch,
+        "cpu",
+        "none",
+        processes,
+        2,
+        0,
+        kind="act",
+        ema_settings={"enable": True, "decay": 0.9, "use_for_eval": use_for_eval},
+    )
 
 
 @pytest.mark.parametrize(

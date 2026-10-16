@@ -64,8 +64,7 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 
 ## 3. 选择数据与输入
 
-ACT、AM-ACT、Diffusion、FastWAM、SmolVLA 和 π0.5 共用 LeRobot v3 数据读取接口，
-用于训练、验证和离线推理。各算法的 state、语言和动作表示要求见对应章节。
+数据集采用 LeRobot v3 格式：
 
 | 目录 | 内容 |
 | --- | --- |
@@ -193,12 +192,14 @@ python -m alohamini.learning.train \
   --batch_size=2 --save_freq=10000 --log_freq=100 --background
 ```
 
-默认使用 2 帧历史观测、16 步预测窗口、每次执行 8 步、DDPM 100 步去噪、
-GroupNorm 与 EMA；state 必须存在。数值按训练集 min/max 归一化，
-图像缩放至 96×96、训练随机裁剪至 84×84，评估使用中心裁剪。
-不使用预训练视觉权重。序列末尾默认不取最后 7 个采样起点，剩余尾部重复目标参与损失。
-可用 `--policy.n_action_steps`、`--policy.num_inference_steps` 调整执行块和去噪步数；
-checkpoint 同时保存训练权重、EMA 权重及其更新步数。
+默认 2 帧观测、64 步预测、执行 32 步，DDPM 100 步；视觉配置参考
+[LeRobot PR #3202](https://github.com/huggingface/lerobot/pull/3202)。
+RGB 使用 ImageNet `MEAN_STD`，state/action 使用训练集 `MIN_MAX`。
+`--policy.n_action_steps` 调整执行步数，`--policy.num_inference_steps` 调整去噪步数。
+
+尾部排除数默认按 `horizon - n_action_steps - n_obs_steps + 1` 计算，为 **31**；
+`--policy.drop_n_last_frames` 可显式覆盖，设为 `0` 保留所有采样起点。
+EMA 默认关闭，使用 `--ema.enable=true` 开启。
 
 ### FastWAM
 
@@ -350,6 +351,16 @@ Diffusion／FastWAM 使用 `diffusers_cosine`；
 FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出分片训练状态和完整推理权重。
 当前仅 ACT／AM-ACT 支持 FSDP2；不支持 ZeRO 或张量并行。
 
+### 训练器 EMA
+
+EMA 默认关闭，使用 `--ema.enable=true` 开启。
+默认衰减参数为 `inv_gamma=1.0`、`power=0.75`、`min_decay=0`、`max_decay=0.9999`、`update_after_step=0`。
+固定衰减可设 `--ema.decay=0.99`，与自定义 `min_decay/max_decay` 互斥。
+
+EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
+验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
+支持单设备与 DDP，不支持 FSDP2；需额外的参数存储及评估／导出临时内存。
+
 ## 5. 保存与续训
 
 ### 保存模型
@@ -357,6 +368,19 @@ FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出
 `--save_freq=5000` 表示每完成 5000 个训练步保存一次，训练结束时也会保存。
 最近保存的模型位于 `runs/<运行名称>/checkpoint`，可用于微调或推理。
 若需要中断续训，保留整个运行目录；仅复制模型权重不足以恢复训练。
+
+启用训练器 EMA 后，每个完整 checkpoint 同时保存：
+
+| 路径 | 用途 |
+| --- | --- |
+| `pretrained_model/` | 在线模型，与优化器状态对应，用于恢复训练 |
+| `ema_pretrained_model/` | 可直接部署的 EMA 模型，包含同一套预处理信息 |
+| `training_state/state.pt` 中的 `ema` | FP32 影子参数、复制的 buffer、衰减配置和更新计数 |
+
+运行目录中的 `checkpoint` 指向最新在线模型，`checkpoint-ema` 指向最新 EMA 模型。
+评估或部署 EMA 时指定 `--policy.path=<运行目录>/checkpoint-ema`。
+续训仍使用 `checkpoint/train_config.json`，并保持 EMA 配置不变。
+缺失或不匹配的 EMA 状态会拒绝续训。
 
 ### 中断后恢复原训练
 

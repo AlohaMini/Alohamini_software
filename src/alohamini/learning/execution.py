@@ -217,7 +217,9 @@ class Execution:
     def autocast(self):
         return self.accelerator.autocast()
 
-    def update(self, model, batches, optimizer, clip, processor, *, reduction, metric_specs=()):
+    def update(
+        self, model, batches, optimizer, clip, processor, *, reduction, metric_specs=(), ema=None
+    ):
         """Execute algorithm-declared loss means over one global update window.
 
         The algorithm supplies each loss term's denominator and batch weight key.
@@ -273,6 +275,8 @@ class Execution:
         raw_model = self.accelerator.unwrap_model(model)
         if applied and callable(getattr(raw_model, "update", None)):
             raw_model.update()
+        if applied and ema is not None:
+            ema.update(raw_model)
         return dict(
             loss=metrics.item() / self.world_size,
             grad_norm=norm.item() if torch.isfinite(norm) else None,

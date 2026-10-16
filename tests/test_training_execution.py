@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from alohamini.datasets.statistics import ExactQuantileStats, diagnose_statistics
+from alohamini.learning.ema import EMAConfig, EMAManager
 from alohamini.learning.execution import Execution, RankBatchSampler, validate_local_workers
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optimization
@@ -85,6 +86,42 @@ def test_sample_mean_accumulation_without_action_or_padding():
     reference(full)[0].backward()
     expected.step()
     torch.testing.assert_close(model.weight, reference.weight)
+    runtime.close()
+
+
+def test_ema_updates_once_per_successful_accumulated_step(monkeypatch):
+    model = SampleMeanPolicy()
+    runtime = Execution("cpu")
+    wrapped, optimizer = runtime.prepare(model, torch.optim.SGD(model.parameters(), lr=0.01))
+    ema = EMAManager(model, EMAConfig(enable=True, decay=0.5))
+    before = model.weight.detach().clone()
+    batches = [{"values": torch.ones(2, 2)}, {"values": torch.full((1, 2), 3.0)}]
+    result = runtime.update(
+        wrapped,
+        batches,
+        optimizer,
+        0,
+        lambda b: b,
+        reduction=sample_counts,
+        ema=ema,
+    )
+    assert result["optimizer_step"] and ema.num_updates == 1
+    torch.testing.assert_close(ema.parameters["weight"], (before + model.weight.detach()) / 2)
+    shadow = ema.parameters["weight"].clone()
+    # Emulate the Accelerate overflow result on CPU; the CUDA test checks real GradScaler.
+    monkeypatch.setattr(optimizer, "step", lambda: None)
+    monkeypatch.setattr(type(optimizer), "step_was_skipped", property(lambda _: True))
+    result = runtime.update(
+        wrapped,
+        batches,
+        optimizer,
+        0,
+        lambda b: b,
+        reduction=sample_counts,
+        ema=ema,
+    )
+    assert not result["optimizer_step"] and ema.num_updates == 1
+    torch.testing.assert_close(ema.parameters["weight"], shadow, rtol=0, atol=0)
     runtime.close()
 
 
@@ -246,6 +283,7 @@ def test_fp16_overflow_skips_update_and_retains_scaler():
     model = TinyPolicy().cuda()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
     wrapped, optimizer = runtime.prepare(model, optimizer)
+    ema = EMAManager(model, EMAConfig(enable=True))
     before = model.weight.detach().clone()
     # Infinite gradients with a finite forward loss: GradScaler must skip.
     hook = model.weight.register_hook(lambda grad: torch.full_like(grad, float("inf")))
@@ -262,8 +300,10 @@ def test_fp16_overflow_skips_update_and_retains_scaler():
         1,
         lambda b: {k: v.cuda() for k, v in b.items()},
         reduction=loss_counts,
+        ema=ema,
     )
     assert not result["optimizer_step"] and runtime.scaler.get_scale() < old_scale
+    assert ema.num_updates == 0
     torch.testing.assert_close(model.weight, before, atol=0, rtol=0)
     hook.remove()
     runtime.close()

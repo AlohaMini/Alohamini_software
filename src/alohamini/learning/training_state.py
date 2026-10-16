@@ -21,11 +21,13 @@ import random
 import tempfile
 import time
 from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import torch
 
+from alohamini.learning.ema import EMAConfig
 from alohamini.learning.policy import save_checkpoint
 
 logger = logging.getLogger(__name__)
@@ -233,6 +235,7 @@ def save_training_checkpoint(
     scheduler=None,
     execution_state=None,
     execution=None,
+    ema=None,
 ):
     """Adapt LeRobot's step/pretrained_model layout to AlohaMini policy manifests.
 
@@ -242,6 +245,10 @@ def save_training_checkpoint(
     name = f"{step:0{max(6, len(str(cfg['steps'])))}d}"
     checkpoint = output / "checkpoints" / name
     sharded = execution is not None and execution.sharded
+    if EMAConfig.from_dict(cfg.get("ema")).enable != (ema is not None):
+        raise ValueError("EMA configuration and checkpoint manager disagree")
+    if ema is not None and (sharded or ema.num_updates != step):
+        raise ValueError("EMA checkpoint requires unsharded weights and one EMA update per step")
     stage = None
     if not sharded or execution.main:
         if checkpoint.exists():
@@ -264,22 +271,35 @@ def save_training_checkpoint(
     state.update(execution_state or {})
     if scheduler is not None:
         state["scheduler"] = scheduler.state_dict()
+    if ema is not None:
+        state["ema"] = ema.state_dict()
     save_checkpoint(
         stage / "pretrained_model",
         model,
         stats,
         samples,
-        training=training,
+        training={**training, "weights": "online"} if ema is not None else training,
         model_state=model_state,
     )
     (stage / "pretrained_model/train_config.json").write_text(
         json.dumps(cfg, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     )
+    if ema is not None:
+        with ema.average_parameters(model):
+            save_checkpoint(
+                stage / "ema_pretrained_model",
+                model,
+                stats,
+                samples,
+                training={**training, "weights": "ema", "ema_updates": ema.num_updates},
+            )
     (stage / "training_state").mkdir()
     torch.save(state, stage / "training_state/state.pt")
     stage.rename(checkpoint)
     _link(checkpoint, output / "checkpoints/last")
     _link(checkpoint / "pretrained_model", output / "checkpoint")
+    if ema is not None:
+        _link(checkpoint / "ema_pretrained_model", output / "checkpoint-ema")
     return checkpoint
 
 
@@ -341,6 +361,8 @@ def load_training_checkpoint(path, cfg, samples, validation):
 
     def comparable(config, key):
         value = config.get(key)
+        if key == "ema":
+            return asdict(EMAConfig.from_dict(value))
         if key == "paper_preset" and isinstance(value, dict):
             # Preset metadata may repeat permitted overrides (notably SmolVLA
             # total steps). Compare their source fields under the rules above.
@@ -377,6 +399,12 @@ def load_training_checkpoint(path, cfg, samples, validation):
     ):
         raise ValueError("Dataset changed since checkpoint; resume rejected")
     state = torch.load(path / "training_state/state.pt", map_location="cpu", weights_only=True)
+    ema_config = EMAConfig.from_dict(cfg.get("ema"))
+    if ema_config.enable:
+        if "ema" not in state or state["ema"].get("num_updates") != state["step"]:
+            raise ValueError("Checkpoint is missing complete EMA state; resume rejected")
+    elif "ema" in state:
+        raise ValueError("Checkpoint contains trainer EMA but ema.enable is false")
     if not 0 < state["step"] < cfg["steps"]:
         raise ValueError(
             "--steps must exceed the checkpoint step (total updates, not additional updates)"

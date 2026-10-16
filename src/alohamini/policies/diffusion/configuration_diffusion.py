@@ -23,7 +23,7 @@ from alohamini.policies.configuration import NormalizationMode, PolicyConfig
 class DiffusionConfig(PolicyConfig):
     """Configuration class for DiffusionPolicy.
 
-    Defaults are configured for training with PushT providing proprioceptive and single camera observations.
+    Defaults follow LeRobot PR #3202: pretrained vision encoders and a 64-step horizon.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
     Those are: `input_features` and `output_features`.
@@ -98,20 +98,19 @@ class DiffusionConfig(PolicyConfig):
 
     # Inputs / output structure.
     n_obs_steps: int = 2
-    horizon: int = 16
-    n_action_steps: int = 8
+    horizon: int = 64
+    n_action_steps: int = 32
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "VISUAL": NormalizationMode.MIN_MAX,
+            "VISUAL": NormalizationMode.MEAN_STD,
             "STATE": NormalizationMode.MIN_MAX,
             "ACTION": NormalizationMode.MIN_MAX,
         }
     )
 
-    # The original implementation doesn't sample frames for the last 7 steps,
-    # which avoids excessive padding and leads to improved training results.
-    drop_n_last_frames: int = 7  # horizon - n_action_steps - n_obs_steps + 1
+    # Resolve from the temporal window unless explicitly set (including zero).
+    drop_n_last_frames: int | None = None
 
     # Architecture / modeling.
     # Vision backbone.
@@ -120,8 +119,8 @@ class DiffusionConfig(PolicyConfig):
     crop_ratio: float = 1.0
     crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True
-    pretrained_backbone_weights: str | None = None
-    use_group_norm: bool = True
+    pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
+    use_group_norm: bool = False
     spatial_softmax_num_keypoints: int = 32
     use_separate_rgb_encoder_per_camera: bool = True
     # Unet.
@@ -150,10 +149,6 @@ class DiffusionConfig(PolicyConfig):
     # Loss computation
     do_mask_loss_for_padding: bool = False
 
-    use_ema: bool = True
-    ema_power: float = 0.75
-    ema_max_decay: float = 0.9999
-
     # Training presets
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple = (0.95, 0.999)
@@ -165,15 +160,16 @@ class DiffusionConfig(PolicyConfig):
     def __post_init__(self):
         super().__post_init__()
 
+        if self.drop_n_last_frames is None:
+            self.drop_n_last_frames = self.horizon - self.n_action_steps - self.n_obs_steps + 1
         if not 1 <= self.n_action_steps <= self.horizon - self.n_obs_steps + 1:
             raise ValueError("n_action_steps must fit the future part of the horizon")
-        if self.n_obs_steps < 1 or self.drop_n_last_frames < 0:
+        if (
+            self.n_obs_steps < 1
+            or type(self.drop_n_last_frames) is not int
+            or self.drop_n_last_frames < 0
+        ):
             raise ValueError("Invalid observation window or tail exclusion")
-        if self.use_ema and not self.use_group_norm:
-            raise ValueError("EMA requires GroupNorm instead of BatchNorm")
-        if not 0 < self.ema_power <= 1 or not 0 <= self.ema_max_decay < 1:
-            raise ValueError("Invalid EMA decay")
-
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."

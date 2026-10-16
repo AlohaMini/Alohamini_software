@@ -46,7 +46,7 @@ import alohamini.apps.teleoperation
 import alohamini.apps.teleop_monitor
 import alohamini.apps.recording
 import alohamini.datasets
-for name in ('native', 'images', 'tools', 'lerobot'):
+for name in ('record', 'images', 'tools', 'lerobotv3'):
     assert importlib.util.find_spec(f'alohamini.datasets.{name}') is not None
 for name in ('dataset', 'dataset_images', 'dataset_tools', 'dataset_lerobot',
              'teleoperation', 'recording', 'teleop_monitor', 'visualization'):

@@ -23,7 +23,6 @@ TODO(alexander-soare):
 import math
 from collections import deque
 from collections.abc import Callable
-from copy import deepcopy
 
 import einops
 import numpy as np
@@ -90,8 +89,16 @@ def get_output_shape(module: nn.Module, input_shape: tuple) -> tuple:
         tuple: The output shape of the module.
     """
     dummy_input = torch.zeros(size=input_shape)
-    with torch.inference_mode():
-        output = module(dummy_input)
+    # A shape probe must neither update pretrained BatchNorm statistics nor require
+    # multiple values per channel when the final spatial map is 1x1.
+    training_modes = {child: child.training for child in module.modules()}
+    try:
+        module.eval()
+        with torch.inference_mode():
+            output = module(dummy_input)
+    finally:
+        for child, training in training_modes.items():
+            child.training = training
     return tuple(output.shape)
 
 
@@ -124,25 +131,11 @@ class DiffusionPolicy(nn.Module):
         self._queues = None
 
         self.diffusion = DiffusionModel(config)
-        self.ema = deepcopy(self.diffusion).requires_grad_(False) if config.use_ema else None
-        self.register_buffer("ema_step", torch.zeros((), dtype=torch.long))
 
         self.reset()
 
     def get_optim_params(self) -> dict:
         return self.diffusion.parameters()
-
-    @torch.no_grad()
-    def update(self):
-        if self.ema is None:
-            return
-        step = max(0, int(self.ema_step) - 1)
-        decay = min(self.config.ema_max_decay, 1 - (1 + step) ** -self.config.ema_power)
-        for target, source in zip(self.ema.parameters(), self.diffusion.parameters(), strict=True):
-            target.lerp_(source, 1 - decay)
-        for target, source in zip(self.ema.buffers(), self.diffusion.buffers(), strict=True):
-            target.copy_(source)
-        self.ema_step.add_(1)
 
     def reset(self):
         """Clear observation and action queues. Should be called on `env.reset()`"""
@@ -177,7 +170,7 @@ class DiffusionPolicy(nn.Module):
                 batch[OBS_IMAGES] = torch.stack(
                     [batch[key] for key in self.config.image_features], dim=-4
                 )
-        sampler = self.ema if self.ema is not None else self.diffusion
+        sampler = self.diffusion
         sampler.eval()
         actions = sampler.generate_actions(batch, noise=noise, full_horizon=True)
         return actions
