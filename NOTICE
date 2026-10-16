@@ -1,17 +1,5 @@
 AlohaMini migrated components
 
-src/alohamini/policies/multi_task_dit adapts Hugging Face LeRobot at
-53feaef37b67e8f4c23b6953e880ff535e39d6fe, configuration_multi_task_dit.py and
-modeling_multi_task_dit.py (Apache-2.0, Copyright 2025 Bryson Jones and
-The HuggingFace Inc. team). Source:
-https://github.com/huggingface/lerobot/tree/53feaef37b67e8f4c23b6953e880ff535e39d6fe/src/lerobot/policies/multi_task_dit
-Changes: native registry/configuration, bundled CLIP configs/tokenizer with
-complete safetensors weights, full-horizon offline alignment, task-switch queue
-reset, frozen-text evaluation mode, loss accumulation weights and relative
-vision learning-rate groups. The robot preset uses fixed CLIP RGB statistics
-and explicit recorded action coordinates. EMA belongs to the shared trainer.
-No pretrained model weights are included in this repository.
-
 src/alohamini/policies/diffusion and policies/fastwam copy the corresponding
 policy files from lerobot_alohamini_pr_50hz_fix at
 524420cde405b7bfacb9b08f804186789eb5d742 (Apache-2.0).
@@ -380,16 +368,3 @@ body velocities absolute and exclude invalid feedback. RGB encoding defaults
 to H.264; depth encoding and cross-episode shard packing are not native features.
 datasets/statistics.py holds the previously migrated RunningQuantileStats from
 LeRobot datasets/compute_stats.py, shared by native editing and LeRobot export.
-
-src/alohamini/policies/dit_policy/transformer.py adapts the DiT-Block network
-from SudeepDasari/dit-policy, revision ba22ee3ff455f0423fc9cfa5658a1a1cdddc6e73,
-data4robotics/models/diffusion.py. Copyright (c) Sudeep Dasari, 2023.
-MIT license: src/alohamini/policies/dit_policy/LICENSE.dit-policy.
-The native adapter supplies ResNet tokens, DDIM sampling, dataset normalization,
-trainer integration and local checkpoints; upstream model imports/logging are removed.
-
-src/alohamini/policies/cdp is a native implementation of the CDP2 RGB architecture
-and rolling diffusion algorithm described by GaavaMa/Causal-Diffusion-Policy,
-revision 58b23af1e9ac246a11001d7d5388a1de4f53daa5, arXiv:2506.14769.
-It uses native per-token DDPM updates, chunk attention/KV caches, data history,
-trainer EMA and checkpoint interfaces. It does not vendor the upstream repository.

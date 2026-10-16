@@ -13,7 +13,7 @@ from alohamini.policies.registry import ALGORITHMS, algorithm
 
 class Tokenizer:
     def __call__(self, tasks, **kwargs):
-        assert tasks in (["pick\n", "pick\n"], ["pick", "pick"])
+        assert tasks == ["pick\n", "pick\n"]
         return {
             "input_ids": torch.tensor([[1, 2], [1, 2]]),
             "attention_mask": torch.tensor([[1, 1], [1, 1]]),
@@ -45,7 +45,7 @@ def make_processor(kind, shape):
         },
         output_features={"action": {"type": "ACTION", "shape": (18,)}},
     )
-    options = {**features, **({"crop_shape": None} if kind in ("diffusion", "cdp") else {})}
+    options = {**features, **({"crop_shape": None} if kind == "diffusion" else {})}
     config = algorithm(kind).config_class(**options)
     stats = {}
     for key, feature in {**config.input_features, **config.output_features}.items():
@@ -58,10 +58,6 @@ def make_processor(kind, shape):
         from alohamini.policies.smolvla.processor_smolvla import SmolVLAProcessor
 
         processor = SmolVLAProcessor(config, stats, Tokenizer())
-    elif kind == "multi_task_dit":
-        from alohamini.policies.multi_task_dit.processor_multi_task_dit import MultiTaskDiTProcessor
-
-        processor = MultiTaskDiTProcessor(config, stats, Tokenizer(), "cpu")
     elif kind == "fastwam":
         from alohamini.policies.fastwam.adapter import FastWAMProcessor
 
@@ -91,7 +87,7 @@ def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, si
     compact = image_tensor(rgb, size, return_uint8=True)
     assert compact.dtype == (torch.uint8 if size == (24, 32) else torch.float32)
     processor, config = make_processor(kind, (3, *size))
-    if kind in ("diffusion", "fastwam", "multi_task_dit"):
+    if kind in ("diffusion", "fastwam"):
         legacy = legacy[None, None].repeat(2, 3, 1, 1, 1)
         compact = compact[None, None].repeat(2, 3, 1, 1, 1)
     else:
@@ -102,9 +98,9 @@ def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, si
         "action": torch.ones(2, 3, 18),
         "action_is_pad": torch.tensor([[False, False, True]] * 2),
     }
-    if kind in ("smolvla", "fastwam", "pi05", "multi_task_dit"):
+    if kind in ("smolvla", "fastwam", "pi05"):
         extras["task"] = ["pick", "pick"]
-    if kind in ("diffusion", "fastwam", "multi_task_dit"):
+    if kind in ("diffusion", "fastwam"):
         extras[key + "_is_pad"] = torch.tensor([[True, False, False]] * 2)
     original_bytes = compact.clone()
     expected = processor({key: legacy, **extras})

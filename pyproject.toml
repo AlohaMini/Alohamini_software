@@ -15,9 +15,6 @@ dependencies = []
 analysis = ["numpy>=2,<3", "pyarrow>=18", "pillow>=11", "rerun-sdk==0.26.2", "av==15.1.0", "matplotlib==3.10.8"]
 smolvla = ["alohamini-platform[learning]"]
 pi05 = ["alohamini-platform[learning]"]
-multi_task_dit = ["alohamini-platform[learning]"]
-cdp = ["alohamini-platform[learning]"]
-dit_policy = ["alohamini-platform[learning]"]
 learning = [
     "diffusers==0.39.0",
     "transformers==5.0.0",
@@ -54,9 +51,6 @@ host = [
 
 [project.scripts]
 alohamini = "alohamini.cli:main"
-
-[tool.setuptools.package-data]
-"alohamini.policies.dit_policy" = ["LICENSE.dit-policy"]
 
 [tool.ruff]
 target-version = "py310"
