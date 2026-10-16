@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from test_diffusion_fastwam import check_named_action
+from test_diffusion_fastwam import check_named_action, features
 from test_native_learning import recording as recording
 
 from alohamini.learning.data import AlohaMiniDataset
@@ -16,6 +16,21 @@ from alohamini.learning.ema import EMAConfig, EMAManager
 from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optimization
 from alohamini.learning.policy import NativePolicy, save_checkpoint
 from alohamini.policies.registry import algorithm
+
+
+@pytest.mark.parametrize("window,expected", [({}, 7), ({"horizon": 64, "n_action_steps": 32}, 31)])
+def test_tail_exclusion_tracks_window_and_preserves_overrides(window, expected):
+    recipe = algorithm("multi_task_dit")
+    for override, result in (
+        ({}, expected),
+        ({"drop_n_last_frames": None}, expected),
+        ({"drop_n_last_frames": 0}, 0),
+        ({"drop_n_last_frames": 7}, 7),
+    ):
+        options = {**window, **override}
+        config = recipe.config_class(**features(), **options)
+        assert config.drop_n_last_frames == result
+        assert recipe.sample_spec(options)["drop_n_last_frames"] == result
 
 
 def make_clip_assets(root):
