@@ -28,11 +28,17 @@ from alohamini.learning.train_config import parse_training_args
 from alohamini.policies.registry import algorithm
 
 
-@pytest.fixture(params=["act", "am_act", "diffusion", "smolvla", "pi05", "fastwam"])
+@pytest.fixture(
+    params=["act", "am_act", "diffusion", "smolvla", "pi05", "fastwam", "multi_task_dit"]
+)
 def native(request, recording, tmp_path, monkeypatch, tiny_assets):
     kind = request.param
     component = algorithm(kind)
     options = model_options() if kind in ("act", "am_act") else {}
+    if kind == "multi_task_dit":
+        from test_multi_task_dit import dit_options
+
+        options = dit_options(tmp_path / "clip-assets")
     if kind == "diffusion":
         options = diffusion_options()
     if kind == "smolvla":

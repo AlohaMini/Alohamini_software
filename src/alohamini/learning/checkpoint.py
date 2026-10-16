@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 ASSET_FIELDS = {
+    "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
     "smolvla": ("vlm_model_name",),
     "pi05": ("tokenizer_path",),
     "fastwam": ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id"),
@@ -29,6 +30,15 @@ def read_checkpoint(path):
     manifest = json.loads((path / "policy.json").read_text())
     if (manifest.get("format"), manifest.get("version")) != ("alohamini-policy", 1):
         raise ValueError("Unsupported AlohaMini checkpoint")
+    if manifest.get("kind") == "diffusion" and {
+        "use_ema",
+        "ema_power",
+        "ema_max_decay",
+    }.intersection(manifest.get("config", {})):
+        raise ValueError(
+            "Legacy DP EMA checkpoints are no longer supported; "
+            "start a new run with trainer --ema.enable=true"
+        )
     if not (path / "model.safetensors").is_file():
         raise FileNotFoundError(path / "model.safetensors")
     # Old manifests remain readable without the new inspectable sidecars.
@@ -126,6 +136,8 @@ def resolve_pretrained(settings, *, expected_kind=None):
         options["pretrained_backbone_weights"] = None
     if "load_vlm_weights" in options:
         options["load_vlm_weights"] = False
+    if "load_pretrained_encoders" in options:
+        options["load_pretrained_encoders"] = False
     cfg["model"] = options
     if cfg.get("state", "auto") == "auto":
         cfg["state"] = manifest["state"]

@@ -7,6 +7,7 @@ from dataclasses import fields
 from pathlib import Path
 
 from alohamini.learning.checkpoint import resolve_pretrained
+from alohamini.learning.ema import EMAConfig, validate_ema_setup
 from alohamini.learning.loading import resolve_data_pipeline
 from alohamini.policies.registry import ALGORITHMS, algorithm
 
@@ -99,6 +100,8 @@ def parse_training_args(argv=None):
         parser.add_argument(f"--optimizer.{name}", type=value, default=argparse.SUPPRESS)
     for name in ("type", "warmup_steps", "decay_steps", "decay_lr"):
         parser.add_argument(f"--scheduler.{name}", type=value, default=argparse.SUPPRESS)
+    for field in fields(EMAConfig):
+        parser.add_argument(f"--ema.{field.name}", type=value, default=argparse.SUPPRESS)
     for name in ("resume", "cudnn_deterministic", "persistent_workers", "deterministic_algorithms"):
         parser.add_argument(f"--{name}", type=boolean)
     parser.add_argument("--eval_persistent_workers", type=boolean)
@@ -142,7 +145,7 @@ def parse_training_args(argv=None):
     for name, setting in args.items():
         if name.startswith("policy."):
             model[name.removeprefix("policy.")] = setting
-        elif name.startswith(("optimizer.", "scheduler.")):
+        elif name.startswith(("optimizer.", "scheduler.", "ema.")):
             section, key = name.split(".", 1)
             cfg[section] = {**(cfg.get(section) or {}), key: setting}
         elif setting is not None:
@@ -150,6 +153,7 @@ def parse_training_args(argv=None):
     cfg["model"] = model
     cfg = resolve_pretrained(cfg)
     cfg = algorithm(cfg.get("policy", "act")).apply_preset(cfg)
+    validate_ema_setup(cfg)
     defaults = dict(
         policy="act",
         device="cuda",

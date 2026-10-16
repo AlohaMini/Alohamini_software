@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 from contextlib import nullcontext
+from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
 
@@ -26,10 +27,12 @@ from accelerate import __version__ as accelerate_version
 
 from alohamini.learning.checkpoint import (
     initialize_policy,
+    read_checkpoint,
     resolve_pretrained,
     validate_pretrained,
 )
 from alohamini.learning.data import AlohaMiniDataset, DatasetInspection
+from alohamini.learning.ema import EMAManager, validate_ema_setup
 from alohamini.learning.execution import Execution, RankBatchSampler, validate_local_workers
 from alohamini.learning.loading import loader_options, make_loader, resolve_data_pipeline
 from alohamini.learning.logging import (
@@ -59,6 +62,7 @@ logger = logging.getLogger("alohamini.learning.train")
 
 def launch_training(settings):
     """Launch a detached local trainer with exclusive config/log/PID files."""
+    validate_ema_setup(settings)
     paths = WorkspacePaths()
     processes = settings.get("num_processes", 1)
     validate_local_workers(processes, settings.get("device", "cuda"))
@@ -244,6 +248,7 @@ def train(settings):
     components = algorithm(settings.get("policy", "act"))
     settings = components.apply_preset(settings)
     settings = resolve_data_pipeline(settings)
+    validate_ema_setup(settings)
     if settings.get("deterministic_algorithms"):
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     backend = settings.get("distributed_backend", "ddp")
@@ -267,6 +272,8 @@ def _train(settings, execution):
     """Local offline training with periodic, fully resumable checkpoints."""
     components = algorithm(settings.get("policy", "act"))
     cfg = components.apply_preset(settings)
+    ema_config = validate_ema_setup(cfg)
+    cfg["ema"] = asdict(ema_config)
     cfg.setdefault("distributed_backend", "ddp")
     precision = cfg.get("mixed_precision", "none")
     accumulation = cfg.setdefault("gradient_accumulation_steps", 1)
@@ -305,6 +312,11 @@ def _train(settings, execution):
         if type(number) is not int or number < minimum:
             raise ValueError(f"{key} must be an integer >= {minimum}")
     options = components.options(cfg, device)
+    if cfg.get("resume"):
+        # Defaults can evolve between runs. Recover the effective model/window
+        # before building the dataset, while retaining explicit overrides for validation.
+        _, saved_manifest = read_checkpoint(Path(cfg["_checkpoint"]) / "pretrained_model")
+        options = {**saved_manifest["config"], **options}
     args, train_episodes, val_episodes = sample_arguments(cfg, components, options)
     root, state = Path(args["root"]), args["state"]
     if eval_steps and not val_episodes:
@@ -530,6 +542,15 @@ def _train(settings, execution):
                 logger.debug("Validation loss reduction: algorithm denominators %s", eval_totals)
         with log_stage("Preparing execution backend"):
             wrapped, optimizer = execution.prepare(model, optimizer)
+        ema = EMAManager(model, ema_config) if ema_config.enable and execution.main else None
+        if ema is not None:
+            if resume_state:
+                ema.load_state_dict(resume_state["ema"])
+            logger.info(
+                "Trainer EMA: %d updates; FP32 trainable parameters; copied buffers; eval=%s",
+                ema.num_updates,
+                ema_config.use_for_eval,
+            )
         if resume_state and execution.sharded:
             execution.distributed_checkpoint(
                 checkpoint_path / "distributed", wrapped, optimizer, load=True
@@ -563,6 +584,7 @@ def _train(settings, execution):
             "optimizer": cfg["optimizer"],
             "scheduler": cfg["scheduler"],
             "paper_preset": cfg.get("paper_preset"),
+            "ema": cfg["ema"],
         }
         if validation:
             training["validation_table_sha256"] = validation.table_sha256
@@ -621,6 +643,7 @@ def _train(settings, execution):
                     processor,
                     reduction=components.loss_counts,
                     metric_specs=metric_specs,
+                    ema=ema,
                 )
                 if not update["optimizer_step"]:
                     skipped += 1
@@ -667,7 +690,12 @@ def _train(settings, execution):
                     try:
                         model.eval()
                         eval_metrics = MetricAccumulator(metric_specs, device=device, phase="eval")
-                        with torch.no_grad(), execution.autocast():
+                        use_ema = ema is not None and ema_config.use_for_eval
+                        with (
+                            ema.average_parameters(model) if use_ema else nullcontext(),
+                            torch.no_grad(),
+                            execution.autocast(),
+                        ):
                             eval_loss = evaluate_loss(
                                 model,
                                 processor,
@@ -679,7 +707,12 @@ def _train(settings, execution):
                                 metrics=eval_metrics,
                             )
                         if execution.main:
-                            evaluation = {"step": step, "loss": eval_loss, **eval_metrics.result()}
+                            evaluation = {
+                                "step": step,
+                                "loss": eval_loss,
+                                "weights": "ema" if use_ema else "online",
+                                **eval_metrics.result(),
+                            }
                             validation_stream.write(json.dumps(evaluation, allow_nan=False) + "\n")
                             validation_stream.flush()
                             logger.info(
@@ -716,6 +749,7 @@ def _train(settings, execution):
                             {**training, "steps": step},
                             scheduler=scheduler,
                             execution=execution,
+                            ema=ema,
                             execution_state=dict(
                                 ranks=ranks,
                                 consumed_batches=consumed,
@@ -726,6 +760,11 @@ def _train(settings, execution):
                             logger.debug("Saved checkpoint: %s", saved)
                     execution.barrier()
         checkpoint = output / "checkpoint"
+        eval_checkpoint = (
+            output / "checkpoint-ema"
+            if ema_config.enable and ema_config.use_for_eval
+            else checkpoint
+        )
         if validation:
             logger.debug("Running final offline evaluation")
         if validation and (
@@ -750,23 +789,29 @@ def _train(settings, execution):
                         getattr(model.config, "inference_action_scale", 1.0),
                     ).cpu()
 
-            metrics = _offline_evaluate_chunks(
-                validation,
-                predict,
-                validation.info["features"]["action"]["names"],
-                batch_size=batch_size,
-                loader=eval_loader,
-                device=device,
-                log_freq=eval_log_freq,
-            )
+            with (
+                ema.average_parameters(model)
+                if ema is not None and ema_config.use_for_eval
+                else nullcontext()
+            ):
+                metrics = _offline_evaluate_chunks(
+                    validation,
+                    predict,
+                    validation.info["features"]["action"]["names"],
+                    batch_size=batch_size,
+                    loader=eval_loader,
+                    device=device,
+                    log_freq=eval_log_freq,
+                )
             if execution.main:
+                metrics["weights"] = "ema" if eval_checkpoint != checkpoint else "online"
                 (output / "offline-evaluation.json").write_text(
                     json.dumps(metrics, indent=2) + "\n"
                 )
                 logger.debug("Final offline evaluation: %s", json.dumps(metrics))
         elif execution.main and validation:
             del wrapped, model, optimizer
-            policy = NativePolicy(checkpoint, device=device)
+            policy = NativePolicy(eval_checkpoint, device=device)
             metrics = offline_evaluate(
                 policy,
                 validation,
@@ -774,6 +819,7 @@ def _train(settings, execution):
                 loader=eval_loader,
                 log_freq=eval_log_freq,
             )
+            metrics["weights"] = "ema" if eval_checkpoint != checkpoint else "online"
             (output / "offline-evaluation.json").write_text(json.dumps(metrics, indent=2) + "\n")
             logger.debug("Final offline evaluation: %s", json.dumps(metrics))
         elif execution.main:
