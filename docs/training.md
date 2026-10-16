@@ -201,6 +201,46 @@ RGB 使用 ImageNet `MEAN_STD`，state/action 使用训练集 `MIN_MAX`。
 `--policy.drop_n_last_frames` 可显式覆盖，设为 `0` 保留所有采样起点。
 EMA 默认关闭，使用 `--ema.enable=true` 开启。
 
+### CDP
+
+```bash
+python -m alohamini.learning.train \
+  --policy.type=cdp --policy.device=cuda \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --dataset.eval_episodes='[1]' --batch_size=2 \
+  --output_dir="$HOME/Alohamini_workspace/runs/cdp_01" --background
+```
+
+采用 [CDP2 RGB 配置](https://github.com/GaavaMa/Causal-Diffusion-Policy/tree/58b23af1e9ac246a11001d7d5388a1de4f53daa5)：
+32 帧历史、总窗口 40 步、每次执行 8 步；DDPM 100 步，预测干净动作。
+在线保留动作缓冲区和 KV 缓存，episode 开始须调用 `reset()`。
+历史动作只取当前帧之前的数据；图像和 state 历史包含当前帧。
+RGB 缩放至 84×84、裁剪 76×76，ImageNet `MEAN_STD`；state/action 使用训练集 `MIN_MAX`。
+ResNet18 使用 GroupNorm，无预训练权重；训练器 EMA 默认开启，尾部排除数为 0。
+默认训练 100000 步、预热 1000 步，可通过 `--steps` 和 `--scheduler.warmup_steps` 调整。
+仅支持 RGB CDP2；不含点云 CDP3。动作块大小属于模型结构，加载 checkpoint 时不可更改；
+去噪步数必须等于训练扩散步数。离线评估使用示范历史动作，结果不代表闭环成功率。
+
+### dit-policy（DiT-Block）
+
+```bash
+python -m alohamini.learning.train \
+  --policy.type=dit_policy --policy.device=cuda \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --dataset.eval_episodes='[1]' --batch_size=2 \
+  --output_dir="$HOME/Alohamini_workspace/runs/dit_policy_01" --background
+```
+
+采用 [SudeepDasari/dit-policy](https://github.com/SudeepDasari/dit-policy/tree/ba22ee3ff455f0423fc9cfa5658a1a1cdddc6e73)
+的独立 DiT 编码器／解码器：默认 1 帧观测、100 步动作、6 层、隐藏维度 512；
+训练扩散 100 步，DDIM 推理 8 步。`--policy.n_action_steps` 可缩短执行窗口。
+RGB 缩放至 256×256，训练随机缩放裁剪至 224×224 并模糊，推理缩放至 224×224；
+采用 ImageNet `MEAN_STD`、ResNet18 GroupNorm 和空间 token。
+`--policy.pooled_vision=true` 改用每帧单 token。
+state 保留原值；本地 action 使用训练集 `MIN_MAX`，上游数据需预先归一化。
+默认使用 torchvision ImageNet V1 权重初始化，不含作者另行分发的 GN 权重。
+默认训练 150000 步、预热 2000 步；EMA 关闭，尾部保留并屏蔽填充动作。不使用语言输入。
+
 ### Multi-Task DiT
 
 ```bash

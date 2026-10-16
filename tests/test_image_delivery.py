@@ -45,7 +45,7 @@ def make_processor(kind, shape):
         },
         output_features={"action": {"type": "ACTION", "shape": (18,)}},
     )
-    options = {**features, **({"crop_shape": None} if kind == "diffusion" else {})}
+    options = {**features, **({"crop_shape": None} if kind in ("diffusion", "cdp") else {})}
     config = algorithm(kind).config_class(**options)
     stats = {}
     for key, feature in {**config.input_features, **config.output_features}.items():

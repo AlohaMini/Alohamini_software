@@ -380,3 +380,16 @@ body velocities absolute and exclude invalid feedback. RGB encoding defaults
 to H.264; depth encoding and cross-episode shard packing are not native features.
 datasets/statistics.py holds the previously migrated RunningQuantileStats from
 LeRobot datasets/compute_stats.py, shared by native editing and LeRobot export.
+
+src/alohamini/policies/dit_policy/transformer.py adapts the DiT-Block network
+from SudeepDasari/dit-policy, revision ba22ee3ff455f0423fc9cfa5658a1a1cdddc6e73,
+data4robotics/models/diffusion.py. Copyright (c) Sudeep Dasari, 2023.
+MIT license: src/alohamini/policies/dit_policy/LICENSE.dit-policy.
+The native adapter supplies ResNet tokens, DDIM sampling, dataset normalization,
+trainer integration and local checkpoints; upstream model imports/logging are removed.
+
+src/alohamini/policies/cdp is a native implementation of the CDP2 RGB architecture
+and rolling diffusion algorithm described by GaavaMa/Causal-Diffusion-Policy,
+revision 58b23af1e9ac246a11001d7d5388a1de4f53daa5, arXiv:2506.14769.
+It uses native per-token DDPM updates, chunk attention/KV caches, data history,
+trainer EMA and checkpoint interfaces. It does not vendor the upstream repository.
