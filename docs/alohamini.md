@@ -260,73 +260,7 @@ alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
 
 保留原数据，重建可确定的索引与媒体引用；缺失图像或配对不明时拒绝修复。修复结果不用于追加录制，也不消除实际漏采与时间偏差。
 
-### 对比评估与训练示范
-
-```bash
-alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 --episode 0
-```
-
-新录制的评估自动保存本次 checkpoint 身份、训练集与 episode 划分、实际推理参数。
-分析时自动关联模型对应的数据，在 Rerun 中并排查看评估与示范画面、动作曲线。
-普通浏览不加载模型；命令、Host 反馈、电流和耗时默认隐藏，可加 `--control-diagnostics` 查看。
-
-默认参考 checkpoint 训练划分中的首条示范；这不是自动检索的最相似场景。
-用 `--reference-episode 12` 选择同一训练划分中的其他示范，或用 `--reference-split val`
-选择保存的验证划分。两次运行进度不同时，可指定同一任务阶段的两个时间点：
-
-```bash
-alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
-  --episode 0 --reference-episode 12 \
-  --time-range 20 35 --reference-time-range 8 23 --align 20 8
-```
-
-`--align 20 8` 将评估第 20 秒和示范第 8 秒对齐到公共时间轴的 0 秒；原时间戳保持不变。
-不指定时仅按 episode 起点并排。不同运行的场景与轨迹不同，不计算它们的逐帧误差。
-只有字段和单位明确一致时才叠加曲线；无法确认的单位分开展示。
-
-旧评估没有保存模型关联，需要加 `--checkpoint <当时使用的模型目录>`。
-模型搬迁时也使用这个选项重定位，并核对已记录的身份。训练数据搬迁使用
-`--training-root <原训练数据集的本地副本>`；按 checkpoint 的元数据及所选数值文件指纹核对，
-不把同名目录或其他相似数据集当成原训练集。缺少数据时仍能浏览评估，但会提示示范对比不可用。
-旧记录的实际 NAS、时序融合等参数未保存时显示未知，checkpoint 默认参数单独展示。
-
-ACT／AM-ACT 可以显式加载 checkpoint，在所选示范的观测上重新预测动作：
-
-```bash
-alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
-  --reference-split val --probe-samples 8 --probe-device cuda \
-  --viewer none --export-html
-```
-
-这会均匀抽取最多 8 个观测，按 checkpoint 的图像预处理预测独立 Chunk，
-逐维计算首步及有效未来动作的 MAE，跳过 episode 尾部没有标签的部分和固定输出维度。
-未来示范动作只用于计算误差，不输入模型。每个观测重置队列和潜变量，`--probe-seed` 控制随机种子。
-这是重新预测的离线检查，不是录制时的原始 Chunk，也不代表闭环任务成功率。
-训练划分上的误差用于检查拟合；评估泛化应优先使用验证划分。
-预测、标签和有效掩码保存在 `demonstration_predictions.npz`。不加 `--probe-samples` 不运行模型。
-
-| 选项 | 作用 |
-| --- | --- |
-| `--viewer none` | 不启动 Rerun；保存 `summary.json` 和 `events.csv` |
-| `--export-html` | 增加浏览器可打开的 `report.html` 和 `plots/` |
-| `--keyframes 21 25` | 按评估秒数导出画面及锚点对齐后的示范画面，同时启用 HTML |
-| `--cameras wrist_left wrist_right` | 指定显示或导出的相机及顺序 |
-| `--segment 0` / `--reference-segment 0` | 选择时钟重置后的评估／示范时间段 |
-| `--save-rrd` | 保存 `recording.rrd`，用打印的 `rerun` 命令打开；包含压缩媒体 |
-| `--media-budget-mb 256` | 两组画面的压缩媒体累计预算；超出部分跳过并提示 |
-| `--output <新目录>` | 指定数据集外的报告目录 |
-
-结果默认保存在 `~/Alohamini_workspace/reports/<数据集>/episode_<编号>/<时间编号>/`。
-MP4 直接复用，不逐帧转码；关键帧按需读取并缓存。共享 MP4 需要整文件载入，
-缩短时间范围不一定减少该视频资源大小。缓存位于工作区 `cache/evaluation-keyframes/`，
-最多保留约 1 GiB。旧原生 Host JPEG 的颜色通道校正也会缓存。
-已有 PC 环境包含查看依赖；独立分析环境可运行 `pip install -e '.[analysis]'`，
-模型检查另需安装对应策略依赖。
-
-需要检查旧 ACT 记录的 Chunk 交接时，可提供
-`--assume-n-action-steps 100 --first-command-sequence 33 --assume-no-resets`。
-这要求确认关闭时序融合、每个 tick 一个命令、全程无队列重置，并知道首次预测的真实命令序号。
-结果始终标为推断的边界后首个录制帧；不要用首个录制帧的序号替代首次预测的命令序号。
+评估记录的 Rerun 查看、训练示范对比和报告导出，见 [训练指南：对比评估与训练示范](training.md#8-对比评估与训练示范)。
 
 ### 导出与选择字段
 

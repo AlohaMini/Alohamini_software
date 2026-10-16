@@ -18,7 +18,7 @@
   "batch_size": 2,
   "review_note": "",
   "model": {
-    "chunk_size": 30,
+    "chunk_size": 100,
     "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1"
   }
 }
