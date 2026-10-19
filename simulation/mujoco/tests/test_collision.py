@@ -5,7 +5,7 @@ from dataclasses import replace
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco.audit import convexification_report, validate_model
+from alohamini_mujoco.audit import convexification_report, gripper_sections, validate_model
 from alohamini_mujoco.collision import (
     components,
     generate_bundle,
@@ -208,6 +208,27 @@ def test_existing_concave_collision_meshes_are_reported(robot):
     for record in report["meshes"]:
         if any(record["source_topology"].values()):
             assert record["convex_to_source_volume_ratio"] is None
+
+
+def test_missing_collision_surface_is_reported_instead_of_discarded_from_gap_error(robot):
+    report = gripper_sections(robot, positions=[0.0], depths_m=[0.08, 10.0])
+    assert report["probe_counts"] == {
+        "total": 2,
+        "paired_gaps": 1,
+        "visual_gap_without_collision_gap": 0,
+        "collision_gap_without_visual_gap": 0,
+        "neither_gap": 1,
+    }
+    geometry = {name: dict(entry) for name, entry in robot.geometry.items()}
+    for entry in geometry.values():
+        if entry["link"] == "right_Moving_Jaw" and entry["kind"] == "collision":
+            entry["T_link_geometry"] = entry["T_link_geometry"].copy()
+            entry["T_link_geometry"][1, 3] += 100
+    damaged = replace(robot, geometry=geometry)
+    report = gripper_sections(damaged, positions=[0.0], depths_m=[0.08])
+    assert report["maximum_absolute_gap_difference_m"] is None
+    assert report["probe_counts"]["visual_gap_without_collision_gap"] == 1
+    assert report["probe_counts"]["paired_gaps"] == 0
 
 
 def test_generator_rejects_dirty_cad_before_producing_geometry(robot, tmp_path):

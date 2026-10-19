@@ -264,6 +264,19 @@ def gripper_sections(robot, *, side="right", positions=None, depths_m=None, y_m=
             "collision gap minus visual gap: positive widens the opening; negative narrows it"
         ),
         "comparison": "actual visual triangles versus union of individual physical convex pieces",
+        "probe_counts": {
+            "total": len(sections),
+            "paired_gaps": len(differences),
+            "visual_gap_without_collision_gap": sum(
+                s["visual_gap_m"] is not None and s["collision_gap_m"] is None for s in sections
+            ),
+            "collision_gap_without_visual_gap": sum(
+                s["collision_gap_m"] is not None and s["visual_gap_m"] is None for s in sections
+            ),
+            "neither_gap": sum(
+                s["visual_gap_m"] is None and s["collision_gap_m"] is None for s in sections
+            ),
+        },
         "maximum_absolute_gap_difference_m": max(map(abs, differences)) if differences else None,
         "sections": sections,
     }

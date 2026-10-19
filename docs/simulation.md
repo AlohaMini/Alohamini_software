@@ -41,7 +41,7 @@ alohamini-mujoco inspect --initial-positions '{"vertical_move":0.2}' \
 
 分解采用 CoACD，不限制凸体数量，不做减面或膨胀。MSH 使用 float32，在保存后的坐标上重建凸包边界三角形，记录坐标量化误差。`--tolerance-m` 是算法的凹度目标，不代表表面误差上界。精度缝合位移最多 50 nm；非流形 CAD 默认拒绝，`--nonmanifold remesh` 显式生成重网格候选，须另行验证几何变化。当前固定夹爪 CAD 含非流形部分，默认预检会拒绝。
 
-`inspect` 的 `convexification` 报告列出每个物理网格的凸包与源网格诊断；非闭合或朝向不一致的网格不提供体积比。`validation.passed` 仅表示模型导入一致性通过，候选仍须验证接触、间隙与动力学性能。碰撞候选不会自动成为默认模型。
+`inspect` 的 `convexification` 报告列出每个物理网格的凸包与源网格诊断；非闭合或朝向不一致的网格不提供体积比。夹爪截面的 `probe_counts` 区分配对命中、视觉或碰撞单侧缺失、双方未命中，未命中不等于零误差。`validation.passed` 仅表示模型导入一致性通过，候选仍须验证接触、间隙与动力学性能。碰撞候选不会自动成为默认模型。
 
 ## 轨迹执行
 
