@@ -229,6 +229,29 @@ def test_missing_collision_surface_is_reported_instead_of_discarded_from_gap_err
     assert report["maximum_absolute_gap_difference_m"] is None
     assert report["probe_counts"]["visual_gap_without_collision_gap"] == 1
     assert report["probe_counts"]["paired_gaps"] == 0
+    assert report["contact_surface_probe_counts"]["moving"]["visual_only"] == 1
+
+
+def test_common_contact_surface_displacement_cannot_hide_behind_unchanged_aperture(robot):
+    original = gripper_sections(robot, positions=[0.0], depths_m=[0.08])["sections"][0]
+    displacement = np.array([0.001, 0, 0])
+    rotation = robot.description.joints["right_gripper"].T_parent_joint[:3, :3]
+    geometry = {name: dict(entry) for name, entry in robot.geometry.items()}
+    for entry in geometry.values():
+        if entry["kind"] != "collision":
+            continue
+        if entry["link"] in ("right_Fixed_Jaw", "right_Moving_Jaw"):
+            entry["T_link_geometry"] = entry["T_link_geometry"].copy()
+            entry["T_link_geometry"][:3, 3] += (
+                displacement if entry["link"] == "right_Fixed_Jaw" else rotation.T @ displacement
+            )
+    shifted = gripper_sections(replace(robot, geometry=geometry), positions=[0.0], depths_m=[0.08])
+    row = shifted["sections"][0]
+    assert row["collision_gap_m"] == pytest.approx(original["collision_gap_m"], abs=1e-12)
+    for finger in ("fixed", "moving"):
+        assert row[f"{finger}_contact_error_m"] - original[
+            f"{finger}_contact_error_m"
+        ] == pytest.approx(0.001, abs=1e-12)
 
 
 def test_generator_rejects_dirty_cad_before_producing_geometry(robot, tmp_path):

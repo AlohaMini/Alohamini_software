@@ -247,7 +247,17 @@ def gripper_sections(robot, *, side="right", positions=None, depths_m=None, y_m=
             for kind in ("visual", "collision"):
                 a = ray_x_intersections(fixed[kind], y_m, z)
                 b = ray_x_intersections(moving[kind], y_m, z)
+                row[f"{kind}_fixed_contact_x_m"] = float(a[-1]) if len(a) else None
+                row[f"{kind}_moving_contact_x_m"] = float(b[0]) if len(b) else None
                 row[f"{kind}_gap_m"] = float(b[0] - a[-1]) if len(a) and len(b) else None
+            for finger in ("fixed", "moving"):
+                visual_x = row[f"visual_{finger}_contact_x_m"]
+                collision_x = row[f"collision_{finger}_contact_x_m"]
+                row[f"{finger}_contact_error_m"] = (
+                    collision_x - visual_x
+                    if visual_x is not None and collision_x is not None
+                    else None
+                )
             a, b = row["visual_gap_m"], row["collision_gap_m"]
             row["collision_minus_visual_gap_m"] = b - a if a is not None and b is not None else None
             sections.append(row)
@@ -256,6 +266,31 @@ def gripper_sections(robot, *, side="right", positions=None, depths_m=None, y_m=
         for s in sections
         if s["collision_minus_visual_gap_m"] is not None
     ]
+    surface_errors = [
+        s[f"{finger}_contact_error_m"]
+        for s in sections
+        for finger in ("fixed", "moving")
+        if s[f"{finger}_contact_error_m"] is not None
+    ]
+    surface_counts = {}
+    for finger in ("fixed", "moving"):
+        surface_counts[finger] = {
+            "paired": sum(
+                s[f"visual_{finger}_contact_x_m"] is not None
+                and s[f"collision_{finger}_contact_x_m"] is not None
+                for s in sections
+            ),
+            "visual_only": sum(
+                s[f"visual_{finger}_contact_x_m"] is not None
+                and s[f"collision_{finger}_contact_x_m"] is None
+                for s in sections
+            ),
+            "collision_only": sum(
+                s[f"visual_{finger}_contact_x_m"] is None
+                and s[f"collision_{finger}_contact_x_m"] is not None
+                for s in sections
+            ),
+        }
     return {
         "side": side,
         "frame": f"{side}_Fixed_Jaw",
@@ -278,6 +313,10 @@ def gripper_sections(robot, *, side="right", positions=None, depths_m=None, y_m=
             ),
         },
         "maximum_absolute_gap_difference_m": max(map(abs, differences)) if differences else None,
+        "maximum_absolute_contact_surface_difference_m": (
+            max(map(abs, surface_errors)) if surface_errors else None
+        ),
+        "contact_surface_probe_counts": surface_counts,
         "sections": sections,
     }
 
