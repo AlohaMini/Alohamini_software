@@ -64,7 +64,8 @@ class Description:
     def __init__(self, robot_model):
         self.robot_model = robot_model
         self.path = robot_model.description_path("collision")
-        self.tree = ET.parse(self.path).getroot()
+        self.source_bytes = {self.path: self.path.read_bytes()}
+        self.tree = ET.fromstring(self.source_bytes[self.path])
         self.links = {link.get("name"): link for link in self.tree.findall("link")}
         if len(self.links) != len(self.tree.findall("link")) or None in self.links:
             raise ValueError("URDF must contain unique named links")
@@ -152,7 +153,9 @@ class Description:
             if principal[0] <= 0 or principal[2] > principal[0] + principal[1] + 1e-12:
                 raise ValueError(f"Nonphysical inertia tensor: {name}")
             self.inertials[name] = (mass, origin(node), inertia)
-        semantic = ET.parse(robot_model.description_path("semantic")).getroot()
+        semantic_path = robot_model.description_path("semantic")
+        self.source_bytes[semantic_path] = semantic_path.read_bytes()
+        semantic = ET.fromstring(self.source_bytes[semantic_path])
         self.exclusions = []
         for node in semantic.findall("disable_collisions"):
             a, b = node.get("link1"), node.get("link2")

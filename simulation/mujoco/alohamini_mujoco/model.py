@@ -7,6 +7,7 @@ import math
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 
 import mujoco
@@ -14,6 +15,7 @@ import numpy as np
 
 from alohamini.model import get_robot_model
 
+from .collision import load_bundle
 from .description import Description, numbers, origin
 from .frames import rigid_transform
 from .meshes import binary_stl
@@ -50,6 +52,7 @@ class ModelProfile:
     gravity: tuple = (0.0, 0.0, -9.80665)
     friction: tuple = (1.0, 0.005, 0.0001)
     collision_profile: str = "authoritative"
+    collision_bundle: Path | None = None
 
     def __post_init__(self):
         for name in ("locked_positions", "initial_positions"):
@@ -65,6 +68,9 @@ class ModelProfile:
             ):
                 raise ValueError(f"{name} must contain finite numeric joint coordinates")
             object.__setattr__(self, name, MappingProxyType(dict(value)))
+        for name, value in self.initial_positions.items():
+            if name in self.locked_positions and value != self.locked_positions[name]:
+                raise ValueError(f"Initial position conflicts with locked joint: {name}")
         pose = rigid_transform(self.T_world_root)
         pose.flags.writeable = False
         object.__setattr__(self, "T_world_root", pose)
@@ -112,6 +118,11 @@ def build_model(robot_model=None, profile=None):
     friction = numbers(text(profile.friction), 3, "friction")
     if profile.collision_profile not in ("authoritative", "cad-pieces"):
         raise ValueError("Unknown collision profile")
+    replacements, collision_metadata = {}, None
+    if profile.collision_bundle is not None:
+        if profile.collision_profile != "authoritative":
+            raise ValueError("Use a collision bundle or cad-pieces, not both")
+        replacements, collision_metadata = load_bundle(description, profile.collision_bundle)
     if (friction < 0).any():
         raise ValueError("Friction coefficients must be nonnegative")
     for name, value in {**profile.initial_positions, **profile.locked_positions}.items():
@@ -163,13 +174,11 @@ def build_model(robot_model=None, profile=None):
     world = ET.SubElement(root, "worldbody")
     contact = ET.SubElement(root, "contact")
     actuators = ET.SubElement(root, "actuator")
-    assets, meshes, geometry, files, mesh_names = {}, {}, {}, {}, {}
-    source_file = description.path.relative_to(description.robot_model.directory).as_posix()
-    files[source_file] = hashlib.sha256(description.path.read_bytes()).hexdigest()
-    semantic_path = description.robot_model.description_path("semantic")
-    files[semantic_path.relative_to(description.robot_model.directory).as_posix()] = hashlib.sha256(
-        semantic_path.read_bytes()
-    ).hexdigest()
+    assets, meshes, geometry, files, mesh_names, mesh_files = {}, {}, {}, {}, {}, {}
+    for path, data in description.source_bytes.items():
+        files[path.relative_to(description.robot_model.directory).as_posix()] = hashlib.sha256(
+            data
+        ).hexdigest()
     for relative in (
         "model.json",
         "config/kinematics/physical_parameters.yaml",
@@ -183,7 +192,7 @@ def build_model(robot_model=None, profile=None):
         if node.find("color") is not None:
             materials[node.get("name")] = node.find("color").get("rgba")
 
-    def add_geometry(body, link_name, kind, index, node):
+    def add_geometry(body, link_name, kind, index, node, generated=None):
         if kind == "collision" and profile.collision_profile == "cad-pieces":
             # An explicit comparison candidate restores the original generated
             # distal convex pieces. Do not fit pads to a chosen object width.
@@ -236,16 +245,21 @@ def build_model(robot_model=None, profile=None):
             "source_name": node.get("name"),
         }
         if shape.tag == "mesh":
-            path = description.mesh_path(shape)
-            relative = path.relative_to(description.robot_model.directory).as_posix()
+            if generated is None:
+                path = description.mesh_path(shape)
+                relative = path.relative_to(description.robot_model.directory).as_posix()
+            else:
+                relative = f"generated/{link_name}/{index}"
             if relative not in mesh_names:
-                data = path.read_bytes()
+                data = path.read_bytes() if generated is None else generated.msh_bytes()
                 digest = hashlib.sha256(data).hexdigest()
-                files[relative] = digest
-                mesh = binary_stl(data)
+                if generated is None:
+                    files[relative] = digest
+                mesh = binary_stl(data) if generated is None else generated
                 meshes[relative] = mesh
                 virtual = f"{digest}.msh"
                 assets[virtual] = mesh.msh_bytes()
+                mesh_files[relative] = virtual
                 mesh_names[relative] = f"mesh_{len(mesh_names)}"
             scale = numbers(shape.get("scale", "1 1 1"), 3, "mesh scale")
             if (scale <= 0).any():
@@ -258,7 +272,7 @@ def build_model(robot_model=None, profile=None):
             )
             if not any(x.get("name") == mesh_name for x in asset):
                 ET.SubElement(
-                    asset, "mesh", name=mesh_name, file=f"{files[relative]}.msh", scale=text(scale)
+                    asset, "mesh", name=mesh_name, file=mesh_files[relative], scale=text(scale)
                 )
             attributes.update(type="mesh", mesh=mesh_name)
             entry.update(path=relative, scale=scale)
@@ -304,6 +318,12 @@ def build_model(robot_model=None, profile=None):
                 diaginertia=text(principal),
             )
         for kind in ("visual", "collision"):
+            if kind == "collision" and link_name in replacements:
+                for index, mesh in enumerate(replacements[link_name]):
+                    node = ET.Element("collision", name=f"cad_candidate_{index}")
+                    ET.SubElement(ET.SubElement(node, "geometry"), "mesh")
+                    add_geometry(body, link_name, kind, index, node, generated=mesh)
+                continue
             for index, node in enumerate(description.links[link_name].findall(kind)):
                 add_geometry(body, link_name, kind, index, node)
         for joint in description.by_parent.get(link_name, []):
@@ -346,6 +366,12 @@ def build_model(robot_model=None, profile=None):
         ET.SubElement(body, "site", name=f"{side}_tcp", size="0.003", rgba="1 0 0 1")
     xml = ET.tostring(root, encoding="unicode")
     compiled = mujoco.MjModel.from_xml_string(xml, assets=assets)
+    for relative, expected in files.items():
+        if (
+            hashlib.sha256((description.robot_model.directory / relative).read_bytes()).hexdigest()
+            != expected
+        ):
+            raise ValueError(f"Robot source changed during model construction: {relative}")
     initial = {**description.home, **profile.initial_positions, **profile.locked_positions}
     manifest = {
         "schema_version": 1,
@@ -373,9 +399,12 @@ def build_model(robot_model=None, profile=None):
         "collision_exclusions": [
             dict(link1=a, link2=b, reason=reason) for a, b, reason in description.exclusions
         ],
-        "collision_profile": profile.collision_profile,
+        "collision_profile": "cad-bundle" if collision_metadata else profile.collision_profile,
+        "collision_bundle": collision_metadata,
         "collision_profile_status": (
-            "URDF collision geometry retained; distal contact pads remain provisional"
+            "explicit CAD candidate; not contact-certified"
+            if collision_metadata
+            else "URDF collision geometry retained; distal contact pads remain provisional"
             if profile.collision_profile == "authoritative"
             else "comparison candidate; original generated distal hulls, not contact-certified"
         ),

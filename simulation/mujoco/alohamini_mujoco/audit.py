@@ -11,6 +11,7 @@ import mujoco
 import numpy as np
 from scipy.spatial import ConvexHull, cKDTree
 
+from .collision import topology
 from .frames import points_in_frame
 from .meshes import ray_x_intersections
 
@@ -126,6 +127,7 @@ def validate_model(robot, *, samples=16, seed=0):
     mass_matrix_error = float(np.max(np.abs(matrix - assembled)))
     return {
         "passed": bool(passed and mass_matrix_error <= 1e-10),
+        "scope": "URDF frame, mesh transport and inertial equivalence; not contact certification",
         "sample_count": samples,
         "seed": seed,
         "robot_links": model.nbody - 1,
@@ -159,6 +161,54 @@ def geometry_triangles(robot, name, *, physical=False):
     else:
         raise ValueError("Cross-section audit requires mesh or box pieces")
     return points_in_frame(geometry["T_link_geometry"], vertices)[faces]
+
+
+def convexification_report(robot):
+    """Expose where an imported mesh is changed by rigid convex collision.
+
+    Volume ratios apply only to closed consistently oriented input surfaces.
+    They do not measure a surface error or certify contact accuracy.
+    """
+    result, cache = [], {}
+    for name, geometry in robot.geometry.items():
+        if geometry["kind"] != "collision" or geometry["shape"] != "mesh":
+            continue
+        key = (geometry["path"], tuple(geometry["scale"]))
+        if key not in cache:
+            mesh = robot.meshes[geometry["path"]]
+            vertices = mesh.vertices.astype(float) * geometry["scale"]
+            hull = ConvexHull(vertices)
+            triangles = vertices[mesh.faces] - vertices.mean(axis=0)
+            volume = abs(
+                float(
+                    np.einsum(
+                        "ij,ij->i", triangles[:, 0], np.cross(triangles[:, 1], triangles[:, 2])
+                    ).sum()
+                    / 6
+                )
+            )
+            shape_topology = topology(mesh)
+            closed = not any(shape_topology.values())
+            cache[key] = {
+                "source_topology": shape_topology,
+                "source_volume_m3": volume if closed else None,
+                "physical_convex_hull_volume_m3": float(hull.volume),
+                "convex_to_source_volume_ratio": float(hull.volume / volume)
+                if closed and volume > 0
+                else None,
+                "source_vertices": len(vertices),
+                "convex_hull_vertices": len(hull.vertices),
+            }
+        result.append(
+            {"geom": name, "link": geometry["link"], "source": geometry["path"], **cache[key]}
+        )
+    return {
+        "interpretation": (
+            "each mesh geom collides as one convex hull; "
+            "volumes are diagnostics, not surface-error bounds"
+        ),
+        "meshes": result,
+    }
 
 
 def gripper_sections(robot, *, side="right", positions=None, depths_m=None, y_m=0.0):

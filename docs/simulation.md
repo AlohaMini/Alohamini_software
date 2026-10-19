@@ -25,6 +25,24 @@ MUJOCO_GL=egl alohamini-mujoco inspect \
 
 `--collision-profile authoritative` 保留权威 URDF 的碰撞体。`cad-pieces` 使用原始分解的指部凸块作比较；两者均保留掌部、相机和连杆碰撞体，均未完成真实接触标定。截面坐标属于各侧 `Fixed_Jaw`，开口沿局部 X 测量。
 
+## CAD 碰撞候选
+
+```bash
+python -m pip install -e './simulation/mujoco[geometry]'
+OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco decompose \
+  --links left_Moving_Jaw right_Moving_Jaw --tolerance-m 0.0005 --seed 0 \
+  --output ~/Alohamini_workspace/reports/simulation/moving-jaw
+alohamini-mujoco inspect --initial-positions '{"vertical_move":0.2}' \
+  --collision-bundle ~/Alohamini_workspace/reports/simulation/moving-jaw \
+  --output ~/Alohamini_workspace/reports/simulation/moving-jaw-inspection
+```
+
+每个凸体独立保存，使用 URDF 连杆局部坐标和米制单位；来源 CAD、局部变换、分解参数和校验值写入 `collision.json`。加载时验证来源、坐标、校验值及凸体闭合性。只替换清单中指定连杆的碰撞体，完整视觉网格、惯量和 SRDF 过滤保持有效。`follow` 同样支持 `--collision-bundle`。
+
+分解采用 CoACD，不限制凸体数量，不做减面或膨胀。MSH 使用 float32，在保存后的坐标上重建凸包边界三角形，记录坐标量化误差。`--tolerance-m` 是算法的凹度目标，不代表表面误差上界。精度缝合位移最多 50 nm；非流形 CAD 默认拒绝，`--nonmanifold remesh` 显式生成重网格候选，须另行验证几何变化。当前固定夹爪 CAD 含非流形部分，默认预检会拒绝。
+
+`inspect` 的 `convexification` 报告列出每个物理网格的凸包与源网格诊断；非闭合或朝向不一致的网格不提供体积比。`validation.passed` 仅表示模型导入一致性通过，候选仍须验证接触、间隙与动力学性能。碰撞候选不会自动成为默认模型。
+
 ## 轨迹执行
 
 ```bash

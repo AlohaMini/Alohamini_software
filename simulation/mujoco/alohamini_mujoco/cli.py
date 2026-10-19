@@ -13,8 +13,12 @@ from pathlib import Path
 
 import mujoco
 
-from .audit import compare_maniskill, gripper_sections, validate_model
+from alohamini.model import get_robot_model
+
+from .audit import compare_maniskill, convexification_report, gripper_sections, validate_model
+from .collision import generate_bundle
 from .control import DynamicFollower, JointTrajectory
+from .description import Description
 from .model import ModelProfile, build_model
 
 
@@ -87,6 +91,12 @@ def main(argv=None):
         "follow", help="execute a named, time-defined trajectory using dynamics"
     )
     follow.add_argument("trajectory", type=Path)
+    decompose = commands.add_parser("decompose", help="generate explicit CAD collision candidates")
+    decompose.add_argument("--links", nargs="+", required=True, help="named URDF links")
+    decompose.add_argument("--tolerance-m", type=float, default=0.0005)
+    decompose.add_argument("--seed", type=int, default=0)
+    decompose.add_argument("--nonmanifold", choices=("reject", "remesh"), default="reject")
+    decompose.add_argument("--output", required=True, type=Path, help="new candidate directory")
     for command in (inspect, follow):
         command.add_argument("--output", required=True, type=Path, help="new output directory")
         command.add_argument(
@@ -98,26 +108,43 @@ def main(argv=None):
         command.add_argument(
             "--collision-profile", choices=("authoritative", "cad-pieces"), default="authoritative"
         )
+        command.add_argument(
+            "--collision-bundle", type=Path, help="explicit CAD candidate directory"
+        )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "decompose":
+            output = generate_bundle(
+                Description(get_robot_model("alohamini2pro")),
+                args.links,
+                args.output,
+                tolerance_m=args.tolerance_m,
+                seed=args.seed,
+                nonmanifold=args.nonmanifold,
+            )
+            print(json.dumps({"status": "candidate", "output": str(output)}, ensure_ascii=False))
+            return 0
         if not isinstance(args.initial_positions, dict):
             raise ValueError("Initial positions must be an object keyed by URDF joint name")
         if (
             args.operation == "inspect"
             and args.compare_maniskill
-            and args.collision_profile != "authoritative"
+            and (args.collision_profile != "authoritative" or args.collision_bundle)
         ):
             raise ValueError(
                 "Exact ManiSkill comparison requires the authoritative collision profile"
             )
         robot = build_model(
             profile=ModelProfile(
-                initial_positions=args.initial_positions, collision_profile=args.collision_profile
+                initial_positions=args.initial_positions,
+                collision_profile=args.collision_profile,
+                collision_bundle=args.collision_bundle,
             )
         )
         if args.operation == "inspect":
             report = {
                 "validation": validate_model(robot, samples=args.samples, seed=args.seed),
+                "convexification": convexification_report(robot),
                 "gripper_cross_sections": [
                     gripper_sections(robot, side=s) for s in ("left", "right")
                 ],
