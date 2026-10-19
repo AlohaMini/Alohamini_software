@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alohamini-mujoco"
+version = "0.1.0.dev0"
+description = "MuJoCo asset validation and trajectory execution for AlohaMini"
+requires-python = ">=3.10"
+dependencies = ["alohamini-platform", "mujoco==3.8.1", "numpy>=2,<3", "scipy>=1.14,<2", "pillow>=11"]
+
+[project.scripts]
+alohamini-mujoco = "alohamini_mujoco.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["alohamini_mujoco*"]
