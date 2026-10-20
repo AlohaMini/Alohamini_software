@@ -408,3 +408,62 @@ def load_bundle(description, directory):
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "definition": metadata,
     }
+
+
+def merge_bundles(description, directories, output):
+    """Combine validated, disjoint link replacements without regenerating any hull."""
+    if len(directories) < 2:
+        raise ValueError("Use at least two collision bundles")
+    output = Path(output).expanduser().resolve()
+    if output.exists():
+        raise FileExistsError(output)
+    sources, links = [], {}
+    for directory in directories:
+        directory = Path(directory).expanduser().resolve()
+        _, provenance = load_bundle(description, directory)
+        definition = provenance["definition"]
+        if links.keys() & definition["links"].keys():
+            raise ValueError("Collision bundles replace overlapping links")
+        links.update(json.loads(json.dumps(definition["links"])))
+        sources.append((directory, provenance))
+    manifest = {
+        "schema_version": 1,
+        "units": "m",
+        "robot_model": description.robot_model.model_id,
+        "status": "composed CAD candidate; requires geometry and contact validation",
+        "algorithm": "composition of independently validated bundles",
+        "source_manifests": [
+            {
+                "sha256": p["manifest_sha256"],
+                "generator": {k: v for k, v in p["definition"].items() if k != "links"},
+                "links": list(p["definition"]["links"]),
+            }
+            for _, p in sources
+        ],
+        "links": links,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
+        stage = Path(temporary) / "candidate"
+        (stage / "hulls").mkdir(parents=True)
+        for directory, provenance in sources:
+            for link, record in provenance["definition"]["links"].items():
+                for index, piece in enumerate(record["pieces"]):
+                    data = (directory / piece["path"]).read_bytes()
+                    if hashlib.sha256(data).hexdigest() != piece["sha256"]:
+                        raise ValueError("Collision hull changed during composition")
+                    relative = f"hulls/{piece['sha256']}.msh"
+                    (stage / relative).write_bytes(data)
+                    manifest["links"][link]["pieces"][index]["path"] = relative
+            if (
+                hashlib.sha256((directory / "collision.json").read_bytes()).hexdigest()
+                != provenance["manifest_sha256"]
+            ):
+                raise ValueError("Collision definition changed during composition")
+        (stage / "collision.json").write_text(
+            json.dumps(manifest, indent=2, allow_nan=False) + "\n"
+        )
+        if output.exists():
+            raise FileExistsError(output)
+        os.rename(stage, output)
+    return output

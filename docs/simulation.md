@@ -29,7 +29,59 @@ MUJOCO_GL=glfw alohamini-mujoco view \
 - 右方向键：暂停时推进一个物理步。
 - F6：切换坐标系显示；关闭窗口退出。
 
-窗口显示仿真时间、实际运行倍率、接触数和电机力饱和步数。播放保留完整物理步，复杂碰撞候选可能低于实时速度。`--collision-profile` 和 `--collision-bundle` 与模型检查相同。原生面板用于查看，初态与物理配置由启动参数指定；面板编辑不会改变动力学播放。当前窗口包含机器人，尚无任务桌面或物体；查看与播放不代替接触验收。
+窗口显示仿真时间、实际运行倍率、接触数和电机力饱和步数。播放保留完整物理步，复杂碰撞候选可能低于实时速度。`--collision-profile` 和 `--collision-bundle` 与模型检查相同。原生面板用于查看，初态与物理配置由启动参数指定；面板编辑不会改变动力学播放。未指定场景时仅包含机器人；查看与播放不代替接触验收。
+
+只查看指定连杆：
+
+```bash
+alohamini-mujoco view --collisions --paused \
+  --initial-positions '{"vertical_move":0.2}' \
+  --links vertical_link left_Upper_Arm right_Upper_Arm
+```
+
+## LIBERO Spatial 场景
+
+导入使用独立的 LIBERO Python 环境，运行场景仍使用 `alohamini`。来源须为干净的 LIBERO 提交 `8f1084e3132a39270c3a13ebe37270a43ece2a01`；导入环境须有 MuJoCo 3.8.1、robosuite 1.4.0 及 LIBERO 依赖。导入不会修改该环境或全局 LIBERO 配置。输出目录不得存在：
+
+```bash
+alohamini-mujoco libero-import \
+  --source ~/Alohamini_workspace/sources/LIBERO \
+  --python ~/miniconda3/envs/alohamini_sim/bin/python \
+  --output ~/Alohamini_workspace/simulation/libero_spatial_8f1084e_v2
+MUJOCO_GL=glfw alohamini-mujoco view \
+  --libero-bundle ~/Alohamini_workspace/simulation/libero_spatial_8f1084e_v2 \
+  --scene-config examples/simulation/libero_spatial.json \
+  --task-index 0 --reset-index 0
+```
+
+支持 10 条 Spatial 任务，各保留 50 个具名物体初态；不迁移 Panda 关节或 7 维动作。快照包含原物体网格、纹理、分块碰撞体、惯量、接触参数、BDDL 和文件校验值。`--task-index` 为 0–9，`--reset-index` 为 0–49。其他 LIBERO 套件和谓词尚不支持。
+
+场景配置明确 `T_world_root`、`T_world_libero`、机器人初态、支撑台和相机。LIBERO 变换须保持竖直轴，不缩放任务物体。示例中桌面高 0.5 m，机器人固定在支撑台上；相机是未完成真机标定的仿真配置。该布局须结合碰撞资产验证固定体间隙和任务可达性。场景检查的 `passed` 表示导入等价；`static_robot_scene.passed` 单独检查 MuJoCo 接触列表会跳过的固定体重叠。
+
+`inspect`、`follow` 和 `collect` 使用同样的场景参数；`inspect` 的整体结果同时要求固定体检查通过。当前原 URDF 底座整体凸包与示例桌面重叠，须先选择并验收合适的碰撞候选。此适配使用独立 benchmark 名称，不产生原 Panda LIBERO 可比得分。
+
+## 任务数采与回放
+
+```bash
+python -m pip install -e './simulation/mujoco[collection]'
+MUJOCO_GL=egl alohamini-mujoco collect "${TRAJECTORY_JSON:?请设置任务轨迹 JSON 路径}" \
+  --libero-bundle ~/Alohamini_workspace/simulation/libero_spatial_8f1084e_v2 \
+  --scene-config examples/simulation/libero_spatial.json \
+  --task-index 0 --reset-index 0 \
+  --collision-bundle "${COLLISION_BUNDLE:?请设置已检查的碰撞候选目录}" \
+  --output ~/Alohamini_workspace/simulation/collection-task0
+alohamini-mujoco replay ~/Alohamini_workspace/simulation/collection-task0
+```
+
+`TRAJECTORY_JSON` 遵循下方的具名轨迹格式；当前无自动专家策略。`collect` 在初态稳定后以 20 Hz 采样轨迹位置，每条命令保持 50 个 1 ms 物理步，目标速度为零。它与 `follow` 的逐物理步连续参考插值是不同执行协议。
+
+每帧保存控制前的关节位置、速度、RGB 和相机位姿；`actions` 是该周期的绝对 rad/m 位置命令，`states` 保存 N+1 个完整积分状态。默认三路 128×128 RGB 无损压缩；`--cameras` 和 `--image-size` 可显式配置。相机使用 OpenGL 坐标，图像原点在左上角，无额外翻转；记录内参与逐帧外参。
+
+正式收录要求原始 `On` 谓词成立、双指接触至少 0.1 s、接触期间抬升至少 2 cm、释放后稳定至少 0.5 s，并通过关节速度、限位、穿透及完整状态回放检查。原始任务成功与质量检查分别记录。固定体重叠或初态已成功时拒绝启动采集。
+
+通过的轨迹保存在 `episodes/`，失败轨迹在 `rejected/`，失败退出码为 1。目录包含可搬移模型、来源清单、轨迹、HDF5 与 `dataset.json`；禁止覆盖已有目录。回放检查文件校验值与 MuJoCo 版本，使用保存的命令重新积分，不播放录制位置。
+
+初态 0–39 属于训练组，40–49 属于评估组；同一任务和初态的所有扩增须保持同组。这是机器人适配协议。当前为原始仿真格式，尚不能直接与 Host 归一化动作数据混合；须通过具名关节及真机标定显式转换。
 
 ## 模型检查
 
@@ -60,6 +112,10 @@ alohamini-mujoco inspect --initial-positions '{"vertical_move":0.2}' \
 每个凸体独立保存，使用 URDF 连杆局部坐标和米制单位；来源 CAD、局部变换、分解参数和校验值写入 `collision.json`。加载时验证来源、坐标、校验值及凸体闭合性。只替换清单中指定连杆的碰撞体，完整视觉网格、惯量和 SRDF 过滤保持有效。`follow` 同样支持 `--collision-bundle`。
 
 分解采用 CoACD，不限制凸体数量，不做减面或膨胀。MSH 使用 float32，在保存后的坐标上重建凸包边界三角形，记录坐标量化误差。`--tolerance-m` 是算法的凹度目标，不代表表面误差上界。精度缝合位移最多 50 nm；非流形 CAD 默认拒绝，`--nonmanifold remesh` 显式生成重网格候选，须另行验证几何变化。当前固定夹爪 CAD 含非流形部分，默认预检会拒绝。
+
+`collision-merge --bundles 目录1 目录2 --output 新目录` 合并替换不同连杆的候选，保留全部凸体及各自生成参数；重复连杆拒绝合并。
+
+`collision-export --collision-bundle 候选目录 --output 新目录` 导出可搬移的 URDF/SRDF/OBJ，每个凸体对应独立碰撞元素，保留连杆坐标、关节和惯量。`collision-check-sapien --asset 导出目录 --python SAPIEN环境的Python路径 --output 新JSON文件` 从 SAPIEN CPU 后端读回实际凸体，检查数量及逐凸体凸包 Hausdorff 距离；超过 1 μm 返回失败。此项只检查几何，不保证两个引擎的动力学一致；加载成功不代表通过验收。
 
 `inspect` 的 `convexification` 报告列出每个物理网格的凸包与源网格诊断；非闭合或朝向不一致的网格不提供体积比。夹爪截面报告两指各自接触面的 X 坐标、偏差和命中统计，并比较开口宽度，避免两指同向偏移时误差抵消。`probe_counts` 区分开口配对是否可测量，缺失不等于零误差。`validation.passed` 仅表示模型导入一致性通过，候选仍须验证接触、间隙与动力学性能。碰撞候选不会自动成为默认模型。
 

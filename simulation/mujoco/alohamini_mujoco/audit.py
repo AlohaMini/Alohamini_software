@@ -104,7 +104,8 @@ def validate_model(robot, *, samples=16, seed=0):
                 "triangles_preserved": face_count == len(mesh.faces),
             }
         )
-    mass = float(model.body_mass.sum())
+    robot_bodies = [model.body(n).id for n in description.inertials]
+    mass = float(model.body_mass[robot_bodies].sum())
     expected_mass = sum(v[0] for v in description.inertials.values())
     passed = (
         max(max_position, max_rotation, max_com, max_inertia) <= 1e-10
@@ -124,18 +125,22 @@ def validate_model(robot, *, samples=16, seed=0):
         assembled += body_mass * linear.T @ linear + angular.T @ inertia @ angular
     matrix = np.empty((model.nv, model.nv))
     mujoco.mj_fullM(model, matrix, initial.qM)
-    mass_matrix_error = float(np.max(np.abs(matrix - assembled)))
+    robot_dofs = [model.jnt_dofadr[model.joint(j.name).id] for j in active]
+    robot_block = np.ix_(robot_dofs, robot_dofs)
+    mass_matrix_error = float(np.max(np.abs((matrix - assembled)[robot_block])))
     return {
         "passed": bool(passed and mass_matrix_error <= 1e-10),
         "scope": "URDF frame, mesh transport and inertial equivalence; not contact certification",
         "sample_count": samples,
         "seed": seed,
-        "robot_links": model.nbody - 1,
-        "active_joints": model.njnt,
+        "robot_links": len(description.links),
+        "active_joints": len(active),
+        "scene_joints": model.njnt - len(active),
         "visual_geoms": sum(g["kind"] == "visual" for g in robot.geometry.values()),
         "collision_geoms": sum(g["kind"] == "collision" for g in robot.geometry.values()),
         "source_mass_kg": expected_mass,
         "imported_mass_kg": mass,
+        "whole_scene_mass_kg": float(model.body_mass.sum()),
         "max_fk_position_error_m": max_position,
         "max_fk_rotation_matrix_error": max_rotation,
         "max_com_position_error_m": max_com,

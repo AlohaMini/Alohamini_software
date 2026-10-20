@@ -87,6 +87,7 @@ class RobotModel:
     geometry: dict
     manifest: dict
     initial_positions: dict
+    scene: object | None = None
 
     def data(self, positions=None):
         data = mujoco.MjData(self.model)
@@ -104,11 +105,13 @@ class RobotModel:
             index = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
             if index >= 0:
                 data.qpos[self.model.jnt_qposadr[index]] = position
+        if self.scene is not None:
+            self.scene.initialize(self, data)
         mujoco.mj_forward(self.model, data)
         return data
 
 
-def build_model(robot_model=None, profile=None):
+def build_model(robot_model=None, profile=None, *, scene=None):
     description = Description(robot_model or get_robot_model("alohamini2pro"))
     profile = profile or ModelProfile()
     T_world_root = rigid_transform(profile.T_world_root)
@@ -175,6 +178,7 @@ def build_model(robot_model=None, profile=None):
     contact = ET.SubElement(root, "contact")
     actuators = ET.SubElement(root, "actuator")
     assets, meshes, geometry, files, mesh_names, mesh_files = {}, {}, {}, {}, {}, {}
+    mesh_by_digest, compiled_mesh_names = {}, set()
     for path, data in description.source_bytes.items():
         files[path.relative_to(description.robot_model.directory).as_posix()] = hashlib.sha256(
             data
@@ -255,12 +259,17 @@ def build_model(robot_model=None, profile=None):
                 digest = hashlib.sha256(data).hexdigest()
                 if generated is None:
                     files[relative] = digest
-                mesh = binary_stl(data) if generated is None else generated
+                if digest not in mesh_by_digest:
+                    mesh = binary_stl(data) if generated is None else generated
+                    mesh_by_digest[digest] = (mesh, mesh.msh_bytes())
+                mesh, transport = mesh_by_digest[digest]
                 meshes[relative] = mesh
                 virtual = f"{digest}.msh"
-                assets[virtual] = mesh.msh_bytes()
+                assets[virtual] = transport
                 mesh_files[relative] = virtual
-                mesh_names[relative] = f"mesh_{len(mesh_names)}"
+                # Identical source bytes and scale share immutable mesh data;
+                # link-local transforms and every separate geom remain intact.
+                mesh_names[relative] = f"mesh_{digest}"
             scale = numbers(shape.get("scale", "1 1 1"), 3, "mesh scale")
             if (scale <= 0).any():
                 raise ValueError(
@@ -270,10 +279,11 @@ def build_model(robot_model=None, profile=None):
             mesh_name = (
                 mesh_names[relative] + "_" + hashlib.sha256(text(scale).encode()).hexdigest()[:8]
             )
-            if not any(x.get("name") == mesh_name for x in asset):
+            if mesh_name not in compiled_mesh_names:
                 ET.SubElement(
                     asset, "mesh", name=mesh_name, file=mesh_files[relative], scale=text(scale)
                 )
+                compiled_mesh_names.add(mesh_name)
             attributes.update(type="mesh", mesh=mesh_name)
             entry.update(path=relative, scale=scale)
         elif shape.tag == "box":
@@ -364,6 +374,8 @@ def build_model(robot_model=None, profile=None):
         if body is None:
             raise ValueError(f"Missing authoritative {side} TCP")
         ET.SubElement(body, "site", name=f"{side}_tcp", size="0.003", rgba="1 0 0 1")
+    if scene is not None:
+        scene.augment(root, assets)
     xml = ET.tostring(root, encoding="unicode")
     compiled = mujoco.MjModel.from_xml_string(xml, assets=assets)
     for relative, expected in files.items():
@@ -414,6 +426,8 @@ def build_model(robot_model=None, profile=None):
             "no geometry inference or balancing"
         ),
     }
+    if scene is not None:
+        manifest["scene"] = scene.manifest
     return RobotModel(
-        description, compiled, profile, xml, assets, meshes, geometry, manifest, initial
+        description, compiled, profile, xml, assets, meshes, geometry, manifest, initial, scene
     )

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "frame_definition": "world: X forward, Y left, Z up; T_A_B maps B into A; metres and radians",
+  "parameter_status": "simulation reference placement and virtual cameras; not hardware calibration or reachability certification",
+  "T_world_root": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+  "T_world_libero": [[1, 0, 0, 0.6], [0, 1, 0, 0], [0, 0, 1, -0.4], [0, 0, 0, 1]],
+  "initial_positions": {"vertical_move": 0.15},
+  "robot_support": {
+    "size_m": [0.5, 0.5, 0.4],
+    "T_world_body": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, -0.2], [0, 0, 0, 1]]
+  },
+  "camera_rotation_reference": "ManiSkill 828edfcae78e7c24a073e0e8f82f92739d2453c2 CAMERA_LINK_TO_SAPIEN_Q=[0.5,0.5,-0.5,0.5], converted from SAPIEN camera axes to OpenGL; provisional",
+  "inspection_camera": {
+    "lookat_world_m": [0.35, 0, 0.5],
+    "distance_m": 1.8,
+    "azimuth_deg": 135,
+    "elevation_deg": -30
+  },
+  "cameras": [
+    {
+      "name": "left_wrist",
+      "body": "left_camera",
+      "fovy_deg": 60,
+      "T_body_camera": [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+    },
+    {
+      "name": "right_wrist",
+      "body": "right_camera",
+      "fovy_deg": 60,
+      "T_body_camera": [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+    }
+  ]
+}

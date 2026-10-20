@@ -10,6 +10,7 @@ from alohamini_mujoco.collision import (
     components,
     generate_bundle,
     load_bundle,
+    merge_bundles,
     quantized_convex,
     topology,
     validate_convex,
@@ -51,6 +52,23 @@ def fixture_bundle(description, directory):
     }
     (directory / "collision.json").write_text(json.dumps(manifest))
     return manifest, record
+
+
+def test_merge_keeps_every_hull_and_rejects_overlapping_link_replacements(robot, tmp_path):
+    first, second = tmp_path / "first", tmp_path / "second"
+    fixture_bundle(robot.description, first)
+    metadata, record = fixture_bundle(robot.description, second)
+    record["source_visuals"] = visual_sources(robot.description, "left_Moving_Jaw")
+    metadata["links"] = {"left_Moving_Jaw": record}
+    (second / "collision.json").write_text(json.dumps(metadata))
+    result = merge_bundles(robot.description, [first, second], tmp_path / "combined")
+    loaded, provenance = load_bundle(robot.description, result)
+    assert set(loaded) == {"left_Moving_Jaw", "right_Moving_Jaw"}
+    assert sum(map(len, loaded.values())) == 2
+    assert len(provenance["definition"]["source_manifests"]) == 2
+    with pytest.raises(ValueError, match="overlapping"):
+        merge_bundles(robot.description, [first, first], tmp_path / "invalid")
+    assert not (tmp_path / "invalid").exists()
 
 
 def test_welding_precision_seam_preserves_closed_surface_and_frame():

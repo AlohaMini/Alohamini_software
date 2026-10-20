@@ -19,6 +19,16 @@ def set_geometry(options, *, collisions):
     options.flags[mujoco.mjtVisFlag.mjVIS_CONVEXHULL] = int(collisions)
 
 
+def set_camera(robot, camera):
+    settings = (
+        robot.scene.configuration.get("inspection_camera", {}) if robot.scene is not None else {}
+    )
+    camera.lookat[:] = settings.get("lookat_world_m", robot.model.stat.center)
+    camera.distance = settings.get("distance_m", 1.3 * robot.model.stat.extent)
+    camera.azimuth = settings.get("azimuth_deg", 45)
+    camera.elevation = settings.get("elevation_deg", -20)
+
+
 def check_display():
     # launch_passive waits for a render thread: preflight here so an unavailable
     # display/context produces an error instead of waiting on that thread forever.
@@ -84,7 +94,7 @@ class DynamicPlayback:
         return True
 
 
-def run_viewer(robot, trajectory=None, *, collisions=False, paused=False):
+def run_viewer(robot, trajectory=None, *, collisions=False, paused=False, links=None):
     """Open a native window, preserving every physics step even below real time."""
     from mujoco import viewer
 
@@ -93,6 +103,18 @@ def run_viewer(robot, trajectory=None, *, collisions=False, paused=False):
     # Native joint sliders and physics controls can write model/data during sync.
     # A separate presentation copy keeps those writes out of dynamic playback.
     display_model = copy.copy(robot.model)
+    if links is not None:
+        unknown = set(links) - robot.description.links.keys()
+        selected = [
+            display_model.geom(name).id for name, g in robot.geometry.items() if g["link"] in links
+        ]
+        if unknown or not selected:
+            raise ValueError(
+                f"Select existing robot links with geometry; unknown={sorted(unknown)}"
+            )
+        hidden = np.ones(display_model.ngeom, dtype=bool)
+        hidden[selected] = False
+        display_model.geom_group[hidden] = 0
     display_data = mujoco.MjData(display_model)
     mujoco.mj_copyData(display_data, display_model, playback.data)
     events = queue.SimpleQueue()
@@ -105,10 +127,13 @@ def run_viewer(robot, trajectory=None, *, collisions=False, paused=False):
     ) as window:
         with window.lock():
             set_geometry(window.opt, collisions=collisions)
-            window.cam.lookat[:] = robot.model.stat.center
-            window.cam.distance = 1.3 * robot.model.stat.extent
-            window.cam.azimuth = 45
-            window.cam.elevation = -20
+            set_camera(robot, window.cam)
+            if links is not None:
+                centers = display_data.geom_xpos[selected]
+                radii = display_model.geom_rbound[selected, None]
+                lower, upper = (centers - radii).min(0), (centers + radii).max(0)
+                window.cam.lookat[:] = (lower + upper) / 2
+                window.cam.distance = max(0.1, float(np.linalg.norm(upper - lower)) * 1.2)
         frame_period_s = 1 / 30
         wall_anchor = rate_wall = time.monotonic()
         sim_anchor = rate_sim = float(playback.data.time)
