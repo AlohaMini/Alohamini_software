@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from alohamini_mujoco.audit import convexification_report, gripper_sections, validate_model
 from alohamini_mujoco.collision import (
+    cad_components,
     components,
     generate_bundle,
     load_bundle,
@@ -104,6 +105,55 @@ def test_convex_piece_rejects_concavity_and_bad_winding():
     assert not any(topology(Mesh(vertices, faces)).values())
     with pytest.raises(ValueError, match="concave"):
         validate_convex(Mesh(vertices, faces))
+
+
+def test_seam_chains_cannot_move_vertices_beyond_the_displacement_budget():
+    tolerance = 5e-8
+    chain = np.column_stack((np.arange(5) * 0.9 * tolerance, np.zeros((5, 2))))
+    vertices = np.vstack((chain, [[0, 0.01, 0], [0, 0, 0.01]]))
+    faces = np.array([[i, 5, 6] for i in range(len(chain))])
+    welded, report = weld_precision_seams(Mesh(vertices, faces), tolerance)
+    assert report["maximum_vertex_displacement_m"] <= tolerance
+    assert report["skipped_merges_over_displacement_bound"] > 0
+    assert len(welded.vertices) >= 4
+    # The same source and budget produce exactly the same candidate geometry.
+    repeated, second = weld_precision_seams(Mesh(vertices, faces), tolerance)
+    np.testing.assert_array_equal(repeated.triangles, welded.triangles)
+    assert second == report
+
+
+def test_touching_closed_solids_are_separated_without_changing_source_triangles():
+    first = tetrahedron()
+    # Two tetrahedra share a whole edge; its four incident faces make the
+    # combined mesh nonmanifold, although each physical solid is closed.
+    other = first.vertices.copy()
+    other[:, 1:] *= -1
+    vertices, inverse = np.unique(np.vstack((first.vertices, other)), axis=0, return_inverse=True)
+    faces = inverse[np.vstack((first.faces, first.faces + len(first.vertices)))]
+    original = Mesh(vertices, faces)
+    assert len(components(original)) == 1
+    assert topology(original)["nonmanifold_edges"] == 1
+    pieces, record = cad_components(original)
+    assert len(pieces) == 2
+    assert all(not any(topology(p).values()) for p in pieces)
+    assert all(p["closed_solid"] for p in record["parts"])
+
+    def triangle_rows(m):
+        return sorted(tuple(t.ravel()) for t in m.triangles)
+
+    combined = sorted(t for p in pieces for t in triangle_rows(p))
+    assert combined == triangle_rows(original)
+    # An actual hole remains unresolved; no independent thickened patch is made.
+    open_source = Mesh(vertices, faces[:-1])
+    pieces, record = cad_components(open_source)
+    assert sum(len(p.faces) for p in pieces) == len(open_source.faces)
+    assert any(not p["closed_solid"] for p in record["parts"])
+    # Oppositely oriented shells may bound a cavity. Preserve their grouping
+    # instead of silently making both sides independent solid colliders.
+    mixed = Mesh(vertices, np.vstack((faces[:4], faces[4:, ::-1])))
+    pieces, record = cad_components(mixed)
+    assert len(pieces) == 1 and not record["parts"][0]["closed_solid"]
+    assert triangle_rows(pieces[0]) == triangle_rows(mixed)
 
 
 def test_msh_rejects_corruption_and_preserves_indexed_geometry():

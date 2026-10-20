@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from alohamini_mujoco.audit import validate_model
 from alohamini_mujoco.collection import collect_episode, replay_episode, restore_state
-from alohamini_mujoco.control import JointTrajectory
+from alohamini_mujoco.control import JointTrajectory, solve_ik
 from alohamini_mujoco.libero import LIBERO_COMMIT, LiberoScene, sha256
 from alohamini_mujoco.model import ModelProfile, build_model
 
@@ -123,6 +123,22 @@ def test_on_requires_real_contact_and_does_not_accept_hovering(scene_robot):
     data.qpos[source + 2] += 0.05
     mujoco.mj_forward(robot.model, data)
     assert not scene.goal_status(robot, data)["passed"]
+
+
+def test_ik_contact_diagnostics_preserve_measured_object_state(scene_robot):
+    robot = scene_robot
+    live = robot.data()
+    address = robot.model.jnt_qposadr[robot.model.joint("source_joint").id]
+    # A measured object pose deliberately differs from the scene reset bank.
+    live.qpos[address : address + 3] = live.geom("right_Fixed_Jaw__collision_7").xpos
+    mujoco.mj_forward(robot.model, live)
+    target = np.eye(4)
+    target[:3, :3] = live.body("right_tcp").xmat.reshape(3, 3)
+    target[:3, 3] = live.body("right_tcp").xpos
+    before = live.qpos.copy()
+    result = solve_ik(robot, "right", target, reference_data=live)
+    assert any("source_geom" in (c["geom1"], c["geom2"]) for c in result["contacts"])
+    np.testing.assert_array_equal(live.qpos, before)
 
 
 def test_scene_bundle_detects_mesh_or_metadata_changes_before_loading(scene_robot, tmp_path):

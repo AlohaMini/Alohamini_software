@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import mujoco
 import numpy as np
+from scipy.optimize import least_squares
 
 from .audit import contacts
 from .frames import rigid_transform
@@ -253,29 +254,10 @@ class DynamicFollower:
         }
 
 
-def solve_ik(
-    robot,
-    side,
-    T_world_tcp,
-    *,
-    seed_positions=None,
-    max_iterations=200,
-    position_tolerance_m=1e-5,
-    rotation_tolerance_rad=1e-3,
-):
-    """Full-pose IK in independent scratch data; never mutate a live rollout."""
+def arm_joint_names(side):
     if side not in ("left", "right"):
         raise ValueError("Expected left or right arm")
-    target = rigid_transform(T_world_tcp)
-    if (
-        type(max_iterations) is not int
-        or max_iterations <= 0
-        or any(
-            not math.isfinite(v) or v <= 0 for v in (position_tolerance_m, rotation_tolerance_rad)
-        )
-    ):
-        raise ValueError("Invalid IK convergence settings")
-    names = [
+    return tuple(
         f"{side}_{suffix}"
         for suffix in (
             "shoulder_pan",
@@ -285,43 +267,183 @@ def solve_ik(
             "wrist_yaw_joint",
             "wrist_roll",
         )
-    ]
-    if set(names) & robot.profile.locked_positions.keys():
-        raise ValueError("IK arm contains a locked joint")
-    data = robot.data(seed_positions)
+    )
+
+
+def solve_ik(
+    robot,
+    side,
+    T_world_tcp,
+    *,
+    seed_positions=None,
+    reference_data=None,
+    max_iterations=200,
+    position_tolerance_m=1e-5,
+    rotation_tolerance_rad=1e-3,
+):
+    """Full-pose single-arm IK, with the lift and other arm held at their seed."""
+    names = arm_joint_names(side)
+    return solve_ik_targets(
+        robot,
+        {side: T_world_tcp},
+        movable_joints=names,
+        seed_positions=seed_positions,
+        reference_data=reference_data,
+        max_iterations=max_iterations,
+        position_tolerance_m=position_tolerance_m,
+        rotation_tolerance_rad=rotation_tolerance_rad,
+    )
+
+
+def solve_ik_targets(
+    robot,
+    targets,
+    *,
+    movable_joints=None,
+    seed_positions=None,
+    reference_data=None,
+    max_iterations=200,
+    position_tolerance_m=1e-5,
+    rotation_tolerance_rad=1e-3,
+):
+    """Solve simultaneous world TCP poses in independent scratch data.
+
+    Explicitly including vertical_move allows coordinated lift/arm IK. A copied
+    reference_data preserves measured scene-object poses for contact diagnostics.
+    Iterations update kinematics only; the final full forward pass computes
+    contacts. Convergence does not establish a collision-free path.
+    """
+    if not targets or any(side not in ("left", "right") for side in targets):
+        raise ValueError("Provide world TCP poses keyed by left and/or right")
+    targets = {side: rigid_transform(pose) for side, pose in targets.items()}
+    if (
+        type(max_iterations) is not int
+        or max_iterations <= 0
+        or any(
+            not math.isfinite(v) or v <= 0 for v in (position_tolerance_m, rotation_tolerance_rad)
+        )
+    ):
+        raise ValueError("Invalid IK convergence settings")
+    names = (
+        tuple(movable_joints)
+        if movable_joints is not None
+        else tuple(name for side in targets for name in arm_joint_names(side))
+    )
+    if not names or len(set(names)) != len(names):
+        raise ValueError("IK requires unique movable joint names")
+    joints = []
+    for name in names:
+        joint = robot.description.joints.get(name)
+        if (
+            joint is None
+            or name in robot.profile.locked_positions
+            or joint.kind not in ("revolute", "prismatic")
+            or joint.lower is None
+            or joint.upper is None
+        ):
+            raise ValueError(f"IK joint must be an unlocked bounded robot joint: {name}")
+        joints.append(joint)
     model = robot.model
-    joints = [robot.description.joints[n] for n in names]
+    if reference_data is None:
+        data = robot.data(seed_positions)
+    else:
+        data = mujoco.MjData(model)
+        mujoco.mj_copyData(data, model, reference_data)
+        for name, position in (seed_positions or {}).items():
+            if name not in robot.description.joints:
+                raise ValueError(f"Unknown IK seed joint: {name}")
+            joint = robot.description.joints[name]
+            joint.check_position(position)
+            if name in robot.profile.locked_positions:
+                if position != robot.profile.locked_positions[name]:
+                    raise ValueError(f"IK seed conflicts with locked joint: {name}")
+                continue
+            if joint.kind == "fixed":
+                if position != 0:
+                    raise ValueError(f"Fixed IK seed joint has a nonzero position: {name}")
+                continue
+            joint_id = model.joint(name).id
+            data.qpos[model.jnt_qposadr[joint_id]] = position
     qpos_ids = np.array([model.jnt_qposadr[model.joint(n).id] for n in names])
     dof_ids = np.array([model.jnt_dofadr[model.joint(n).id] for n in names])
     lower, upper = np.array([j.lower for j in joints]), np.array([j.upper for j in joints])
-    body_id = model.body(f"{side}_tcp").id
+    body_ids = {side: model.body(f"{side}_tcp").id for side in targets}
     linear, angular = np.zeros((3, model.nv)), np.zeros((3, model.nv))
-    position_error = rotation_error = float("inf")
-    for iteration in range(max_iterations):
-        mujoco.mj_forward(model, data)
-        delta_p = target[:3, 3] - data.xpos[body_id]
-        delta_R = target[:3, :3] @ data.xmat[body_id].reshape(3, 3).T
-        quaternion, delta_angle = np.empty(4), np.empty(3)
-        mujoco.mju_mat2Quat(quaternion, np.ascontiguousarray(delta_R).ravel())
-        mujoco.mju_quat2Vel(delta_angle, quaternion, 1.0)
-        position_error, rotation_error = np.linalg.norm(delta_p), np.linalg.norm(delta_angle)
-        if position_error <= position_tolerance_m and rotation_error <= rotation_tolerance_rad:
-            return {
-                "joint_positions": dict(zip(names, data.qpos[qpos_ids].tolist(), strict=True)),
-                "position_error_m": float(position_error),
-                "rotation_error_rad": float(rotation_error),
-                "iterations": iteration,
-                "contacts": contacts(robot, data),
+    errors, cached = {}, {}
+
+    def evaluate(q):
+        if "q" in cached and np.array_equal(q, cached["q"]):
+            return cached["residual"], cached["jacobian"]
+        data.qpos[qpos_ids] = q
+        mujoco.mj_kinematics(model, data)
+        mujoco.mj_comPos(model, data)
+        residuals, jacobians = [], []
+        for side, target in targets.items():
+            body_id = body_ids[side]
+            delta_p = data.xpos[body_id] - target[:3, 3]
+            delta_R = data.xmat[body_id].reshape(3, 3) @ target[:3, :3].T
+            quaternion, delta_angle = np.empty(4), np.empty(3)
+            mujoco.mju_mat2Quat(quaternion, np.ascontiguousarray(delta_R).ravel())
+            mujoco.mju_quat2Vel(delta_angle, quaternion, 1.0)
+            errors[side] = {
+                "position_error_m": float(np.linalg.norm(delta_p)),
+                "rotation_error_rad": float(np.linalg.norm(delta_angle)),
             }
-        mujoco.mj_jacBody(model, data, linear, angular, body_id)
-        # Scale position by a declared 0.1 m characteristic tool length so
-        # translation/rotation conditioning does not depend on a unit accident.
-        jacobian = np.vstack((linear[:, dof_ids] / 0.1, angular[:, dof_ids]))
-        residual = np.r_[delta_p / 0.1, delta_angle]
-        step = jacobian.T @ np.linalg.solve(jacobian @ jacobian.T + 1e-4 * np.eye(6), residual)
-        step /= max(1, np.max(np.abs(step)) / 0.1)
-        data.qpos[qpos_ids] = np.clip(data.qpos[qpos_ids] + step, lower, upper)
-    raise RuntimeError(
-        f"Full-pose IK did not converge: position={position_error:.6g} m, "
-        f"rotation={rotation_error:.6g} rad"
+            mujoco.mj_jacBody(model, data, linear, angular, body_id)
+            # Explicit 0.1 m characteristic length conditions mixed SI residuals.
+            residuals.append(np.r_[delta_p / 0.1, delta_angle])
+            jacobians.append(
+                np.vstack(
+                    (
+                        linear[:, dof_ids] / 0.1,
+                        _rotation_log_inverse(delta_angle) @ angular[:, dof_ids],
+                    )
+                )
+            )
+        cached.update(q=q.copy(), residual=np.concatenate(residuals), jacobian=np.vstack(jacobians))
+        return cached["residual"], cached["jacobian"]
+
+    solution = least_squares(
+        lambda q: evaluate(q)[0],
+        np.clip(data.qpos[qpos_ids], lower, upper),
+        jac=lambda q: evaluate(q)[1],
+        bounds=(lower, upper),
+        x_scale=upper - lower,
+        method="trf",
+        max_nfev=max_iterations,
+        ftol=1e-12,
+        xtol=1e-12,
+        gtol=1e-12,
     )
+    evaluate(solution.x)
+    if all(
+        e["position_error_m"] <= position_tolerance_m
+        and e["rotation_error_rad"] <= rotation_tolerance_rad
+        for e in errors.values()
+    ):
+        mujoco.mj_forward(model, data)
+        return {
+            "joint_positions": dict(zip(names, data.qpos[qpos_ids].tolist(), strict=True)),
+            "position_error_m": max(e["position_error_m"] for e in errors.values()),
+            "rotation_error_rad": max(e["rotation_error_rad"] for e in errors.values()),
+            "target_errors": errors,
+            "iterations": int(solution.nfev),
+            "solver": (
+                "bounded trust-region reflective least squares, analytic SE(3) residual Jacobian"
+            ),
+            "contacts": contacts(robot, data),
+        }
+    raise RuntimeError(f"Full-pose IK did not converge: {errors}")
+
+
+def _rotation_log_inverse(rotation_vector):
+    """Inverse SO(3) left Jacobian for a world-frame log-rotation residual."""
+    x, y, z = rotation_vector
+    cross = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
+    angle = float(np.linalg.norm(rotation_vector))
+    coefficient = (
+        1 / 12 + angle**2 / 720
+        if angle < 1e-4
+        else (1 - angle / (2 * math.tan(angle / 2))) / angle**2
+    )
+    return np.eye(3) - 0.5 * cross + coefficient * cross @ cross

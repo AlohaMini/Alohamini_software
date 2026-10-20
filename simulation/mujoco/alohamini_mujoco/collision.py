@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 import tempfile
 from importlib.metadata import version
 from pathlib import Path
@@ -58,11 +59,83 @@ def components(mesh):
     return result
 
 
+def manifold_parts(mesh):
+    """Partition triangle surfaces across edges with exactly two incident faces.
+
+    Vertex contact and nonmanifold edges do not establish surface adjacency.
+    This partitions indices only: it changes no triangle or vertex coordinate.
+    """
+    faces = mesh.faces
+    edges = np.sort(np.vstack((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]])), axis=1)
+    _, inverse, counts = np.unique(edges, axis=0, return_inverse=True, return_counts=True)
+    order = np.argsort(inverse, kind="stable")
+    starts = np.r_[0, counts.cumsum()[:-1]][counts == 2]
+    a, b = order[starts] % len(faces), order[starts + 1] % len(faces)
+    graph = coo_matrix((np.ones(len(a)), (a, b)), shape=(len(faces), len(faces)))
+    _, labels = connected_components(graph, directed=False)
+    order = np.argsort(labels, kind="stable")
+    return np.split(order, np.bincount(labels).cumsum()[:-1])
+
+
+def cad_components(mesh):
+    """Separate closed solids that share vertices/edges without remeshing them.
+
+    Only complete groups of outward closed surfaces without potential nesting
+    can split. Ambiguous, inward, open and degenerate patches retain their
+    original grouping: independent solidification could fill a real cavity.
+    """
+    result, records = [], []
+    for parent, part in enumerate(components(mesh)):
+        surfaces, clean = [], []
+        for indices in manifold_parts(part):
+            vertices, inverse = np.unique(part.faces[indices], return_inverse=True)
+            surface = Mesh(part.vertices[vertices], inverse.reshape(-1, 3))
+            valid = (
+                len(surface.vertices) >= 4
+                and not any(topology(surface).values())
+                and np.linalg.matrix_rank(surface.vertices - surface.vertices[0]) == 3
+            )
+            valid = valid and signed_volume(surface) > 0
+            surfaces.append(surface)
+            clean.append(valid)
+        split = all(clean)
+        if split and len(surfaces) > 1:
+            lower = np.array([s.vertices.min(0) for s in surfaces])
+            upper = np.array([s.vertices.max(0) for s in surfaces])
+            for i in range(len(surfaces)):
+                contains = np.all(lower[i] <= lower, axis=1) & np.all(upper[i] >= upper, axis=1)
+                contains[i] = False
+                if contains.any():
+                    split = False
+                    break
+        for surface in surfaces if split else [part]:
+            result.append(surface)
+            records.append(
+                {"vertex_component": parent, "faces": len(surface.faces), "closed_solid": split}
+            )
+    if sum(len(p.faces) for p in result) != len(mesh.faces):
+        raise RuntimeError("CAD partition did not preserve all source triangles")
+    return result, {
+        "algorithm": "closed-manifold-surface-partition-v1",
+        "source_triangles": len(mesh.faces),
+        "parts": records,
+    }
+
+
+def signed_volume(mesh):
+    triangles = mesh.triangles.astype(float) - mesh.vertices.mean(axis=0)
+    return float(
+        np.einsum("ij,ij->i", triangles[:, 0], np.cross(triangles[:, 1], triangles[:, 2])).sum() / 6
+    )
+
+
 def weld_precision_seams(mesh, tolerance_m):
     if not math.isfinite(tolerance_m) or tolerance_m <= 0:
         raise ValueError("Weld tolerance must be finite and positive")
     points = mesh.vertices.astype(float)
     parent = np.arange(len(points))
+    members, centers = {}, {}
+    skipped = 0
 
     def find(index):
         while parent[index] != index:
@@ -71,11 +144,22 @@ def weld_precision_seams(mesh, tolerance_m):
         return index
 
     for a, b in sorted(cKDTree(points).query_pairs(tolerance_m)):
-        parent[find(a)] = find(b)
-    _, inverse = np.unique([find(i) for i in range(len(points))], return_inverse=True)
-    vertices = np.zeros((int(inverse.max()) + 1, 3))
-    np.add.at(vertices, inverse, points)
-    vertices /= np.bincount(inverse)[:, None]
+        a, b = find(a), find(b)
+        if a == b:
+            continue
+        merged = members.get(a, [a]) + members.get(b, [b])
+        center = points[merged].mean(axis=0)
+        # Nearby edges do not bound the diameter of their transitive closure.
+        # Admit each merge only if every original vertex stays within budget.
+        if np.linalg.norm(points[merged] - center, axis=1).max() > tolerance_m:
+            skipped += 1
+            continue
+        parent[a] = b
+        members[b], centers[b] = merged, center
+        members.pop(a, None)
+        centers.pop(a, None)
+    roots, inverse = np.unique([find(i) for i in range(len(points))], return_inverse=True)
+    vertices = np.array([centers.get(i, points[i]) for i in roots])
     displacement = float(np.linalg.norm(points - vertices[inverse], axis=1).max())
     if displacement > tolerance_m:
         raise ValueError("Weld cluster exceeds the declared metric displacement bound")
@@ -87,9 +171,11 @@ def weld_precision_seams(mesh, tolerance_m):
         raise ValueError("Welding left no nondegenerate faces")
     used, indexed = np.unique(faces[valid], return_inverse=True)
     return Mesh(vertices[used], indexed.reshape(-1, 3)), {
+        "algorithm": "bounded-centroid-seam-weld-v1",
         "maximum_vertex_displacement_m": displacement,
         "merged_vertices": len(points) - len(vertices),
         "collapsed_faces": int((~valid).sum()),
+        "skipped_merges_over_displacement_bound": skipped,
     }
 
 
@@ -208,16 +294,25 @@ def generate_bundle(
             )
             # Weld before splitting: float32 seams can disconnect a solid.
             welded, weld = weld_precision_seams(Mesh(vertices, raw.faces), 5e-8)
-            parts = components(welded)
+            parts, partition = cad_components(welded)
             for index, part in enumerate(parts):
                 shape_topology = topology(part)
+                if not any(shape_topology.values()) and (
+                    np.linalg.matrix_rank(part.vertices - part.vertices[0]) < 3
+                    or signed_volume(part) <= 0
+                ):
+                    raise ValueError(
+                        f"{link} CAD component {index} is a degenerate or inward shell; "
+                        "solid/cavity attribution requires the original CAD. "
+                        "No collision thickness or filled cavity was fabricated."
+                    )
                 if any(shape_topology.values()) and nonmanifold == "reject":
                     raise ValueError(
                         f"{link} CAD component {index} is not a closed oriented "
                         f"manifold: {shape_topology}. No geometry was generated; "
                         "repair the source or explicitly select remesh candidates."
                     )
-            prepared[link].append((source, parts, weld))
+            prepared[link].append((source, parts, weld, partition))
     output.parent.mkdir(parents=True, exist_ok=True)
     options = dict(
         threshold=tolerance_m,
@@ -260,7 +355,7 @@ def generate_bundle(
         stage = Path(temporary) / "candidate"
         (stage / "hulls").mkdir(parents=True)
         for link in links:
-            sources = [source for source, _, _ in prepared[link]]
+            sources = [source for source, _, _, _ in prepared[link]]
             # File paths are not part of geometric identity: mirrored entries
             # may share work only when their bytes, scale and local pose match.
             geometry_key = hashlib.sha256(
@@ -288,13 +383,20 @@ def generate_bundle(
                 "components": [],
                 "pieces": [],
             }
-            for source, parts, weld in prepared[link]:
+            for source, parts, weld, partition in prepared[link]:
                 for component_index, component in enumerate(parts):
                     shape_topology = topology(component)
                     # Native remeshing is opt-in and recorded. An edge check is
                     # not a proof against self intersections; candidates still
                     # require geometric and physical contact validation.
                     mode = "on" if any(shape_topology.values()) else "off"
+                    print(
+                        f"Decomposing {link}: component {component_index + 1}/{len(parts)}, "
+                        f"{len(component.faces)} triangles, remesh={mode}, "
+                        f"concavity target {tolerance_m:g} m",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     pieces = coacd.run_coacd(
                         coacd.Mesh(component.vertices, component.faces),
                         preprocess_mode=mode,
@@ -302,12 +404,17 @@ def generate_bundle(
                     )
                     if not pieces:
                         raise RuntimeError(f"CoACD returned no collision pieces for {link}")
+                    print(f"Generated {len(pieces)} convex pieces", file=sys.stderr, flush=True)
                     record["components"].append(
                         {
                             "source_component": component_index,
                             "source_faces": len(component.faces),
                             "source_path": source["path"],
                             "whole_source_weld": weld,
+                            "source_partition": {
+                                "algorithm": partition["algorithm"],
+                                **partition["parts"][component_index],
+                            },
                             "topology_after_weld": shape_topology,
                             "preprocess_mode": mode,
                             "generated_pieces": len(pieces),

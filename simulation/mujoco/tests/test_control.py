@@ -1,6 +1,13 @@
 import numpy as np
 import pytest
-from alohamini_mujoco.control import DynamicFollower, JointTrajectory, solve_ik
+from alohamini_mujoco.control import (
+    DynamicFollower,
+    JointTrajectory,
+    _rotation_log_inverse,
+    arm_joint_names,
+    solve_ik,
+    solve_ik_targets,
+)
 
 
 def test_following_uses_dynamics_and_tracks_both_arms(robot):
@@ -75,6 +82,32 @@ def test_unreachable_full_pose_is_rejected(robot):
         solve_ik(robot, "right", target, max_iterations=40)
 
 
+def test_both_tcp_targets_can_share_the_lift_without_changing_reference_data(robot):
+    live = robot.data({"vertical_move": 0.15})
+    live.qvel[:] = 0.01
+    before = live.qpos.copy(), live.qvel.copy()
+    values = {
+        **robot.initial_positions,
+        "vertical_move": 0.17,
+        "left_shoulder_pan": 0.04,
+        "left_elbow_flex": 0.03,
+        "right_shoulder_pan": -0.04,
+        "right_elbow_flex": 0.03,
+    }
+    poses = robot.description.forward(values, robot.profile.T_world_root)
+    targets = {side: poses[f"{side}_tcp"] for side in ("left", "right")}
+    names = ("vertical_move", *arm_joint_names("left"), *arm_joint_names("right"))
+    result = solve_ik_targets(robot, targets, movable_joints=names, reference_data=live)
+    assert set(result["target_errors"]) == {"left", "right"}
+    assert result["position_error_m"] < 1e-5
+    assert result["rotation_error_rad"] < 1e-3
+    solved = robot.data(result["joint_positions"])
+    for side in targets:
+        np.testing.assert_allclose(solved.body(f"{side}_tcp").xpos, targets[side][:3, 3], atol=1e-5)
+    np.testing.assert_array_equal(live.qpos, before[0])
+    np.testing.assert_array_equal(live.qvel, before[1])
+
+
 def test_static_gravity_hold_is_not_disabled(robot):
     follower = DynamicFollower(robot)
     initial = follower.data.qpos.copy()
@@ -86,3 +119,18 @@ def test_static_gravity_hold_is_not_disabled(robot):
     assert follower.data.actuator_force[actuator_id] == pytest.approx(5.1 * 9.80665, rel=1e-4)
     assert robot.model.opt.gravity[2] == -9.80665
     np.testing.assert_allclose(follower.data.qpos, initial, atol=1e-4)
+
+
+def test_so3_log_jacobian_matches_finite_differences_for_large_rotations():
+    from scipy.spatial.transform import Rotation
+
+    direction = np.array([0.3, 0.1, -0.2])
+    epsilon = 1e-7
+    for vector in ([0, 0, 0], [0.2, -0.3, 0.5], [2.4, 0.4, 0.2]):
+        vector = np.asarray(vector)
+        rotation = Rotation.from_rotvec(vector)
+        plus = (Rotation.from_rotvec(epsilon * direction) * rotation).as_rotvec()
+        minus = (Rotation.from_rotvec(-epsilon * direction) * rotation).as_rotvec()
+        np.testing.assert_allclose(
+            _rotation_log_inverse(vector) @ direction, (plus - minus) / (2 * epsilon), atol=1e-8
+        )

@@ -111,6 +111,15 @@ def main(argv=None):
     decompose.add_argument("--seed", type=int, default=0)
     decompose.add_argument("--nonmanifold", choices=("reject", "remesh"), default="reject")
     decompose.add_argument("--output", required=True, type=Path, help="new candidate directory")
+    cad = commands.add_parser("cad-inspect", help="preserve exact STEP parts and assembly frames")
+    cad.add_argument("source", type=Path)
+    cad.add_argument("--output", type=Path, required=True)
+    tessellate = commands.add_parser("cad-tessellate", help="tessellate each original CAD solid")
+    tessellate.add_argument("--cad-bundle", type=Path, required=True)
+    tessellate.add_argument("--definition", required=True)
+    tessellate.add_argument("--linear-deflection-m", type=float, default=5e-5)
+    tessellate.add_argument("--angular-deflection-rad", type=float, default=0.1)
+    tessellate.add_argument("--output", type=Path, required=True)
     merger = commands.add_parser(
         "collision-merge", help="combine disjoint CAD collision candidates"
     )
@@ -157,6 +166,41 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "cad-tessellate":
+            from .cad import tessellate_definition
+
+            report = tessellate_definition(
+                args.cad_bundle,
+                args.definition,
+                args.output,
+                linear_deflection_m=args.linear_deflection_m,
+                angular_deflection_rad=args.angular_deflection_rad,
+            )
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output),
+                        "solids": len(report["solids"]),
+                        "status": report["status"],
+                    }
+                )
+            )
+            return 0
+        if args.operation == "cad-inspect":
+            from .cad import inspect_step
+
+            report = inspect_step(args.source, args.output)
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output),
+                        "definitions": len(report["definitions"]),
+                        "occurrences": len(report["occurrences"]),
+                        "status": report["status"],
+                    }
+                )
+            )
+            return 0
         if args.operation == "collision-export":
             from .interop import export_collision_urdf
 

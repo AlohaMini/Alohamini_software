@@ -99,6 +99,25 @@ MUJOCO_GL=egl alohamini-mujoco inspect \
 
 ## CAD 碰撞候选
 
+### 原始 STEP
+
+```bash
+python -m pip install -e './simulation/mujoco[cad]'
+alohamini-mujoco cad-inspect "${STEP_FILE:?请设置 STEP 路径}" \
+  --output ~/Alohamini_workspace/simulation/cad/assembly
+alohamini-mujoco cad-tessellate \
+  --cad-bundle ~/Alohamini_workspace/simulation/cad/assembly \
+  --definition "${CAD_DEFINITION:?请选择 cad.json 中的零件定义 ID}" \
+  --linear-deflection-m 0.00005 --angular-deflection-rad 0.1 \
+  --output ~/Alohamini_workspace/simulation/cad/part-mesh
+```
+
+`cad-inspect` 保留源 STEP、逐零件 BRep、装配实例变换、有效性和实体数量。`cad.json` 的长度、变换平移和体积使用 m/m³；BRep 文件明确保留 OCCT 的 mm 单位。
+
+`cad-tessellate` 仅接受有效实体，每个原始实体及其空腔整体离散，输出零件定义坐标系中的 float64 米制 NPZ 网格。检查闭合性和朝向，记录离散参数、缝合位移与校验值；不自动将开口表面实体化。弦高参数不是经独立验证的表面误差上界。CAD 输出尚未映射到机器人连杆，不能直接作为 `--collision-bundle`。
+
+### STL 候选
+
 ```bash
 python -m pip install -e './simulation/mujoco[geometry]'
 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco decompose \
@@ -111,7 +130,7 @@ alohamini-mujoco inspect --initial-positions '{"vertical_move":0.2}' \
 
 每个凸体独立保存，使用 URDF 连杆局部坐标和米制单位；来源 CAD、局部变换、分解参数和校验值写入 `collision.json`。加载时验证来源、坐标、校验值及凸体闭合性。只替换清单中指定连杆的碰撞体，完整视觉网格、惯量和 SRDF 过滤保持有效。`follow` 同样支持 `--collision-bundle`。
 
-分解采用 CoACD，不限制凸体数量，不做减面或膨胀。MSH 使用 float32，在保存后的坐标上重建凸包边界三角形，记录坐标量化误差。`--tolerance-m` 是算法的凹度目标，不代表表面误差上界。精度缝合位移最多 50 nm；非流形 CAD 默认拒绝，`--nonmanifold remesh` 显式生成重网格候选，须另行验证几何变化。当前固定夹爪 CAD 含非流形部分，默认预检会拒绝。
+分解采用 CoACD，不限制凸体数量，不做减面或膨胀。MSH 使用 float32，在保存后的坐标上重建凸包边界三角形，记录坐标量化误差。`--tolerance-m` 是算法的凹度目标，不代表表面误差上界。精度缝合位移最多 50 nm；仅将完整、朝外且无潜在嵌套的闭合表面组拆开，模糊空腔保留原分组。非流形 CAD 默认拒绝，`--nonmanifold remesh` 显式生成重网格候选，须另行验证几何变化。退化闭壳和无法归属的朝内闭壳直接拒绝，不能用重网格凭空赋予厚度。当前固定夹爪 CAD 默认预检会拒绝。
 
 `collision-merge --bundles 目录1 目录2 --output 新目录` 合并替换不同连杆的候选，保留全部凸体及各自生成参数；重复连杆拒绝合并。
 
@@ -132,5 +151,7 @@ alohamini-mujoco follow examples/simulation/follow.json \
 执行通过力受限 PD 和重力/科氏力前馈推进物理步，不直接写入关节位置。报告包含跟踪误差、实际速度、力饱和、关节越限和接触深度；验收失败返回非零退出码。
 
 接口约定：`T_A_B` 将 B 中坐标转换到 A；四元数为 `wxyz`。`solve_ik` 在独立状态上求解世界坐标下的 TCP 完整位姿，返回接触诊断；IK 收敛不代表整条路径可避障。
+
+`solve_ik_targets(robot, {"left": T_world_left_tcp, "right": T_world_right_tcp}, movable_joints=具名关节列表)` 支持双臂联合求解；显式加入 `vertical_move` 才允许升降轴参与。`reference_data` 复制实际场景状态，保留稳定后的物体位姿用于接触诊断；输入状态不会被修改。求解受 URDF 关节边界约束，局部求解失败不构成不可达证明。
 
 预览相机用于检查资产；机器人镜头内外参、任务物体接触参数和真机执行器参数须分别标定。此接口不执行真机命令。
