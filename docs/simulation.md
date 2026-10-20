@@ -116,6 +116,22 @@ alohamini-mujoco cad-tessellate \
 
 `cad-tessellate` 仅接受有效实体，每个原始实体及其空腔整体离散，输出零件定义坐标系中的 float64 米制 NPZ 网格。检查闭合性和朝向，记录离散参数、缝合位移与校验值；不自动将开口表面实体化。弦高参数不是经独立验证的表面误差上界。CAD 输出尚未映射到机器人连杆，不能直接作为 `--collision-bundle`。
 
+### 零件坐标校验
+
+```bash
+alohamini-mujoco cad-register \
+  --mesh-bundle ~/Alohamini_workspace/simulation/cad/part-mesh \
+  --link "${URDF_LINK:?请选择 URDF 连杆}" \
+  --component-index "${VISUAL_COMPONENT_INDEX:?请选择视觉网格的连通分量序号}" \
+  --T-link-part "${T_LINK_PART:?请提供零件到连杆的 4x4 JSON 刚体变换}" \
+  --tolerance-m 0.00025 --max-samples 1000000 \
+  --output ~/Alohamini_workspace/simulation/cad/part-registration
+```
+
+`T_link_part` 将零件定义坐标变换到 URDF 连杆局部坐标，平移单位为 m；程序验证给定变换，不自动拟合。`--visual-index` 默认 0；分量序号对应 `collision.components(meshes.binary_stl(原始STL字节))`，在缝合之前确定，并与源网格校验值绑定。
+
+检查覆盖两个网格的全部三角面，使用自适应细分给出双向最大表面距离的 float64 上下界。`--max-samples` 是每个方向的查询预算，预算不足记为 `inconclusive`，返回失败。输出 `registration.json`、连杆坐标下的 CAD 网格和所选视觉分量。校验仅适用于所选零件与视觉分量，不包含解析 CAD 离散误差、其他零件或实物尺寸，也不替换机器人碰撞体。
+
 ### STL 候选
 
 ```bash

@@ -120,6 +120,17 @@ def main(argv=None):
     tessellate.add_argument("--linear-deflection-m", type=float, default=5e-5)
     tessellate.add_argument("--angular-deflection-rad", type=float, default=0.1)
     tessellate.add_argument("--output", type=Path, required=True)
+    registration = commands.add_parser(
+        "cad-register", help="verify an explicit CAD-part transform against a visual component"
+    )
+    registration.add_argument("--mesh-bundle", type=Path, required=True)
+    registration.add_argument("--link", required=True)
+    registration.add_argument("--visual-index", type=int, default=0)
+    registration.add_argument("--component-index", type=int, required=True)
+    registration.add_argument("--T-link-part", type=json.loads, required=True)
+    registration.add_argument("--tolerance-m", type=float, required=True)
+    registration.add_argument("--max-samples", type=int, default=1_000_000)
+    registration.add_argument("--output", type=Path, required=True)
     merger = commands.add_parser(
         "collision-merge", help="combine disjoint CAD collision candidates"
     )
@@ -166,6 +177,22 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "cad-register":
+            from .registration import register_part
+
+            report = register_part(
+                Description(get_robot_model("alohamini2pro")),
+                args.mesh_bundle,
+                args.output,
+                link=args.link,
+                visual_index=args.visual_index,
+                component_index=args.component_index,
+                T_link_part=args.T_link_part,
+                tolerance_m=args.tolerance_m,
+                max_samples=args.max_samples,
+            )
+            print(json.dumps({"output": str(args.output), "passed": report["passed"]}))
+            return 0 if report["passed"] else 1
         if args.operation == "cad-tessellate":
             from .cad import tessellate_definition
 
