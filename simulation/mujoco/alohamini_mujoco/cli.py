@@ -1,4 +1,4 @@
-"""Offline model inspection and dynamic joint-trajectory execution."""
+"""Model inspection, interactive viewing and dynamic joint-trajectory execution."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from .collision import generate_bundle
 from .control import DynamicFollower, JointTrajectory
 from .description import Description
 from .model import ModelProfile, build_model
+from .viewer import set_geometry
 
 
 def export_robot(robot, report, output):
@@ -62,8 +63,7 @@ def preview(robot, data, path, *, collisions=False):
     from PIL import Image
 
     options = mujoco.MjvOption()
-    options.geomgroup[:] = 0
-    options.geomgroup[3 if collisions else 2] = 1
+    set_geometry(options, collisions=collisions)
     camera = mujoco.MjvCamera()
     mujoco.mjv_defaultCamera(camera)
     camera.lookat[:] = robot.model.stat.center
@@ -91,6 +91,10 @@ def main(argv=None):
         "follow", help="execute a named, time-defined trajectory using dynamics"
     )
     follow.add_argument("trajectory", type=Path)
+    view = commands.add_parser("view", help="open an interactive model and dynamics viewer")
+    view.add_argument("--trajectory", type=Path, help="play a named, time-defined trajectory")
+    view.add_argument("--collisions", action="store_true", help="start with physical convex hulls")
+    view.add_argument("--paused", action="store_true", help="start paused; Space plays dynamics")
     decompose = commands.add_parser("decompose", help="generate explicit CAD collision candidates")
     decompose.add_argument("--links", nargs="+", required=True, help="named URDF links")
     decompose.add_argument("--tolerance-m", type=float, default=0.0005)
@@ -99,6 +103,7 @@ def main(argv=None):
     decompose.add_argument("--output", required=True, type=Path, help="new candidate directory")
     for command in (inspect, follow):
         command.add_argument("--output", required=True, type=Path, help="new output directory")
+    for command in (inspect, follow, view):
         command.add_argument(
             "--initial-positions",
             type=json.loads,
@@ -141,6 +146,22 @@ def main(argv=None):
                 collision_bundle=args.collision_bundle,
             )
         )
+        trajectory = None
+        if args.operation in ("follow", "view") and args.trajectory is not None:
+            specification = json.loads(args.trajectory.expanduser().read_text())
+            if not isinstance(specification, dict) or specification.get("schema_version") != 1:
+                raise ValueError("Trajectory must declare schema_version 1")
+            trajectory = JointTrajectory(
+                robot,
+                specification["joint_names"],
+                specification["times_s"],
+                specification["positions"],
+            )
+        if args.operation == "view":
+            from .viewer import run_viewer
+
+            run_viewer(robot, trajectory, collisions=args.collisions, paused=args.paused)
+            return 0
         if args.operation == "inspect":
             report = {
                 "validation": validate_model(robot, samples=args.samples, seed=args.seed),
@@ -155,15 +176,6 @@ def main(argv=None):
                 "passed", True
             )
         else:
-            specification = json.loads(args.trajectory.read_text())
-            if specification.get("schema_version") != 1:
-                raise ValueError("Trajectory must declare schema_version 1")
-            trajectory = JointTrajectory(
-                robot,
-                specification["joint_names"],
-                specification["times_s"],
-                specification["positions"],
-            )
             follower = DynamicFollower(robot)
             report = {"follow": follower.follow(trajectory)}
             passed = report["follow"]["passed"]
@@ -173,6 +185,8 @@ def main(argv=None):
             preview(robot, robot.data(), output / "collision.png", collisions=True)
         print(json.dumps({"passed": bool(passed), "output": str(output)}, ensure_ascii=False))
         return 0 if passed else 1
-    except (OSError, ValueError, KeyError, RuntimeError) as exc:
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, ValueError, KeyError, RuntimeError, mujoco.FatalError) as exc:
         print(f"alohamini-mujoco: {exc}", file=sys.stderr)
         return 1

@@ -1,6 +1,6 @@
 # MuJoCo
 
-支持 AlohaMini2Pro 固定底盘的模型检查、完整位姿 IK 和动力学关节轨迹执行。底盘三个虚拟关节及三个轮轴固定；双臂、夹爪和升降轴保留重力、关节限位与电机力限制。
+支持 AlohaMini2Pro 固定底盘的交互查看、模型检查、完整位姿 IK 和动力学关节轨迹执行。底盘三个虚拟关节及三个轮轴固定；双臂、夹爪和升降轴保留重力、关节限位与电机力限制。
 
 ## 安装
 
@@ -10,6 +10,26 @@
 conda activate alohamini
 python -m pip install -e ./simulation/mujoco
 ```
+
+## 交互查看
+
+在桌面会话中从仓库根目录执行，无需输出目录：
+
+```bash
+MUJOCO_GL=glfw alohamini-mujoco view \
+  --initial-positions '{"vertical_move":0.2}' \
+  --trajectory examples/simulation/follow.json
+```
+
+不传 `--trajectory` 时通过动力学保持初态；`--paused` 暂停启动，`--collisions` 直接显示物理凸包。鼠标左键拖动旋转，右键拖动平移，滚轮缩放。
+
+- 空格：播放或暂停；轨迹结束后自动暂停。
+- F8：切换完整视觉网格与实际接触计算使用的碰撞凸包。
+- F9：复位到配置初态并暂停；再次按空格重播。
+- 右方向键：暂停时推进一个物理步。
+- F6：切换坐标系显示；关闭窗口退出。
+
+窗口显示仿真时间、实际运行倍率、接触数和电机力饱和步数。播放保留完整物理步，复杂碰撞候选可能低于实时速度。`--collision-profile` 和 `--collision-bundle` 与模型检查相同。原生面板用于查看，初态与物理配置由启动参数指定；面板编辑不会改变动力学播放。当前窗口包含机器人，尚无任务桌面或物体；查看与播放不代替接触验收。
 
 ## 模型检查
 

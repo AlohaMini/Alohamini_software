@@ -129,12 +129,8 @@ class DynamicFollower:
             raise RuntimeError("MuJoCo issued a dynamics warning")
         return saturated
 
-    def follow(self, trajectory, *, observer=None, observation_period_s=0.02):
-        if (
-            not math.isfinite(observation_period_s)
-            or observation_period_s < self.model.opt.timestep
-        ):
-            raise ValueError("Observation period must be finite and at least one physics step")
+    def trajectory_indices(self, trajectory):
+        """Resolve driven joints and require a continuous start at the measured pose."""
         indices = np.array([self.names.index(n) for n in trajectory.names])
         position_ids = self.qpos_ids[indices]
         start = self.data.qpos[position_ids].copy()
@@ -148,6 +144,16 @@ class DynamicFollower:
         )
         if (np.abs(start - trajectory.positions[0]) > start_tolerances).any():
             raise ValueError("Trajectory must start at the measured joint positions")
+        return indices
+
+    def follow(self, trajectory, *, observer=None, observation_period_s=0.02):
+        if (
+            not math.isfinite(observation_period_s)
+            or observation_period_s < self.model.opt.timestep
+        ):
+            raise ValueError("Observation period must be finite and at least one physics step")
+        indices = self.trajectory_indices(trajectory)
+        position_ids = self.qpos_ids[indices]
         begin = float(self.data.time)
         duration = trajectory.times[-1] + self.settings.settle_time_s
         steps = math.ceil(duration / self.model.opt.timestep)
