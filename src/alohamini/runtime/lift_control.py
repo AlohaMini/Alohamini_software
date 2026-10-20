@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from AlohaMini LiftAxis feedback accumulation and height proportional control.
-"""Feedback-driven lift height control and current-contact homing; no device I/O."""
+"""Feedback-driven lift height control and current-slope homing; no device I/O."""
 
 import math
 import statistics
@@ -52,18 +52,25 @@ class LiftOutput:
 class LiftHoming:
     """Local sensorless homing over fresh Host feedback, never an endstop sensor.
 
-    The operator must clear the descent path. Current plus standstill can detect
-    contact, but cannot distinguish the bottom from an obstruction. The deployed
-    1300 ticks/s, 0.3 A and 30 s limits are retained. No-motion alone is a fault,
-    not a zero reference. The source's one-second unloaded settling interval
-    follows the stop and torque-off commands before establishing zero.
+    The operator must clear the descent path: a current rise cannot distinguish
+    the bottom from another obstruction. At 0.3 A and positive d|I|/dt >= 5 A/s,
+    request immediate unloading, including during startup. The 2 A sampled abort
+    is not hardware current limiting. The one-second unloaded settling interval
+    follows verified stop and torque-off before establishing zero. The deployed
+    1300 ticks/s, stationary-contact fallback and 30 s deadline remain in place.
     """
+
+    CONTACT_CURRENT_A = 0.3
+    CONTACT_SLOPE_A_S = 5.0
+    CURRENT_ABORT_A = 2.0
 
     def __init__(self, spec: LiftAxisSpec) -> None:
         if not isinstance(spec, LiftAxisSpec):
             raise TypeError("Expected LiftAxisSpec")
         self.spec = spec
         self.phase = "seeking"
+        self.sampling_hz: float | None = None
+        self.current_slope_a_s: float | None = None
         self.velocity_raw = 0
         self._started: float | None = None
         self._previous: FeedbackBatch | None = None
@@ -134,14 +141,35 @@ class LiftHoming:
                 raise RuntimeError("Lift homing exceeded the travel allowance")
             if self.phase == "settling" and self._released:
                 self._settle_position += delta
+            interval = now - previous.received_s
+            if self.phase == "seeking" and not 0 < interval <= 0.1 + 1e-9:
+                raise RuntimeError("Lift homing derivative feedback gap exceeds 100 ms")
+            self.sampling_hz = 1.0 / interval if interval > 0 else None
+            if self.sampling_hz is not None:
+                previous_current = abs(previous.samples[self.spec.actuator.name].current_a)
+                self.current_slope_a_s = (abs(current) - previous_current) * self.sampling_hz
+            else:
+                self.current_slope_a_s = None
         else:
             self._started = now
         self._previous, self._tick = batch, tick
         if now - self._started >= 30:
             raise RuntimeError("Lift homing timed out; zero reference not established")
+        if abs(current) >= self.CURRENT_ABORT_A:
+            raise RuntimeError("Lift homing current abort threshold reached; no zero reference")
 
         if self.phase == "settling":
             self._settle(batch, tick, speed, moving)
+            return
+
+        # Do not wait for sustained descent: startup may already be at bottom.
+        # The controller must unload in this cycle, before any further descent.
+        if (
+            abs(current) >= self.CONTACT_CURRENT_A
+            and self.current_slope_a_s is not None
+            and self.current_slope_a_s >= self.CONTACT_SLOPE_A_S
+        ):
+            self._begin_settling(now)
             return
 
         stationary = speed == 0 and moving == 0
@@ -156,18 +184,21 @@ class LiftHoming:
             self._contact_since = None
         if self.phase == "seeking":
             self.velocity_raw = -self.spec.direction * 1300
-            if stationary and abs(current) >= 0.3:
+            if stationary and abs(current) >= self.CONTACT_CURRENT_A:
                 if self._contact_since is None:
                     self._contact_since = now
                 if now - self._contact_since >= 0.1:
-                    self.phase = "settling"
-                    self.velocity_raw = 0
-                    self._stop_started = now
-                    self._stationary_since = self._stationary_tick = None
+                    self._begin_settling(now)
             else:
                 self._contact_since = None
                 if self._stationary_since is not None and now - self._stationary_since >= 0.5:
                     raise RuntimeError("Lift stopped without contact current; homing failed")
+
+    def _begin_settling(self, now: float) -> None:
+        self.phase = "settling"
+        self.velocity_raw = 0
+        self._stop_started = now
+        self._stationary_since = self._stationary_tick = None
 
     def _settle(self, batch: FeedbackBatch, tick: int, speed: int, moving: int) -> None:
         """Verify unloaded rest from a full second of position feedback.
