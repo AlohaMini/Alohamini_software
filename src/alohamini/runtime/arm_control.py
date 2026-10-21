@@ -54,6 +54,7 @@ class ArmController:
         self._session: str | None = None
         self._positions: dict[str, float] = {}
         self._currents: dict[str, float] = {}
+        self._feedback_times_s: dict[str, float] = {}
         self._targets: dict[str, float] = {}
         self._sent: dict[str, float] = {}
         self._new_command = False
@@ -99,6 +100,7 @@ class ArmController:
         self._sent.clear()
         self._positions.clear()
         self._currents.clear()
+        self._feedback_times_s.clear()
         self._new_command = False
         self._fresh = False
         self._guard.cancel_candidates()
@@ -107,12 +109,13 @@ class ArmController:
         self._fresh = False
         self._positions.clear()
         self._currents.clear()
+        self._feedback_times_s.clear()
         if self._session is None:
             raise RuntimeError("Arm controller has no Host session")
         sources = [batch.source_id for batch in batches]
         if len(set(sources)) != len(sources) or not self._groups.keys() <= set(sources):
             raise ValueError("Missing or duplicated arm feedback bus")
-        positions, currents = {}, {}
+        positions, currents, feedback_times = {}, {}, {}
         for batch in batches:
             if batch.source_id not in self._groups:
                 continue
@@ -142,7 +145,9 @@ class ArmController:
                     sample.registers["position_raw"]
                 )
                 currents[name] = sample.current_a
+                feedback_times[name] = batch.received_s
         self._positions, self._currents = positions, currents
+        self._feedback_times_s = feedback_times
         self._fresh = True
 
     def validate_targets(self, positions_rad: Mapping[str, float]) -> None:
@@ -178,7 +183,11 @@ class ArmController:
             raise RuntimeError("Arm supervision requires a new feedback batch")
         self._fresh = False
         limited = self._guard.limit(
-            self._targets, self._positions, self._currents, now=time.monotonic()
+            self._targets,
+            self._positions,
+            self._currents,
+            now=time.monotonic(),
+            feedback_times_s=self._feedback_times_s,
         )
         # Check both arms before either bus is written. A hold outside calibrated
         # target bounds faults the Host; its stop backend can hold actual raw position.
