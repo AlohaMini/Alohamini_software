@@ -391,6 +391,58 @@ class LiftHomingTests(unittest.TestCase):
             )
             self.assertEqual(self.home.phase, "settling")
 
+    def test_frequent_one_tick_jitter_can_settle_after_reported_speed_returns_to_zero(self):
+        # Reproduces the reported summary: span=1, drift=0, median_speed=50,
+        # tail_speed=0 and latest speed/moving=0. This is synthetic feedback.
+        for base in (4012, 4095):
+            with self.subTest(base=base):
+                self.home = LiftHoming(layout()[1])
+                self.contact_and_release()
+                for sequence in range(7, 80):
+                    index = sequence - 7
+                    speed = 50 if index < 35 else 0
+                    self.home.update(
+                        lift_batch(
+                            sequence,
+                            (base + (index % 2 if speed else 0)) % 4096,
+                            speed=speed,
+                            moving=0,
+                            current=0.05,
+                        )
+                    )
+                    if self.home.phase == "complete":
+                        break
+                self.assertEqual(self.home.phase, "complete")
+                self.assertGreaterEqual(sequence * 0.02, 1.13)
+                self.assertEqual(self.home.velocity_raw, 0)
+
+    def test_high_window_speed_requires_one_tick_span_zero_drift_and_latest_rest(self):
+        for failure in ("span", "drift", "speed", "moving", "tail", "large_speed"):
+            with self.subTest(failure=failure):
+                self.home = LiftHoming(layout()[1])
+                self.contact_and_release()
+                for sequence in range(7, 60):
+                    index = sequence - 7
+                    speed = 50 if index < 35 else 0
+                    tick = 4012 + (index % 2 if speed else 0)
+                    moving = 0
+                    if failure == "span":
+                        tick = 4012 + (2 * (index % 2) if speed else 0)
+                    elif failure == "drift":
+                        tick = 4012 + int(index >= 25)
+                    elif failure == "speed":
+                        speed = 50 if index < 35 or index >= 50 else 0
+                    elif failure == "moving":
+                        moving = int(index >= 50)
+                    elif failure == "large_speed":
+                        speed = 100 if index < 35 else 0
+                    else:
+                        speed = 50
+                    self.home.update(
+                        lift_batch(sequence, tick, speed=speed, moving=moving, current=0.05)
+                    )
+                    self.assertEqual(self.home.phase, "settling")
+
     def test_sparse_endpoints_do_not_prove_a_stationary_window(self):
         self.contact_and_release()
         self.home.update(lift_batch(7, 1000, time_s=0.14))
