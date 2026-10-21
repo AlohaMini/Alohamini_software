@@ -503,6 +503,151 @@ class FeetechDeviceTests(unittest.TestCase):
                 )
                 self.assertEqual(self.serial.get(1, 48, 2), value * 1000)
 
+    def test_initialize_output_limits_recovers_stale_ram_from_persistent_maximum(self):
+        for nominal in (1000, 640, 0):
+            with self.subTest(nominal=nominal):
+                self.serial.set(1, 16, 2, nominal)
+                self.serial.set(1, 48, 2, 250)  # A previous Host exited while holding.
+                for motor_id in (1, 2):
+                    self.serial.set(motor_id, 40, 1, 0)
+                self.device = self.new_device()
+                self.connect()
+                expected = {i: data.copy() for i, data in self.serial.registers.items()}
+                expected[1][48:50] = nominal.to_bytes(2, "little")
+                self.assertEqual(
+                    self.device.initialize_output_limits({"joint": 1}),
+                    {"joint": nominal / 1000},
+                )
+                self.assertEqual(self.serial.registers, expected)
+                self.assertEqual(
+                    [(p[2], p[4], p[5]) for p in self.serial.requests],
+                    [(1, 2, 40), (2, 2, 40), (1, 2, 16), (1, 2, 48),
+                     (1, 3, 48), (1, 2, 48)],
+                )
+                self.assertEqual(
+                    self.device.write_output_limits({"joint": 0.1}),
+                    {"joint": min(100, nominal) / 1000},
+                )
+                self.assertEqual(
+                    self.device.write_output_limits({"joint": 1}),
+                    {"joint": nominal / 1000},
+                )
+                self.device.write_output_limits({"joint": 0})
+                self.device.disable_torque()
+                self.assertEqual(self.serial.get(1, 48, 2), nominal)
+                self.assertEqual(self.serial.get(1, 16, 2), nominal)
+
+    def test_initialize_output_limits_keeps_nominal_ceiling_above_initial_request(self):
+        self.serial.set(1, 16, 2, 640)
+        self.serial.set(1, 48, 2, 640)
+        for motor_id in (1, 2):
+            self.serial.set(motor_id, 40, 1, 0)
+        self.connect()
+        self.assertEqual(self.device.initialize_output_limits({"joint": 0.4567}), {"joint": 0.456})
+        self.assertEqual(self.device.write_output_limits({"joint": 1}), {"joint": 0.64})
+        self.serial.requests.clear()
+        self.assertEqual(self.device.initialize_output_limits({"joint": 1}), {"joint": 0.64})
+        self.assertFalse(self.writes())
+
+    def test_initialize_output_limits_validates_complete_mapping_before_io(self):
+        self.serial.set(2, 33, 1, 0)
+        self.serial.set(2, 46, 2, 2000)
+        self.device = self.new_device(
+            position_calibrations={"joint": self.calibration, "wheel": self.calibration},
+            velocity_limits={},
+        )
+        self.connect()
+        for value in (True, None, "1", -0.1, 1.1, math.nan, math.inf):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.device.initialize_output_limits({"joint": 1, "wheel": value})
+        for limits in ({}, {"joint": 1, "unknown": 1}):
+            with self.subTest(limits=limits), self.assertRaises(ValueError):
+                self.device.initialize_output_limits(limits)
+        self.assertFalse(self.serial.requests)
+
+    def test_initialize_output_limits_requires_verified_ready_position_motors(self):
+        with self.assertRaises(ConnectionError):
+            self.device.initialize_output_limits({"joint": 1})
+        self.factory.assert_not_called()
+        self.connect()
+        for field, value in (("_ready", False), ("_verified", {"joint"}), ("_modes", {"joint"})):
+            with self.subTest(field=field), patch.object(self.device, field, value):
+                with self.assertRaises(ConnectionError):
+                    self.device.initialize_output_limits({"joint": 1})
+        with self.assertRaises(ValueError):
+            self.device.initialize_output_limits({"wheel": 1})
+        self.assertFalse(self.serial.requests)
+
+    def test_initialize_output_limits_checks_torque_off_for_the_entire_bus(self):
+        self.connect()
+        self.serial.set(1, 40, 1, 0)
+        self.serial.set(1, 48, 2, 250)
+        with self.assertRaisesRegex(ConnectionError, "Disable every motor.*wheel"):
+            self.device.initialize_output_limits({"joint": 1})
+        self.assertEqual([(p[2], p[5]) for p in self.serial.requests], [(1, 40), (2, 40)])
+        self.assertFalse(self.writes())
+        self.assertEqual(self.serial.get(1, 48, 2), 250)
+        self.assertEqual(self.device.output_limits, {})
+
+    def test_initialize_output_limits_rejects_invalid_register_batch_before_any_write(self):
+        self.serial.set(2, 33, 1, 0)
+        self.serial.set(2, 46, 2, 2000)
+        for motor_id in (1, 2):
+            self.serial.set(motor_id, 40, 1, 0)
+            self.serial.set(motor_id, 48, 2, 250)
+        self.device = self.new_device(
+            position_calibrations={"joint": self.calibration, "wheel": self.calibration},
+            velocity_limits={},
+        )
+        self.connect()
+        for address in (16, 48):
+            self.serial.set(2, address, 2, 1001)
+            with self.subTest(address=address), self.assertRaisesRegex(ConnectionError, "output"):
+                self.device.initialize_output_limits({"joint": 1, "wheel": 1})
+            self.assertFalse(self.writes())
+            self.assertEqual(self.device.output_limits, {})
+            self.assertFalse(self.device._output_limit_baselines)
+            self.serial.set(2, address, 2, 1000 if address == 16 else 250)
+        self.device.disable_torque()
+        self.assertFalse(any(p[5] == 48 for p in self.writes()))
+
+    def test_initialize_output_limits_read_failure_never_captures_or_changes_caps(self):
+        self.connect()
+        for motor_id in (1, 2):
+            self.serial.set(motor_id, 40, 1, 0)
+        self.serial.set(1, 48, 2, 250)
+        for motor_id, address in ((2, 40), (1, 16), (1, 48)):
+            self.serial.errors[(motor_id, 2, address)] = 0x04
+            with self.subTest(address=address), self.assertRaises(ConnectionError):
+                self.device.initialize_output_limits({"joint": 1})
+            self.serial.errors.clear()
+            self.assertFalse(self.writes())
+            self.assertEqual(self.device.output_limits, {})
+            self.assertFalse(self.device._output_limit_baselines)
+        self.device.disable_torque()
+        self.assertFalse(any(p[5] == 48 for p in self.writes()))
+
+    def test_initialize_write_failure_cannot_confirm_or_restore_before_verified_unload(self):
+        self.connect()
+        for motor_id in (1, 2):
+            self.serial.set(motor_id, 40, 1, 0)
+        self.serial.set(1, 48, 2, 250)
+        self.serial.ignore_writes.add((1, 48))
+        with self.assertRaisesRegex(ConnectionError, "Register write not accepted.*address 48"):
+            self.device.initialize_output_limits({"joint": 1})
+        self.assertEqual(self.device.output_limits, {})
+        self.assertEqual(self.serial.get(1, 48, 2), 250)
+        self.serial.set(2, 40, 1, 1)
+        self.serial.ignore_writes.add((2, 40))
+        self.serial.requests.clear()
+        with self.assertRaises(DeviceOperationError):
+            self.device.disable_torque()
+        self.assertFalse(any(p[5] == 48 for p in self.serial.requests))
+        self.serial.ignore_writes.clear()
+        self.device.disable_torque()
+        self.assertEqual(self.serial.get(1, 48, 2), 1000)
+        self.assertTrue(all(self.serial.get(i, 40, 1) == 0 for i in (1, 2)))
+
     def test_output_limits_preserve_original_ceiling_without_ratcheting(self):
         self.serial.set(1, 48, 2, 640)
         self.connect()

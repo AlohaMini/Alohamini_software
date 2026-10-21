@@ -800,13 +800,7 @@ class FeetechBusDevice(MotorsBus):
             if self._read_register(name, _GOAL_POSITION, 2) != target:
                 self._write_verified(name, _GOAL_POSITION, 2, target)
 
-    def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
-        """Set acknowledged RAM output caps for calibrated position motors.
-
-        Fractions are truncated to STS per-mille units and cannot exceed the
-        original register value captured on first access. The robot layer selects
-        grippers; this transport never infers joint roles from motor names.
-        """
+    def _encode_output_limits(self, limits: Mapping[str, float]) -> dict[str, int]:
         self._check_thread()
         if (
             not self._ready
@@ -822,6 +816,41 @@ class FeetechBusDevice(MotorsBus):
             if not 0 <= value <= 1:
                 raise ValueError(f"Output limit must be between zero and one: {name}")
             encoded[name] = int(value * 1000)
+        return encoded
+
+    def initialize_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
+        """Initialize torque-off RAM caps from the persistent maximum at register 16.
+
+        The caller must unload all buses first. Check this bus independently,
+        then treat its persistent configuration as authoritative over RAM values
+        left by a previous Host session. EEPROM is never changed here.
+        """
+        encoded = self._encode_output_limits(limits)
+        for name in self._ids:
+            if self._read_register(name, _TORQUE_ENABLE, 1) != 0:
+                raise ConnectionError(f"Disable every motor before output initialization: {name}")
+        baselines, actual = {}, {}
+        for name in encoded:
+            baseline = self._read_register(name, 16, 2)
+            current = self._read_register(name, _OUTPUT_LIMIT, 2)
+            if not 0 <= baseline <= 1000:
+                raise ConnectionError(f"Invalid STS maximum output limit: {name}, raw={baseline}")
+            if not 0 <= current <= 1000:
+                raise ConnectionError(f"Invalid STS output limit: {name}, raw={current}")
+            baselines[name] = baseline
+            actual[name] = current / 1000
+        self._output_limit_baselines.update(baselines)
+        self._output_limits.update(actual)
+        return self.write_output_limits(limits)
+
+    def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
+        """Set acknowledged RAM output caps for calibrated position motors.
+
+        Fractions are truncated to STS per-mille units and bounded by the captured
+        ceiling: persistent register 16 after initialization, otherwise register
+        48 on first access. The robot layer selects the grippers.
+        """
+        encoded = self._encode_output_limits(limits)
 
         # Capture every missing value before changing any register. A failed
         # write invalidates its cached actual value but retains the original cap.
