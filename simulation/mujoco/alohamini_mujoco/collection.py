@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import mujoco
 import numpy as np
 
+from .compilation import load_xml
 from .control import DynamicFollower, FollowerSettings
 from .libero import sha256
 from .viewer import set_geometry
@@ -201,7 +202,7 @@ def replay_episode(directory, *, episode=None):
         path = (directory / relative).resolve()
         if not path.is_relative_to(directory) or sha256(path) != expected:
             raise ValueError(f"Model checksum mismatch: {relative}")
-    model = mujoco.MjModel.from_xml_path(str(directory / "model/model.xml"))
+    model = load_xml(directory / "model/model.xml")
     episode = Path(episode) if episode else directory / manifest["episode"]
     if manifest.get("episode_sha256") and sha256(episode) != manifest["episode_sha256"]:
         raise ValueError("Episode checksum mismatch")

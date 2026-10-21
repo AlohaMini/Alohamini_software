@@ -16,6 +16,7 @@ import mujoco
 import numpy as np
 
 from .cad import file_sha256
+from .compilation import load_xml
 from .frames import points_in_frame, rigid_transform
 from .model import pose_attributes, text
 
@@ -242,7 +243,7 @@ def export_cad_scene(
         )
         ET.indent(root)
         (stage / "model.xml").write_text(ET.tostring(root, encoding="unicode") + "\n")
-        native = mujoco.MjModel.from_xml_path(str(stage / "model.xml"))
+        native = load_xml(stage / "model.xml")
         if (
             native.nq
             or native.nv

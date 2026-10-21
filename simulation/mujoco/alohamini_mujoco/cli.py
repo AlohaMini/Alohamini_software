@@ -18,6 +18,7 @@ from alohamini.model import get_robot_model
 
 from .audit import compare_maniskill, convexification_report, gripper_sections, validate_model
 from .collision import generate_bundle, merge_bundles
+from .compilation import load_xml
 from .control import DynamicFollower, JointTrajectory
 from .description import Description
 from .model import ModelProfile, build_model
@@ -52,7 +53,7 @@ def export_robot(robot, report, output):
         (stage / "manifest.json").write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
         (stage / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
         # Do not publish a package whose relative mesh references cannot load.
-        reloaded = mujoco.MjModel.from_xml_path(str(stage / "model.xml"))
+        reloaded = load_xml(stage / "model.xml")
         if (reloaded.nq, reloaded.ngeom) != (robot.model.nq, robot.model.ngeom):
             raise RuntimeError("Export changed model topology")
         if output.exists():
@@ -146,6 +147,27 @@ def main(argv=None):
     datums.add_argument("--cad-bundle", type=Path, required=True)
     datums.add_argument("--binding", type=Path, required=True)
     datums.add_argument("--output", type=Path, required=True)
+    cad_collision = commands.add_parser(
+        "cad-collision",
+        help="verify closed CAD convex colliders against complete-link registrations",
+    )
+    cad_collision.add_argument("--mesh-bundle", type=Path, required=True)
+    cad_collision.add_argument("--registrations", type=Path, nargs="+", required=True)
+    cad_collision.add_argument("--tolerance-m", type=float, required=True)
+    cad_collision.add_argument("--concavity-m", type=float, default=0.0005)
+    cad_collision.add_argument("--seed", type=int, default=0)
+    cad_collision.add_argument("--reuse-decomposition", type=Path)
+    cad_collision.add_argument("--refine", action="store_true")
+    cad_collision.add_argument("--merge-verified", action="store_true")
+    cad_collision.add_argument("--output", type=Path, required=True)
+    contact_probe = commands.add_parser(
+        "collision-probe", help="check native contacts at named CAD surface points"
+    )
+    contact_probe.add_argument("--mesh-bundle", type=Path, required=True)
+    contact_probe.add_argument("--configuration", type=Path, required=True)
+    contact_probe.add_argument("--collision-bundle", type=Path, required=True)
+    contact_probe.add_argument("--initial-positions", type=json.loads, default={})
+    contact_probe.add_argument("--output", type=Path, required=True)
     registration = commands.add_parser(
         "cad-register", help="verify an explicit CAD-part transform against a visual component"
     )
@@ -221,6 +243,41 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "collision-probe":
+            from .contact_probe import probe_cad_contacts
+
+            output = args.output.expanduser().resolve()
+            if output.exists():
+                raise FileExistsError(output)
+            robot = build_model(
+                profile=ModelProfile(
+                    collision_bundle=args.collision_bundle, initial_positions=args.initial_positions
+                )
+            )
+            report = probe_cad_contacts(robot, args.mesh_bundle, args.configuration)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with output.open("x") as stream:
+                json.dump(report, stream, indent=2, allow_nan=False)
+                stream.write("\n")
+            print(json.dumps({"output": str(output), "passed": report["passed"]}))
+            return 0 if report["passed"] else 1
+        if args.operation == "cad-collision":
+            from .cad_collision import build_cad_collision
+
+            report = build_cad_collision(
+                Description(get_robot_model("alohamini2pro")),
+                args.mesh_bundle,
+                args.registrations,
+                args.output,
+                tolerance_m=args.tolerance_m,
+                concavity_m=args.concavity_m,
+                seed=args.seed,
+                reuse_decomposition=args.reuse_decomposition,
+                refine=args.refine,
+                merge_verified=args.merge_verified,
+            )
+            print(json.dumps({"output": str(args.output), "passed": report["passed"]}))
+            return 0 if report["passed"] else 1
         if args.operation == "cad-place":
             from .cad_datums import place_from_datums
 

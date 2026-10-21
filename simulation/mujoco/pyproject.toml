@@ -11,7 +11,7 @@ dependencies = ["alohamini-platform", "mujoco==3.8.1", "numpy>=2,<3", "scipy>=1.
 
 [project.optional-dependencies]
 cad = ["cadquery-ocp-novtk==7.9.3.1.1"]
-geometry = ["coacd==1.0.14"]
+geometry = ["coacd==1.0.14", "manifold3d==3.5.4"]
 collection = ["h5py>=3.11,<4"]
 
 [project.scripts]

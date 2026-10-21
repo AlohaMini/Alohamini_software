@@ -15,6 +15,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from .compilation import compile_xml
 from .frames import rigid_transform
 from .model import pose_attributes, text
 
@@ -238,7 +239,7 @@ class LiberoScene:
         root, assets = ET.fromstring(robot.xml), dict(robot.assets)
         self.augment(root, assets)
         xml = ET.tostring(root, encoding="unicode")
-        model = mujoco.MjModel.from_xml_string(xml, assets=assets)
+        model = compile_xml(xml, assets=assets)
         return replace(
             robot,
             model=model,

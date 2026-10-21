@@ -187,6 +187,35 @@ alohamini-mujoco cad-place \
 
 旋转须显式给定；至少 3 个定位平面约束全部平移轴，并提供独立检查平面。程序仅拟合平移，检查平面不参与拟合。误差预算来自各 CAD 面及其边界的原生容差、STL float32 量化和 float64 运算，不包含未知的早期导出误差或实物标定。`placement.json` 分别记录定位、独立检查及总体结果；任一未通过则退出码为 1。此检查不替代整面形状校验，也不决定刚体归属。
 
+### 闭合 CAD 碰撞体与接触检查
+
+```bash
+python -m pip install -e './simulation/mujoco[geometry]'
+OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco cad-collision \
+  --mesh-bundle ~/Alohamini_workspace/simulation/cad/part-mesh \
+  --registrations "${PART_REGISTRATION:?请指定完整连杆的配准目录}" \
+  --concavity-m 0.0005 --tolerance-m 0.0005 --refine --merge-verified \
+  --output ~/Alohamini_workspace/simulation/collision/cad-part
+```
+
+仅接受单个闭合 CAD 实体及覆盖整条连杆全部视觉三角形的已通过配准；不推断刚体归属、镜像或缩放。多个连杆须分别提供配准目录。CoACD 关闭重网格、减面和膨胀；`--concavity-m` 是分解目标，`--tolerance-m` 是独立的实体距离验收预算。
+
+验收检查 CAD 与 float32 碰撞凸体并集的双向实体包容关系，使用内接于误差球的凸多面体作 Minkowski 膨胀核，并记录布尔核容差。此项验证材料覆盖，不能替代接触法向、功能间隙或实物标定。`--refine` 仅裁剪超过包络的凸体，在六个误差区域边界平面中选择保留体积最大的合格裁剪，再检查整个结果。验收失败只保存 `qualification.json`，不生成可加载的 `collision.json`。
+
+输出的 `decomposition/` 可通过 `--reuse-decomposition 目录` 复用；缓存须匹配源网格、定义坐标、CoACD 版本和全部参数。加载与合并碰撞候选时检查验收记录与凸体文件校验值的绑定。
+
+`--merge-verified` 在相同误差包络内尝试合并相邻凸体，最后重新检查完整几何与网格有效性。数值退化或覆盖失败时回退合并。每次构建最多检查 20,000 对，结果记录保留与回退数量、搜索是否结束；不保证凸体数量全局最少。
+
+```bash
+alohamini-mujoco collision-probe \
+  --mesh-bundle ~/Alohamini_workspace/simulation/cad/part-mesh \
+  --collision-bundle ~/Alohamini_workspace/simulation/collision/cad-part \
+  --configuration "${CONTACT_FIXTURE:?请指定接触探针 JSON}" \
+  --output ~/Alohamini_workspace/reports/simulation/contact-probe.json
+```
+
+配置字段为 `schema_version: 1`、`source_mesh_manifest_sha256`、`sphere_radius_m`、`tolerance_m`、`clearances_m` 和 `cases`。每个 case 指定 `link`、`point_link_m`、`outward_normal_link`、`joint_positions`（具名 URDF 关节位置字典列表，m/rad）。探针中心须位于 CAD 材料外；检查原生碰撞距离、接触是否产生，并报告法向偏差。结果仅覆盖指定采样点、关节配置和球体尺寸，不代表完整抓取验收。
+
 ### 整机碰撞组织
 
 ```bash
@@ -239,6 +268,8 @@ alohamini-mujoco inspect --initial-positions '{"vertical_move":0.2}' \
 `inspect` 的 `convexification` 报告列出每个物理网格的凸包与源网格诊断；非闭合或朝向不一致的网格不提供体积比。夹爪截面报告两指各自接触面的 X 坐标、偏差和命中统计，并比较开口宽度，避免两指同向偏移时误差抵消。`probe_counts` 区分开口配对是否可测量，缺失不等于零误差。`validation.passed` 仅表示模型导入一致性通过，候选仍须验证接触、间隙与动力学性能。碰撞候选不会自动成为默认模型。
 
 ## 轨迹执行
+
+模型编译与导出、回放重载使用最高 64 MiB 的临时编译资产缓存；原缓存容量随后恢复。该预算不限制运行模型内存，也不减少几何或物理计算。`follow` 输出墙钟耗时、实际运行倍率和 arena 使用峰值；耗时包含已启用的观测回调。
 
 ```bash
 alohamini-mujoco follow examples/simulation/follow.json \

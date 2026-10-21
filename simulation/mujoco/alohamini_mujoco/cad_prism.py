@@ -12,6 +12,7 @@ import mujoco
 import numpy as np
 
 from .cad import file_sha256
+from .compilation import compile_xml
 from .shapes import Primitive
 
 
@@ -205,7 +206,7 @@ def export_hollow_prism(directory, definition, output, *, axis):
             rgba=f"{0.2 + i * 0.12} 0.65 0.75 1",
         )
     xml = ET.tostring(model, encoding="unicode")
-    native_model = mujoco.MjModel.from_xml_string(xml)
+    native_model = compile_xml(xml)
     data = mujoco.MjData(native_model)
     mujoco.mj_forward(native_model, data)
     ray = np.eye(3)[axis]

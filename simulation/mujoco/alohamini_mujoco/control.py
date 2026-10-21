@@ -7,6 +7,7 @@ with bounded motor effort including any gravity/Coriolis feed-forward torque.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 import mujoco
@@ -165,6 +166,7 @@ class DynamicFollower:
         next_observation = 0.0
         minimum_contact_distance = 0.0
         limit_violations = np.zeros(len(self.names))
+        wall_begin = time.perf_counter()
         for _ in range(steps):
             elapsed = float(self.data.time) - begin
             q, velocity = trajectory.reference(elapsed)
@@ -225,9 +227,14 @@ class DynamicFollower:
             and (peak_speed <= speed_limits * (1 + 1e-6)).all()
             and minimum_contact_distance >= -self.settings.penetration_tolerance_m
         )
+        wall_time = time.perf_counter() - wall_begin
         return {
             "passed": bool(passed),
             "duration_s": float(self.data.time) - begin,
+            "wall_time_s": wall_time,
+            "real_time_factor": (float(self.data.time) - begin) / wall_time,
+            "wall_time_includes_observer": observer is not None,
+            "maximum_arena_use_bytes": int(self.data.maxuse_arena),
             "joint_names": list(trajectory.names),
             "joint_units": ["m" if self.kinds[i] == "prismatic" else "rad" for i in indices],
             "final_error": error.tolist(),

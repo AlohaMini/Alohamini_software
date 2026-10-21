@@ -16,6 +16,7 @@ import numpy as np
 from alohamini.model import get_robot_model
 
 from .collision import load_bundle
+from .compilation import compile_xml
 from .description import Description, numbers, origin
 from .frames import rigid_transform
 from .meshes import binary_stl
@@ -382,7 +383,7 @@ def build_model(robot_model=None, profile=None, *, scene=None):
     if scene is not None:
         scene.augment(root, assets)
     xml = ET.tostring(root, encoding="unicode")
-    compiled = mujoco.MjModel.from_xml_string(xml, assets=assets)
+    compiled = compile_xml(xml, assets=assets)
     for relative, expected in files.items():
         if (
             hashlib.sha256((description.robot_model.directory / relative).read_bytes()).hexdigest()

@@ -586,6 +586,10 @@ def load_bundle(description, directory):
             )
         if not isinstance(record.get("pieces"), list):
             raise ValueError(f"Invalid collision pieces: {link}")
+        if "cad_geometry" in record:
+            from .cad_collision import validate_cad_qualification
+
+            validate_cad_qualification(record, link)
         pieces = []
         for piece in record.get("pieces", []):
             if (
