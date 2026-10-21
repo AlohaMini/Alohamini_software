@@ -135,6 +135,17 @@ def main(argv=None):
     prism.add_argument("--definition", required=True)
     prism.add_argument("--axis", choices=("x", "y", "z"), required=True)
     prism.add_argument("--output", type=Path, required=True)
+    scene = commands.add_parser("cad-scene", help="export a complete static CAD reference scene")
+    scene.add_argument("--cad-bundle", type=Path, required=True)
+    scene.add_argument("--occurrence", help="exact assembly/part occurrence ID; default all parts")
+    scene.add_argument("--T-world-cad", type=json.loads, required=True)
+    scene.add_argument("--linear-deflection-m", type=float, default=5e-5)
+    scene.add_argument("--angular-deflection-rad", type=float, default=0.1)
+    scene.add_argument("--output", type=Path, required=True)
+    datums = commands.add_parser("cad-place", help="check authored planar mounting datums")
+    datums.add_argument("--cad-bundle", type=Path, required=True)
+    datums.add_argument("--binding", type=Path, required=True)
+    datums.add_argument("--output", type=Path, required=True)
     registration = commands.add_parser(
         "cad-register", help="verify an explicit CAD-part transform against a visual component"
     )
@@ -210,6 +221,32 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "cad-place":
+            from .cad_datums import place_from_datums
+
+            report = place_from_datums(
+                Description(get_robot_model("alohamini2pro")),
+                args.cad_bundle,
+                args.binding,
+                args.output,
+            )
+            print(json.dumps({"output": str(args.output), "passed": report["passed"]}))
+            return 0 if report["passed"] else 1
+        if args.operation == "cad-scene":
+            from .cad_scene import export_cad_scene
+
+            report = export_cad_scene(
+                args.cad_bundle,
+                args.output,
+                T_world_cad=args.T_world_cad,
+                occurrence=args.occurrence,
+                linear_deflection_m=args.linear_deflection_m,
+                angular_deflection_rad=args.angular_deflection_rad,
+            )
+            print(
+                json.dumps({"output": str(args.output), "occurrences": len(report["occurrences"])})
+            )
+            return 0
         if args.operation == "cad-prism":
             from .cad_prism import export_hollow_prism
 

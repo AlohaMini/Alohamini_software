@@ -128,6 +128,19 @@ OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco cad-tessellate-all \
 
 `--reuse-library 旧目录` 可向新目录复用已有网格，严格检查同一 STEP、BRep 校验值、定义坐标、OCCT 版本、离散方法版本、参数及全部网格文件；不兼容缓存返回失败，不覆盖旧输出。派生装配中未变的零件可复用，网格原始清单保留，当前装配绑定记录于新 `library.json`。中断后的目录也可作为只读缓存；此操作只生成来源网格，不决定刚体归属或接触近似。
 
+### STEP 装配查看
+
+```bash
+alohamini-mujoco cad-scene \
+  --cad-bundle ~/Alohamini_workspace/simulation/cad/assembly \
+  --T-world-cad "${T_WORLD_CAD:?请提供 CAD 到查看坐标系的 4x4 JSON 刚体变换}" \
+  --output ~/Alohamini_workspace/simulation/cad/assembly-view
+python -m mujoco.viewer \
+  --mjcf ~/Alohamini_workspace/simulation/cad/assembly-view/model.xml
+```
+
+默认包含全部叶零件；`--occurrence 装配或零件的完整实例ID` 可选择子装配。保留原实例变换、全部原始面和非闭合外壳，每种零件独立进程离散；缺面则拒绝导出。`scene.json` 记录面索引、来源校验值、网格警告和 MuJoCo 坐标读回结果。此静态参考关闭接触，无运动关节，不是碰撞候选或动力学模型。
+
 ### 方管解析碰撞组件
 
 ```bash
@@ -160,6 +173,19 @@ alohamini-mujoco cad-register \
 多个闭壳在原 STL 中共享边时，可额外指定 `--surface-index`，按仅有两面相邻的边划分所选连通分量。选择仅引用原三角面，不补面或改变坐标；输出保留分区索引校验值，不据此推断独立实体或刚体归属。
 
 检查覆盖两个网格的全部三角面，使用自适应细分给出双向最大表面距离的 float64 上下界。`--max-samples` 是每个方向的查询预算，预算不足记为 `inconclusive`，返回失败。输出 `registration.json`、连杆坐标下的 CAD 网格和所选视觉分量。校验仅适用于所选零件与视觉分量，不包含解析 CAD 离散误差、其他零件或实物尺寸，也不替换机器人碰撞体。
+
+安装平面可单独核对：
+
+```bash
+alohamini-mujoco cad-place \
+  --cad-bundle ~/Alohamini_workspace/simulation/cad/assembly \
+  --binding "${DATUM_BINDING:?请提供平面对应配置的 JSON 路径}" \
+  --output ~/Alohamini_workspace/simulation/cad/part-placement
+```
+
+配置包含 `schema_version: 1`、`cad_manifest_sha256`、`definition`、`link`、`visual_index`、`visual_sha256`、`R_link_part` 和 `datums`。每项 datum 包含唯一 `name`、`role`（`fit` 或 `check`）、`cad_face` 和 `visual_triangles`。CAD 面序号采用 `TopExp_Explorer(shape, TopAbs_FACE)` 的从零索引；视觉三角形采用原始 STL 文件中的从零索引，各项不得重用三角形或 CAD 面。
+
+旋转须显式给定；至少 3 个定位平面约束全部平移轴，并提供独立检查平面。程序仅拟合平移，检查平面不参与拟合。误差预算来自各 CAD 面及其边界的原生容差、STL float32 量化和 float64 运算，不包含未知的早期导出误差或实物标定。`placement.json` 分别记录定位、独立检查及总体结果；任一未通过则退出码为 1。此检查不替代整面形状校验，也不决定刚体归属。
 
 ### 整机碰撞组织
 
