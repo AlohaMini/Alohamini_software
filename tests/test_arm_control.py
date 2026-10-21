@@ -11,6 +11,7 @@ from alohamini.runtime.arm_contact import (
     ArmContactGuard,
     ArmJointSpec,
     GripperContactCalibration,
+    GripperHoldSettings,
     JointContactCalibration,
 )
 from alohamini.runtime.arm_control import ArmController
@@ -138,7 +139,7 @@ class ArmContactTests(unittest.TestCase):
         for closed, opened in ((0, 1), (1, 0)):
             spec = joint_spec(contact=GripperContactCalibration(closed, opened))
             guard = ArmContactGuard({"joint": spec})
-            hold = 0.5
+            hold = 0.5 - 0.03 * (opened - closed)
             result = guard.limit({"joint": closed}, {"joint": 0.5}, {"joint": 0.5}, now=0)
             self.assertAlmostEqual(result["joint"], hold)
             result = guard.limit({"joint": closed}, {"joint": 0.5}, {"joint": 0}, now=0.1)
@@ -156,11 +157,11 @@ class ArmContactTests(unittest.TestCase):
         result = guard.limit({"joint": 0.8}, {"joint": 0.9}, {"joint": 0.1}, now=0.1)
         self.assertEqual(result["joint"], 0.8)
 
-    def test_gripper_contact_near_endpoint_does_not_add_closing_stroke(self):
+    def test_gripper_preload_stops_at_commanded_endpoint(self):
         spec = joint_spec(contact=GripperContactCalibration(0, 1))
         guard = ArmContactGuard({"joint": spec})
         result = guard.limit({"joint": 0}, {"joint": 0.01}, {"joint": 0.6}, now=0)
-        self.assertEqual(result["joint"], 0.01)
+        self.assertEqual(result["joint"], 0)
 
     def test_gripper_rising_current_holds_before_absolute_fallback_in_both_directions(self):
         for closed, opened in ((0, 1), (1, 0)):
@@ -170,11 +171,12 @@ class ArmContactTests(unittest.TestCase):
                 )
                 guard.limit({"joint": closed}, {"joint": 0.5}, {"joint": 0.2}, now=0)
                 result = guard.limit({"joint": closed}, {"joint": 0.49}, {"joint": 0.4}, now=0.02)
-                self.assertEqual(result["joint"], 0.49)
-                self.assertEqual(guard.holds, {"joint": 0.49})
+                hold = 0.49 - 0.03 * (opened - closed)
+                self.assertEqual(result["joint"], hold)
+                self.assertEqual(guard.holds, {"joint": hold})
                 # Neither repeated closing commands nor falling current move the hold.
                 result = guard.limit({"joint": closed}, {"joint": 0.48}, {"joint": 0.1}, now=0.04)
-                self.assertEqual(result["joint"], 0.49)
+                self.assertEqual(result["joint"], hold)
                 self.assertEqual(guard.hold_events, 1)
 
     def test_gripper_current_rise_uses_elapsed_time_and_rejects_noise_and_negative_slope(self):
@@ -194,7 +196,7 @@ class ArmContactTests(unittest.TestCase):
                 guard.limit({"joint": 0}, {"joint": 0.5}, {"joint": initial}, now=0)
                 result = guard.limit({"joint": 0}, {"joint": 0.5}, {"joint": current}, now=interval)
                 self.assertEqual(bool(guard.holds), expect_hold)
-                self.assertEqual(result["joint"], 0.5 if expect_hold else 0)
+                self.assertEqual(result["joint"], 0.47 if expect_hold else 0)
 
     def test_gripper_rise_requires_consecutive_closing_samples(self):
         guard = ArmContactGuard({"joint": joint_spec(contact=GripperContactCalibration(0, 1))})
@@ -215,7 +217,7 @@ class ArmContactTests(unittest.TestCase):
                     result = guard.limit(
                         {"joint": 0}, {"joint": 0.5}, {"joint": current}, now=index * 0.1
                     )
-                self.assertEqual(result, {"joint": 0.5})
+                self.assertEqual(result, {"joint": 0.47})
 
     def test_gripper_current_history_is_not_reused_after_stop_gap_or_omitted_target(self):
         for reset in ("stop", "gap", "omit", "invalid"):
@@ -279,6 +281,110 @@ class ArmContactTests(unittest.TestCase):
                 factory()
 
 
+class GripperHoldTests(unittest.TestCase):
+    def setUp(self):
+        self.guard = ArmContactGuard({"joint": joint_spec(contact=GripperContactCalibration(0, 1))})
+
+    def sample(self, now, current, *, goal=0, position=0.5, ceiling=1):
+        result = self.guard.limit(
+            {"joint": goal}, {"joint": position}, {"joint": current}, now=now
+        )["joint"]
+        requested = self.guard.output_limits["joint"]
+        actual = min(ceiling, int(requested * 1000) / 1000)
+        self.guard.confirm_output_limits({"joint": actual})
+        return result, actual
+
+    def test_preload_is_once_and_never_exceeds_the_requested_closure(self):
+        for goal, expected in ((0, 0.47), (0.49, 0.49)):
+            self.setUp()
+            self.assertEqual(self.sample(0, 0.6, goal=goal)[0], expected)
+            for index in range(1, 20):
+                self.assertEqual(self.sample(index * 0.02, 0.6, goal=goal)[0], expected)
+            self.assertEqual(self.guard.hold_events, 1)
+
+    def test_feedback_beyond_contact_endpoint_is_not_corrected_by_opening(self):
+        position, _ = self.sample(0, 0.6, goal=-0.2, position=-0.1)
+        self.assertEqual(position, -0.1)
+
+    def test_current_adjustment_changes_output_without_any_opening_position_target(self):
+        held, initial = self.sample(0, 0.6)
+        _, lower = self.sample(0.02, 2)
+        self.assertLess(lower, initial)
+        for index in range(2, 80):
+            position, lower = self.sample(index * 0.02, 2)
+            self.assertEqual(position, held)
+        self.assertAlmostEqual(lower, 0.05)
+        for index in range(80, 200):
+            position, upper = self.sample(index * 0.02, 0)
+            self.assertEqual(position, held)
+        self.assertAlmostEqual(upper, 0.35)
+
+    def test_small_low_current_errors_accumulate_across_register_quantization(self):
+        self.sample(0, 0.6)
+        for index in range(1, 11):
+            _, output = self.sample(index * 0.02, 0.5)
+        self.assertGreaterEqual(output, 0.254)
+        for index in range(11, 21):
+            _, output = self.sample(index * 0.02, 0.7)
+        self.assertLessEqual(output, 0.251)
+
+    def test_installed_lower_ceiling_is_respected_without_integrator_windup(self):
+        self.sample(0, 0.6, ceiling=0.1)
+        for index in range(1, 101):
+            self.sample(index * 0.02, 0, ceiling=0.1)
+        self.assertLessEqual(self.guard.output_limits["joint"], 0.1)
+        _, reduced = self.sample(2.02, 1, ceiling=0.1)
+        self.assertLess(reduced, 0.1)
+
+    def test_deadband_and_feedback_gap_do_not_adjust_output(self):
+        self.sample(0, 0.6)
+        for now, current in ((0.02, 0.56), (0.04, 0.64), (1, 2)):
+            _, output = self.sample(now, current)
+            self.assertEqual(output, 0.25)
+        _, output = self.sample(1.02, 2)
+        self.assertLess(output, 0.25)
+
+    def test_opening_retreat_keeps_reduced_cap_until_next_cycle_and_does_not_relatch(self):
+        self.sample(0, 0.6)
+        _, reduced = self.sample(0.02, 2)
+        position, output = self.sample(0.04, 2, goal=0.8)
+        self.assertEqual(position, 0.8)
+        self.assertEqual(output, reduced)
+        for index in range(3, 10):
+            position, output = self.sample(index * 0.02, 0.8, goal=0.8)
+            self.assertEqual(position, 0.8)
+            self.assertEqual(output, 0.25)
+            self.assertFalse(self.guard.holds)
+        self.sample(0.2, 0.8, goal=0)
+        self.assertTrue(self.guard.holds)
+
+    def test_watchdog_stop_freezes_measured_position_and_output(self):
+        self.sample(0, 0.6)
+        _, output = self.sample(0.02, 2)
+        self.guard.stop_holds({"joint": 0.48})
+        for index in range(2, 20):
+            position, unchanged = self.sample(index * 0.02, 0)
+            self.assertEqual(position, 0.48)
+            self.assertEqual(unchanged, output)
+        self.assertEqual(self.guard.gripper_status["joint"]["phase"], "stopped")
+
+    def test_hold_settings_and_device_confirmations_reject_invalid_values(self):
+        for change in (
+            {"preload_fraction": 0.04},
+            {"target_current_a": 0},
+            {"initial_output_fraction": 0.5},
+            {"minimum_output_fraction": -0.1},
+            {"output_slew_per_s": 0},
+            {"output_gain_per_a_s": float("nan")},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                GripperHoldSettings(**change)
+        self.sample(0, 0.6)
+        for applied in ({"unknown": 0.1}, {"joint": 0.3}, {"joint": float("nan")}):
+            with self.subTest(applied=applied), self.assertRaises(ValueError):
+                self.guard.confirm_output_limits(applied)
+
+
 class ArmDeviceMemory:
     def __init__(self, fixture, spec):
         self.fixture = fixture
@@ -314,6 +420,9 @@ class ArmDeviceMemory:
     def write_targets(self, *, positions_rad, velocities_raw):
         self.fixture.writes.append((self.spec.actuator.bus, dict(positions_rad)))
         assert not velocities_raw
+
+    def write_output_limits(self, limits):
+        return {name: int(value * 1000) / 1000 for name, value in limits.items()}
 
     def stop(self):
         self.fixture.stops.append(self.spec.actuator.bus)
@@ -456,14 +565,15 @@ class ArmControllerTests(unittest.TestCase):
         self.devices["left"].position = specs[0].calibration.position_to_tick(0.5)
         self.host.cycle(self.command({"left_joint": 0}))
         held = self.controller.contact_holds["left_joint"]
-        self.assertAlmostEqual(held, 0.5, delta=math.tau / 4096)
+        self.assertAlmostEqual(held, 0.47, delta=math.tau / 4096)
         self.now += 0.16
         self.host.cycle()
         self.now += self.host.COMMAND_WATCHDOG_TIMEOUT_S + 0.01
         self.host.cycle()
-        self.assertEqual(self.controller.contact_holds, {"left_joint": held})
+        stopped = specs[0].calibration.position_from_tick(self.devices["left"].position)
+        self.assertEqual(self.controller.contact_holds, {"left_joint": stopped})
         self.host.cycle(self.command({"left_joint": 0}, sequence=1))
-        self.assertEqual(self.controller.sent_targets["left_joint"], held)
+        self.assertEqual(self.controller.sent_targets["left_joint"], stopped)
         self.host.cycle(self.command({"left_joint": 0.7}, sequence=2))
         self.assertFalse(self.controller.contact_holds)
 
@@ -485,8 +595,59 @@ class ArmControllerTests(unittest.TestCase):
         self.now = 0.08  # Processing delay must not dilute the measured rise rate.
         controller.supervise()
         measured = spec.calibration.position_from_tick(device.position)
-        self.assertEqual(controller.contact_holds, {"joint": measured})
-        self.assertEqual(self.writes[-1], ("left", {"joint": measured}))
+        self.assertEqual(controller.contact_holds, {"joint": measured - 0.03})
+        self.assertEqual(self.writes[-1], ("left", {"joint": measured - 0.03}))
+
+    def test_output_limit_failure_on_second_bus_prevents_all_position_writes(self):
+        specs = [replace(spec, contact=GripperContactCalibration(0, 1)) for spec in self.specs]
+        self.controller = ArmController(self.devices, specs)
+        self.host = HostSupervisor(
+            self.devices, [spec.actuator for spec in specs], control=self.controller
+        )
+        self.host.start()
+        with patch.object(
+            self.devices["right"], "write_output_limits", side_effect=OSError("limit not verified")
+        ):
+            result = self.host.cycle(self.command({"left_joint": 0, "right_joint": 0}))
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertFalse(result.command_applied)
+        self.assertFalse(self.writes)
+        self.assertEqual(set(self.stops), {"left", "right"})
+
+    def test_opening_position_is_sent_before_restoring_the_moving_output_cap(self):
+        spec = joint_spec(contact=GripperContactCalibration(0, 1))
+        device = ArmDeviceMemory(self, spec)
+        controller = ArmController({"left": device}, [spec])
+        controller.bind_session("grip-release")
+        device.connect("grip-release")
+        device.position = spec.calibration.position_to_tick(0.5)
+        events = []
+
+        def limits(requested):
+            applied = {name: int(value * 1000) / 1000 for name, value in requested.items()}
+            events.append(("output", applied["joint"]))
+            return applied
+
+        def positions(*, positions_rad, velocities_raw):
+            events.append(("position", positions_rad["joint"]))
+
+        with (
+            patch.object(device, "write_output_limits", side_effect=limits),
+            patch.object(device, "write_targets", side_effect=positions),
+        ):
+            for stamp, current, goal in (
+                (0, 0.6, 0),
+                (0.02, 2, 0),
+                (0.04, 2, 0.8),
+                (0.06, 0.8, 0.8),
+            ):
+                self.now, device.current = stamp, current
+                controller.observe((device.read_feedback(),))
+                controller.set_targets({"joint": goal})
+                controller.supervise()
+        opening_index = events.index(("position", 0.8))
+        self.assertLess(events[opening_index - 1][1], 0.25)
+        self.assertEqual(events[opening_index + 1], ("output", 0.25))
 
     def test_projection_cannot_reuse_old_feedback_to_write_again(self):
         self.host.cycle(self.command({"left_joint": 0.5}))
@@ -592,7 +753,7 @@ class ArmBackendIntegrationTests(unittest.TestCase):
             )
             self.assertTrue(result.command_applied)
             held = controller.contact_holds["joint"]
-            self.assertAlmostEqual(held, 0.5, delta=math.tau / 4096)
+            self.assertAlmostEqual(held, 0.47, delta=math.tau / 4096)
             self.assertEqual(serial.get(1, 42, 2), spec.calibration.position_to_tick(held))
             result = host.cycle(
                 CommandSubmission(

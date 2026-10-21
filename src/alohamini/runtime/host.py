@@ -21,12 +21,23 @@ from alohamini.runtime.arm_contact import ArmJointSpec
 from alohamini.runtime.arm_control import ArmController
 from alohamini.runtime.base_lift_control import BaseLiftController
 from alohamini.runtime.camera_stream import CameraStreamPublisher
-from alohamini.runtime.lifecycle import CycleResult, HostPhase, HostSupervisor
+from alohamini.runtime.lifecycle import CycleResult, HostPhase, HostStatus, HostSupervisor
 from alohamini.runtime.lift_control import LiftAxisSpec
 from alohamini.runtime.robot_control import RobotController
 from alohamini.schema import BodyVelocity, RobotCommand
 
 logger = logging.getLogger(__name__)
+
+
+def _fault_message(status: HostStatus) -> str | None:
+    trip = status.current_trip
+    if trip is None:
+        return status.fault
+    reason = status.fault or f"{trip.cause}: {trip.motor}"
+    return (
+        f"{reason}; current={trip.current_a:.3f} A; threshold={trip.limit_a:.3f} A; "
+        f"duration>={trip.duration_s:.3f} s"
+    )
 
 
 class RecordingCameraBuffer:
@@ -497,7 +508,8 @@ class NativeHost:
                 "version": 1,
                 "sampled_at_monotonic_s": time.monotonic(),
                 "phase": status.phase.value,
-                "fault": status.fault,
+                "fault": _fault_message(status),
+                "current_trip": asdict(status.current_trip) if status.current_trip else None,
                 "feedback_valid": feedback_valid,
                 "host_session_id": status.host_session_id,
                 "control_epoch": status.control_epoch,
@@ -516,6 +528,7 @@ class NativeHost:
                 "gripper_holds": {
                     name: value for name, value in holds.items() if name.endswith("gripper")
                 },
+                "gripper_control": self.control.arms.gripper_status,
                 "joint_hold_events": self.control.arms.joint_hold_events,
                 "joint_stall_currents_a": self.control.arms.joint_stall_currents_a,
                 "currents_ma": currents,
@@ -741,7 +754,7 @@ class NativeHost:
                 loop_start_t = time.perf_counter()
                 result = self.step()
                 if result.status.phase is HostPhase.FAULT:
-                    raise RuntimeError(result.status.fault)
+                    raise RuntimeError(_fault_message(result.status))
                 phase = self.control.base_lift.lift_homing_phase
                 if phase != homing_phase:
                     if phase == "complete":

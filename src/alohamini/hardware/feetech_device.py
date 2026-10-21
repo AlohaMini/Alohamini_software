@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from types import MappingProxyType
 
-from alohamini._validation import identifier
+from alohamini._validation import finite_number, identifier
 from alohamini.calibration import EncoderCalibration
 from alohamini.calibration.encoder import HostPositionUnits
 from alohamini.calibration.servo import MotorCalibration
@@ -29,6 +29,7 @@ _REGISTER_IO_BUDGET_S = 0.050
 _REGISTER_ATTEMPTS = 4  # Source driver: initial attempt plus three transport retries.
 _GOAL_POSITION = 42
 _GOAL_VELOCITY = 46
+_OUTPUT_LIMIT = 48
 _TORQUE_ENABLE = 40
 
 
@@ -134,6 +135,8 @@ class FeetechBusDevice(MotorsBus):
         self._calibrating = False
         self._passive = False
         self._released_velocities: set[str] = set()
+        self._output_limit_baselines: dict[str, int] = {}
+        self._output_limits: dict[str, float] = {}
         self._feedback_retry: dict[str, tuple[float, float]] = {}
         self._used = False
         self._thread = threading.get_ident()
@@ -145,6 +148,11 @@ class FeetechBusDevice(MotorsBus):
     @property
     def velocity_limits(self) -> Mapping[str, int]:
         return MappingProxyType(self._velocities)
+
+    @property
+    def output_limits(self) -> Mapping[str, float]:
+        """Last confirmed RAM output limits, expressed as fractions of full output."""
+        return MappingProxyType(self._output_limits)
 
     def _check_thread(self) -> None:
         if threading.get_ident() != self._thread:
@@ -183,11 +191,11 @@ class FeetechBusDevice(MotorsBus):
         from scservo_sdk.scservo_def import COMM_RX_CORRUPT, COMM_RX_TIMEOUT, COMM_TX_FAIL
         from serial import SerialTimeoutException
 
-        # Repeat only RAM target/Profile writes, or torque OFF. Never blindly
+        # Repeat only RAM target/Profile/output-limit writes, or torque OFF. Never blindly
         # repeat EEPROM, EEPROM lock, torque enable, or calibration commands.
         repeatable = (
             value is None
-            or address in (41, 42, 44, 46, 85)
+            or address in (41, 42, 44, 46, _OUTPUT_LIMIT, 85)
             or (address == _TORQUE_ENABLE and value == 0)
         )
         attempts = _REGISTER_ATTEMPTS if deadline is None and repeatable else 1
@@ -771,6 +779,46 @@ class FeetechBusDevice(MotorsBus):
         self._sync_write(_GOAL_POSITION, positions)
         self._sync_write(_GOAL_VELOCITY, velocities)
 
+    def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
+        """Set acknowledged RAM output caps for calibrated position motors.
+
+        Fractions are truncated to STS per-mille units and cannot exceed the
+        original register value captured on first access. The robot layer selects
+        grippers; this transport never infers joint roles from motor names.
+        """
+        self._check_thread()
+        if (
+            not self._ready
+            or self._verified != self._ids.keys()
+            or self._modes != self._ids.keys()
+        ):
+            raise ConnectionError("Bus has not passed connection validation")
+        if not limits or not limits.keys() <= self._positions.keys():
+            raise ValueError("Output limits require known position-controlled motors")
+        encoded = {}
+        for name, value in limits.items():
+            finite_number(value, f"Output limit for {name}")
+            if not 0 <= value <= 1:
+                raise ValueError(f"Output limit must be between zero and one: {name}")
+            encoded[name] = int(value * 1000)
+
+        # Capture every missing value before changing any register. A failed
+        # write invalidates its cached actual value but retains the original cap.
+        for name in encoded:
+            if name not in self._output_limits:
+                current = self._read_register(name, _OUTPUT_LIMIT, 2)
+                if not 0 <= current <= 1000:
+                    raise ConnectionError(f"Invalid STS output limit: {name}, raw={current}")
+                self._output_limit_baselines.setdefault(name, current)
+                self._output_limits[name] = current / 1000
+        for name, value in encoded.items():
+            effective = min(value, self._output_limit_baselines[name])
+            if self._output_limits[name] != effective / 1000:
+                del self._output_limits[name]
+                self._write_verified(name, _OUTPUT_LIMIT, 2, effective)
+                self._output_limits[name] = effective / 1000
+        return {name: self._output_limits[name] for name in encoded}
+
     def stop_motion(self, feedback: FeedbackBatch) -> None:
         """Watchdog: source-cycle arm hold, grouped base zero and lift zero.
 
@@ -901,7 +949,7 @@ class FeetechBusDevice(MotorsBus):
         _finish_cleanup(errors, interrupts)
 
     def disable_torque(self) -> None:
-        """Attempt each verified motor; never unlock EEPROM or enable torque here."""
+        """Unload every verified motor, then restore captured RAM output ceilings."""
         self._check_thread()
         self._ready = False
         self._prepared = False
@@ -920,6 +968,19 @@ class FeetechBusDevice(MotorsBus):
                 errors[name] = f"{type(exc).__name__}: {exc}"
                 if not isinstance(exc, Exception):
                     interrupts.append(exc)
+        # Raising a cap is safe only after every motor's torque-off readback has
+        # succeeded. Keep unload failures intact and leave all caps in place.
+        if not errors and not interrupts:
+            for name, baseline in self._output_limit_baselines.items():
+                try:
+                    if self._output_limits.get(name) != baseline / 1000:
+                        self._output_limits.pop(name, None)
+                        self._write_verified(name, _OUTPUT_LIMIT, 2, baseline)
+                        self._output_limits[name] = baseline / 1000
+                except BaseException as exc:
+                    errors[f"{name} output limit"] = f"{type(exc).__name__}: {exc}"
+                    if not isinstance(exc, Exception):
+                        interrupts.append(exc)
         _finish_cleanup(errors, interrupts)
 
     def close(self) -> None:

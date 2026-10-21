@@ -30,6 +30,7 @@ from alohamini.runtime.arm_contact import (
     GripperContactCalibration,
     JointContactCalibration,
 )
+from alohamini.runtime.current_protection import CurrentTrip
 from alohamini.runtime.host import NativeHost, RecordingCameraBuffer
 from alohamini.runtime.lifecycle import CleanupFailure, CommandSubmission, CycleResult, HostPhase
 from alohamini.runtime.lift_control import LiftAxisSpec
@@ -525,6 +526,45 @@ class HostLifecycleTests(unittest.TestCase):
                 host.run()
         self.assertIs(caught.exception.__cause__, primary)
 
+    def test_current_trip_reports_measurement_threshold_and_duration_in_state_and_error(self):
+        for cause, current, threshold, duration in (
+            ("near_stall_current", 3.4, 3.36, 0.08),
+            ("sustained_overload", 3.0, 2.8, 0.65),
+        ):
+            with self.subTest(cause=cause):
+                host, _ = host_fixture()
+                motor = "arm_left_gripper"
+                trip = CurrentTrip(motor, cause, current, threshold, duration)
+                status = replace(
+                    host.supervisor.status,
+                    phase=HostPhase.FAULT,
+                    fault=f"{cause}: {motor}",
+                    current_trip=trip,
+                )
+                result = CycleResult((), False, status)
+                expected = (
+                    f"{cause}: {motor}; current={current:.3f} A; "
+                    f"threshold={threshold:.3f} A; duration>={duration:.3f} s"
+                )
+                safety = host._payload(result)["_safety"]
+                self.assertEqual(safety["fault"], expected)
+                self.assertEqual(safety["current_trip"], {
+                    "motor": motor,
+                    "cause": cause,
+                    "current_a": current,
+                    "limit_a": threshold,
+                    "duration_s": duration,
+                })
+                host._started = True
+                with (
+                    patch.object(host, "step", return_value=result),
+                    patch.object(host, "close") as close,
+                    self.assertRaises(RuntimeError) as caught,
+                ):
+                    host.run()
+                self.assertEqual(str(caught.exception), expected)
+                close.assert_called_once()
+
     def test_context_cleanup_failure_does_not_hide_body_error(self):
         host, _ = host_fixture()
         primary = OSError("original operation failed")
@@ -569,6 +609,7 @@ class HostLifecycleTests(unittest.TestCase):
         payload = host._payload(CycleResult((), False, status))
         self.assertFalse(payload["_safety"]["feedback_valid"])
         self.assertFalse(payload["_safety"]["lift_reference_valid"])
+        self.assertIsNone(payload["_safety"]["current_trip"])
         self.assertNotIn("lift_axis.height_mm", payload)
 
     def test_joint_stall_payload_is_not_a_hold_or_protection_event(self):
