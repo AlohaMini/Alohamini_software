@@ -23,6 +23,7 @@ from scipy.spatial import ConvexHull, cKDTree
 from .description import numbers, origin
 from .frames import points_in_frame
 from .meshes import Mesh, binary_msh, binary_stl
+from .shapes import Primitive
 
 
 def topology(mesh):
@@ -535,7 +536,7 @@ def load_bundle(description, directory):
     if (
         not isinstance(metadata, dict)
         or type(metadata.get("schema_version")) is not int
-        or metadata.get("schema_version") != 1
+        or metadata.get("schema_version") not in (1, 2)
         or metadata.get("units") != "m"
         or metadata.get("robot_model") != description.robot_model.model_id
         or not isinstance(metadata.get("links"), dict)
@@ -555,7 +556,7 @@ def load_bundle(description, directory):
                 raise ValueError("Whole-robot collision replacement coverage changed")
             for link in represented_links:
                 if len(metadata["links"][link].get("pieces", [])) != inventory["links"][link].get(
-                    "recovered_convex_count"
+                    "organized_shape_count", inventory["links"][link].get("recovered_convex_count")
                 ):
                     raise ValueError(f"Whole-robot collision piece coverage changed: {link}")
         for parent in definition.get("source_manifests", []):
@@ -587,6 +588,20 @@ def load_bundle(description, directory):
             raise ValueError(f"Invalid collision pieces: {link}")
         pieces = []
         for piece in record.get("pieces", []):
+            if (
+                isinstance(piece, dict)
+                and metadata["schema_version"] == 1
+                and piece.get("type", "mesh") != "mesh"
+            ):
+                raise ValueError("Native collision shapes require schema 2")
+            if isinstance(piece, dict) and metadata["schema_version"] == 2:
+                if piece.get("type") in ("box", "sphere", "cylinder"):
+                    pieces.append(Primitive.from_record(piece))
+                    continue
+                if piece.get("type") != "mesh":
+                    raise ValueError(f"Unknown collision shape type: {link}")
+                if {"parameters", "scale", "T_link_geometry"} & piece.keys():
+                    raise ValueError("Convex mesh vertices must already be in the link frame")
             if (
                 not isinstance(piece, dict)
                 or not isinstance(piece.get("path"), str)
@@ -632,7 +647,7 @@ def merge_bundles(description, directories, output):
         links.update(json.loads(json.dumps(definition["links"])))
         sources.append((directory, provenance))
     manifest = {
-        "schema_version": 1,
+        "schema_version": max(p["definition"]["schema_version"] for _, p in sources),
         "units": "m",
         "robot_model": description.robot_model.model_id,
         "status": "composed CAD candidate; requires geometry and contact validation",
@@ -654,12 +669,16 @@ def merge_bundles(description, directories, output):
         for directory, provenance in sources:
             for link, record in provenance["definition"]["links"].items():
                 for index, piece in enumerate(record["pieces"]):
+                    if "path" not in piece:
+                        continue
                     data = (directory / piece["path"]).read_bytes()
                     if hashlib.sha256(data).hexdigest() != piece["sha256"]:
                         raise ValueError("Collision hull changed during composition")
                     relative = f"hulls/{piece['sha256']}.msh"
                     (stage / relative).write_bytes(data)
                     manifest["links"][link]["pieces"][index]["path"] = relative
+                    if manifest["schema_version"] == 2:
+                        manifest["links"][link]["pieces"][index]["type"] = "mesh"
             if (
                 hashlib.sha256((directory / "collision.json").read_bytes()).hexdigest()
                 != provenance["manifest_sha256"]

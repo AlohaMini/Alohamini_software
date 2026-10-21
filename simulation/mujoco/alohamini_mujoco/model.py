@@ -19,6 +19,7 @@ from .collision import load_bundle
 from .description import Description, numbers, origin
 from .frames import rigid_transform
 from .meshes import binary_stl
+from .shapes import Primitive
 
 PARKED_JOINTS = (
     "root_x_axis_joint",
@@ -330,6 +331,10 @@ def build_model(robot_model=None, profile=None, *, scene=None):
         for kind in ("visual", "collision"):
             if kind == "collision" and link_name in replacements:
                 for index, mesh in enumerate(replacements[link_name]):
+                    if isinstance(mesh, Primitive):
+                        node = mesh.collision_node(f"cad_candidate_{index}")
+                        add_geometry(body, link_name, kind, index, node)
+                        continue
                     node = ET.Element("collision", name=f"cad_candidate_{index}")
                     ET.SubElement(ET.SubElement(node, "geometry"), "mesh")
                     add_geometry(body, link_name, kind, index, node, generated=mesh)

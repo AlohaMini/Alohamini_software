@@ -137,6 +137,11 @@ def main(argv=None):
     )
     organize.add_argument("--cad-bundle", type=Path)
     organize.add_argument("--output", type=Path, required=True)
+    primitives = commands.add_parser(
+        "collision-fit-primitives", help="enclose source visual geometry in declared primitive axes"
+    )
+    primitives.add_argument("--links", nargs="+", required=True)
+    primitives.add_argument("--output", type=Path, required=True)
     merger = commands.add_parser(
         "collision-merge", help="combine disjoint CAD collision candidates"
     )
@@ -189,6 +194,14 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "collision-fit-primitives":
+            from .primitives import fit_primitives
+
+            result = fit_primitives(
+                Description(get_robot_model("alohamini2pro")), args.links, args.output
+            )
+            print(json.dumps({"output": str(result), "links": args.links}))
+            return 0
         if args.operation == "collision-organize":
             from .organization import organize_collisions
 

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
+import math
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -42,6 +44,48 @@ def solid_distance(points, vertices):
     return max(distances, default=0.0)
 
 
+def primitive_distance_bound(shape, expected, physx):
+    """Read back analytic dimensions and return a conservative SI Hausdorff bound.
+
+    SAPIEN cylinders use local X; URDF cylinders use local Z. Axis sign and
+    rotation about the cylinder axis do not change its occupied solid.
+    """
+    kind = expected["type"]
+    native_class = {
+        "box": physx.PhysxCollisionShapeBox,
+        "sphere": physx.PhysxCollisionShapeSphere,
+        "cylinder": physx.PhysxCollisionShapeCylinder,
+    }[kind]
+    if not isinstance(shape, native_class):
+        raise ValueError(f"Expected native {kind}, loaded {type(shape).__name__}")
+    source = np.asarray(expected["T_link_geometry"], dtype=float)
+    cooked = shape.local_pose.to_transformation_matrix().astype(float)
+    if source.shape != (4, 4) or cooked.shape != (4, 4) or not np.isfinite([source, cooked]).all():
+        raise ValueError("Native primitive frame is nonfinite or invalid")
+    parameters = expected["parameters"]
+    center_distance = float(np.linalg.norm(source[:3, 3] - cooked[:3, 3]))
+    if kind == "sphere":
+        return center_distance + abs(parameters["radius"] - shape.radius)
+    if kind == "box":
+        corners = np.array(list(itertools.product([-1.0, 1.0], repeat=3)))
+        reference = corners * (np.asarray(parameters["size"]) / 2)
+        actual = corners * np.asarray(shape.half_size)
+        reference = reference @ source[:3, :3].T + source[:3, 3]
+        actual = actual @ cooked[:3, :3].T + cooked[:3, 3]
+        return max(solid_distance(reference, actual), solid_distance(actual, reference))
+    source_axis, cooked_axis = source[:3, 2], cooked[:3, 0]
+    source_axis = source_axis / np.linalg.norm(source_axis)
+    cooked_axis = cooked_axis / np.linalg.norm(cooked_axis)
+    # atan2 is stable near coincident and antiparallel axes.
+    sine = float(np.linalg.norm(np.cross(source_axis, cooked_axis)))
+    cosine = abs(float(source_axis @ cooked_axis))
+    angle = math.atan2(sine, cosine)
+    source_half = parameters["length"] / 2
+    dimensions = math.hypot(parameters["radius"] - shape.radius, source_half - shape.half_length)
+    orientation = 2 * math.hypot(parameters["radius"], source_half) * math.sin(angle / 2)
+    return center_distance + dimensions + orientation
+
+
 def check(directory):
     import sapien
 
@@ -74,12 +118,35 @@ def check(directory):
         for name, expected_shapes in manifest["pieces"].items():
             shapes = links[name].collision_shapes
             errors = []
-            maximum = 0.0
+            maximum, maximum_shape, details = 0.0, 0.0, []
             if len(shapes) != len(expected_shapes):
                 errors.append(
-                    f"Expected {len(expected_shapes)} convex pieces, loaded {len(shapes)}"
+                    f"Expected {len(expected_shapes)} collision shapes, loaded {len(shapes)}"
                 )
             for index, (shape, expected) in enumerate(zip(shapes, expected_shapes, strict=False)):
+                if expected.get("type", "mesh") != "mesh":
+                    try:
+                        error = primitive_distance_bound(shape, expected, sapien.physx)
+                        if not math.isfinite(error) or error < 0:
+                            raise ValueError("Native primitive distance bound is invalid")
+                    except ValueError as exc:
+                        errors.append(f"Piece {index}: {exc}")
+                        details.append(
+                            {"index": index, "actual_type": type(shape).__name__, "passed": False}
+                        )
+                        continue
+                    maximum_shape = max(maximum_shape, error)
+                    details.append(
+                        {
+                            "index": index,
+                            "actual_type": type(shape).__name__,
+                            "distance_upper_bound_m": error,
+                            "passed": error <= 1e-6,
+                        }
+                    )
+                    if error > 1e-6:
+                        errors.append(f"Piece {index} native shape distance bound is {error:.9g} m")
+                    continue
                 if not isinstance(shape, sapien.physx.PhysxCollisionShapeConvexMesh):
                     errors.append(f"Piece {index} is {type(shape).__name__}")
                     continue
@@ -99,6 +166,15 @@ def check(directory):
                 cooked = cooked @ transform[:3, :3].T + transform[:3, 3]
                 error = max(solid_distance(vertices, cooked), solid_distance(cooked, vertices))
                 maximum = max(maximum, error)
+                maximum_shape = max(maximum_shape, error)
+                details.append(
+                    {
+                        "index": index,
+                        "actual_type": type(shape).__name__,
+                        "distance_upper_bound_m": error,
+                        "passed": error <= 1e-6,
+                    }
+                )
                 if error > 1e-6:
                     errors.append(f"Piece {index} cooking changes convex surface by {error:.9g} m")
             reports.append(
@@ -107,6 +183,8 @@ def check(directory):
                     "expected_pieces": len(expected_shapes),
                     "loaded_pieces": len(shapes),
                     "maximum_convex_hausdorff_m": maximum,
+                    "maximum_shape_distance_upper_bound_m": maximum_shape,
+                    "shapes": details,
                     "passed": not errors,
                     "errors": errors,
                 }
@@ -114,7 +192,11 @@ def check(directory):
     return {
         "passed": all(r["passed"] for r in reports),
         "sapien_version": sapien.__version__,
-        "scope": "piece counts and cooked convex surfaces in link frames; not dynamics equivalence",
+        "scope": (
+            "shape counts, cooked convex surfaces and native primitive distance bounds "
+            "in link frames; "
+            "not dynamics equivalence"
+        ),
         "collision_bundle_sha256": manifest["collision_bundle_sha256"],
         "mesh_coordinate_unit": manifest.get("mesh_coordinate_unit", "m"),
         "links": reports,

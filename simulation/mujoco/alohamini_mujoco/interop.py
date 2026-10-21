@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .collision import load_bundle
 from .meshes import Mesh
+from .shapes import Primitive
 
 
 def obj_bytes(mesh):
@@ -51,6 +52,10 @@ def export_collision_urdf(description, bundle, output, *, mesh_unit="m"):
                 body.remove(node)
             records[link] = []
             for index, mesh in enumerate(meshes):
+                if isinstance(mesh, Primitive):
+                    body.append(mesh.collision_node(f"cad_piece_{index}"))
+                    records[link].append(mesh.record())
+                    continue
                 encoded = Mesh(mesh.vertices.astype(float) * coordinate_scale, mesh.faces)
                 contents = obj_bytes(encoded)
                 fingerprint = hashlib.sha256(contents).hexdigest()
@@ -66,6 +71,7 @@ def export_collision_urdf(description, bundle, output, *, mesh_unit="m"):
                 )
                 records[link].append(
                     {
+                        "type": "mesh",
                         "file": filename,
                         "sha256": fingerprint,
                         "vertices": len(mesh.vertices),

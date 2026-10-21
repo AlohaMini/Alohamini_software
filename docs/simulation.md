@@ -147,6 +147,18 @@ alohamini-mujoco view --collisions --paused \
 
 无法恢复的网格明确保留并标记 `requires_authored_geometry`。此命令整理旧碰撞代理，不应用 STEP 尺寸更新；整机 CAD 映射、形状误差及接触验收仍须完成。加载与合并候选时继续验证整机来源，不能遗漏未替换连杆的几何变化。
 
+### 原生形状与组合体
+
+```bash
+alohamini-mujoco collision-fit-primitives \
+  --links chest_camera front_camera back_camera wheel1 wheel2 wheel3 \
+  --output ~/Alohamini_workspace/simulation/collision/primitives
+```
+
+仅接受已有单个 box/cylinder 的连杆，使用完整视觉网格和原碰撞坐标轴计算包络，不使用 PCA 猜测轴向。箱体取固定轴向最小包围盒；圆柱保留轮轴位置和方向，计算所需半径、轴向中心和长度。输出记录全部视觉三角形的包含依据及浮点向外舍入量；不包含物理安全余量，也不代表 STEP 尺寸或接触精度已验收。
+
+碰撞清单 schema 2 支持同一连杆内混合凸网格、box、sphere、cylinder。原生形状须显式提供 `type`、`parameters`、`T_link_geometry`；box 的 `size` 和 cylinder 的 `length` 均为完整米制尺寸，圆柱轴为局部 Z。凸网格顶点已经处于连杆局部坐标，不接受额外缩放或位姿。旧 schema 1 网格候选仍可加载及合并。MuJoCo 和 URDF 导出保留原生形状，质量、惯量及 SRDF 过滤取自机器人原定义。
+
 ### STL 候选
 
 ```bash
@@ -165,7 +177,7 @@ alohamini-mujoco inspect --initial-positions '{"vertical_move":0.2}' \
 
 `collision-merge --bundles 目录1 目录2 --output 新目录` 合并替换不同连杆的候选，保留全部凸体及各自生成参数；重复连杆拒绝合并。
 
-`collision-export --collision-bundle 候选目录 --output 新目录` 导出可搬移的 URDF/SRDF/OBJ，每个凸体对应独立碰撞元素，保留连杆坐标、关节和惯量。`collision-check-sapien --asset 导出目录 --python SAPIEN环境的Python路径 --output 新JSON文件` 从 SAPIEN CPU 后端读回实际凸体，检查数量及逐凸体凸包 Hausdorff 距离；超过 1 μm 返回失败。此项只检查几何，不保证两个引擎的动力学一致；加载成功不代表通过验收。
+`collision-export --collision-bundle 候选目录 --output 新目录` 导出可搬移的 URDF/SRDF/OBJ，每个形状对应独立碰撞元素，保留连杆坐标、关节和惯量。`collision-check-sapien --asset 导出目录 --python SAPIEN环境的Python路径 --output 新JSON文件` 从 SAPIEN CPU 后端读回实际形状，检查数量、逐凸体凸包 Hausdorff 距离及原生形状距离上界；超过 1 μm 返回失败，原生形状被换成其他类型也返回失败。此项只检查几何，不保证两个引擎的动力学一致；加载成功不代表通过验收。
 
 `collision-export --mesh-unit mm` 将生成的 OBJ 坐标以 mm 编码，通过 URDF 的 `scale="0.001 0.001 0.001"` 恢复物理米制尺寸；机器人位姿和惯性参数仍使用 SI。此选项用于检查后端网格预处理的数值精度，验收阈值保持 1 μm。
 
