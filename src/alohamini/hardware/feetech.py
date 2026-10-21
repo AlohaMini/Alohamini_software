@@ -15,6 +15,14 @@ from alohamini.model import ActuatorSpec
 _START = 56
 _SIZE = 15
 _MODELS = frozenset({"sts3215", "sts3250", "sts3095"})
+_SERIAL_WRITE_TIMEOUT_HINT = (
+    "USB/serial write timed out; check USB cable, hub, and serial connection; "
+    "command acceptance is unknown"
+)
+_INPUT_VOLTAGE_HINT = (
+    "Servo reported input voltage outside its configured limits; "
+    "check voltage at the servo and configured voltage limits"
+)
 # name, offset within the block, width, sign-magnitude bit (if encoded)
 _FIELDS = (
     ("position_raw", 0, 2, 15),
@@ -186,6 +194,7 @@ class FeetechFeedbackReader:
         # Optional dependency is loaded only when hardware feedback is requested.
         from scservo_sdk.protocol_packet_handler import protocol_packet_handler
         from scservo_sdk.scservo_def import COMM_RX_CORRUPT, COMM_SUCCESS
+        from serial import SerialTimeoutException
 
         handler = protocol_packet_handler()
         started = time.monotonic()
@@ -201,17 +210,25 @@ class FeetechFeedbackReader:
         sequence = self._sequence
         self._sequence += 1
         size = 2 if position_only else _SIZE
+        phase = "request transmit"
         try:
             result = handler.syncReadTx(port, _START, size, ids, len(ids)) if ids else COMM_SUCCESS
             if result != COMM_SUCCESS:
-                missing_reason = handler.getTxRxResult(result)
+                missing_reason = (
+                    f"SyncRead request transmit failed: transport={result}; "
+                    f"{handler.getTxRxResult(result)}"
+                )
             else:
+                phase = "reply receive"
                 while len(samples) < len(ids) and not port.isPacketTimeout():
                     packet, result = handler.rxPacket(port)
                     if result == COMM_RX_CORRUPT:
                         continue
                     if result != COMM_SUCCESS:
-                        missing_reason = handler.getTxRxResult(result)
+                        missing_reason = (
+                            f"SyncRead reply receive failed: transport={result}; "
+                            f"{handler.getTxRxResult(result)}"
+                        )
                         break
                     if len(packet) != size + 6 or packet[3] != size + 2:
                         continue
@@ -231,12 +248,17 @@ class FeetechFeedbackReader:
                         detail = handler.getRxPacketError(sample.packet_error).removeprefix(
                             "[RxPacketError] "
                         )
+                        if sample.packet_error & 0x01:
+                            detail += f"; {_INPUT_VOLTAGE_HINT}"
                         failures[name] = (
                             f"{self._source} ID {ids_by_name[name]}: "
                             f"Servo packet error 0x{sample.packet_error:02x}: {detail}"
                         )
         except (OSError, ValueError) as exc:
-            missing_reason = str(exc) or type(exc).__name__
+            detail = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, SerialTimeoutException):
+                detail += f"; {_SERIAL_WRITE_TIMEOUT_HINT}"
+            missing_reason = f"SyncRead {phase} failed: {detail}"
         finally:
             port.is_using = False
         for name in selected:

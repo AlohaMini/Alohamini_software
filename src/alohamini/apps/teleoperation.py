@@ -456,7 +456,7 @@ def teleoperate(
         if not no_preview:
             from alohamini.apps.visualization import TeleopPreview, init_rerun, shutdown_rerun
 
-            cleanup.callback(shutdown_rerun)
+            cleanup.push(shutdown_rerun)
             init_rerun(session_name="alohamini_teleop")
             preview = cleanup.enter_context(
                 TeleopPreview(None if no_robot else host, robot_model, fps=camera_fps)

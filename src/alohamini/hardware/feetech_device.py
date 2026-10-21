@@ -15,7 +15,14 @@ from alohamini.calibration import EncoderCalibration
 from alohamini.calibration.encoder import HostPositionUnits
 from alohamini.calibration.servo import MotorCalibration
 from alohamini.hardware.feedback import FeedbackBatch, MotorFeedback
-from alohamini.hardware.feetech import _FIELDS, _START, FeetechFeedbackReader, _PacketPort
+from alohamini.hardware.feetech import (
+    _FIELDS,
+    _INPUT_VOLTAGE_HINT,
+    _SERIAL_WRITE_TIMEOUT_HINT,
+    _START,
+    FeetechFeedbackReader,
+    _PacketPort,
+)
 from alohamini.hardware.motors_bus import MotorsBus
 from alohamini.model import ActuatorSpec
 
@@ -56,7 +63,10 @@ class DeviceOperationError(ConnectionError):
 
     def __init__(self, errors: Mapping[str, str], *, context: str | None = None) -> None:
         self.errors = dict(errors)
-        detail = "; ".join(f"{name}: {error}" for name, error in errors.items())
+        grouped: dict[str, list[str]] = {}
+        for name, error in errors.items():
+            grouped.setdefault(error, []).append(name)
+        detail = "; ".join(f"{', '.join(names)}: {error}" for error, names in grouped.items())
         super().__init__(f"{context}: {detail}" if context else detail)
 
 
@@ -289,6 +299,8 @@ class FeetechBusDevice(MotorsBus):
                     reason = f"{description}; {reason}"
                 if error:
                     reason += f" ({self._handler.getRxPacketError(error)})"
+                    if error & 0x01:
+                        reason += f"; {_INPUT_VOLTAGE_HINT}"
                 retry = not error and result in (COMM_RX_TIMEOUT, COMM_RX_CORRUPT, COMM_TX_FAIL)
             except OSError as exc:
                 # Disconnected/closed ports and other OS errors are not transient
@@ -296,7 +308,9 @@ class FeetechBusDevice(MotorsBus):
                 if not isinstance(exc, (TimeoutError, SerialTimeoutException)):
                     raise ConnectionError(f"{context}: {exc}") from exc
                 reason, retry = str(exc), True
-                if isinstance(exc, TimeoutError):
+                if isinstance(exc, SerialTimeoutException):
+                    reason += f"; {_SERIAL_WRITE_TIMEOUT_HINT}"
+                elif isinstance(exc, TimeoutError):
                     description = (
                         "No valid reply from servo before timeout"
                         if value is None
@@ -789,6 +803,8 @@ class FeetechBusDevice(MotorsBus):
     def _sync_write(self, address: int, values: Mapping[str, int]) -> None:
         if not values:
             return
+        from serial import SerialTimeoutException
+
         params = []
         for name, value in values.items():
             params.extend([self._ids[name], *value.to_bytes(2, "little")])
@@ -802,7 +818,10 @@ class FeetechBusDevice(MotorsBus):
         try:
             result = self._handler.syncWriteTxOnly(port, address, 2, params, len(params))
         except OSError as exc:
-            raise ConnectionError(f"{context}: {type(exc).__name__}: {exc}") from exc
+            detail = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, SerialTimeoutException):
+                detail += f"; {_SERIAL_WRITE_TIMEOUT_HINT}"
+            raise ConnectionError(f"{context}: {detail}") from exc
         finally:
             port.is_using = False
         if result != 0:

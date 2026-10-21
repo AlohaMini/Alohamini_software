@@ -390,6 +390,54 @@ class FeetechDeviceTests(unittest.TestCase):
         read.assert_called_once_with(["joint", "wheel"], timeout_s=0.008)
         self.assertEqual(self.serial.write_timeout, 0.005)
 
+    def test_sync_read_transmit_error_is_grouped_only_for_display_without_changing_retries(self):
+        from serial import SerialTimeoutException
+
+        self.connect()
+        for passive, attempts in ((False, 1), (True, 4)):
+            with (
+                self.subTest(passive=passive),
+                patch.object(self.device, "_passive", passive),
+                patch.object(
+                    self.serial, "write", side_effect=SerialTimeoutException("Write timeout")
+                ) as write,
+                patch.object(self.serial, "read", wraps=self.serial.read) as read,
+            ):
+                with self.assertRaises(DeviceOperationError) as caught:
+                    self.device.read_positions()
+            self.assertEqual(write.call_count, attempts)
+            read.assert_not_called()
+            self.assertEqual(set(caught.exception.errors), {"joint", "wheel"})
+            self.assertEqual(len(set(caught.exception.errors.values())), 1)
+            message = str(caught.exception)
+            self.assertIn("/dev/test-only", message)
+            self.assertIn("IDs [1, 2]", message)
+            self.assertIn("joint, wheel: SyncRead request transmit failed", message)
+            self.assertIn("Write timeout", message)
+            self.assertEqual(message.count("USB/serial write timed out"), 1)
+            self.assertIn(f"after {attempts} attempt(s)", message)
+            self.assertNotIn("No valid reply", message)
+        self.assertEqual(str(DeviceOperationError({"joint": "failure"})), "joint: failure")
+
+    def test_voltage_alarm_on_profile_write_stays_fatal_without_diagnostic_io(self):
+        self.connect()
+        for address, value in ((85, 254), (41, 100)):
+            self.serial.requests.clear()
+            self.serial.errors[(1, 3, address)] = 0x01
+            with self.subTest(address=address), self.assertRaises(ConnectionError) as caught:
+                self.device._write_register("joint", address, 1, value)
+            message = str(caught.exception)
+            self.assertIn(f"Write {address}={value}", message)
+            self.assertIn("/dev/test-only joint (ID 1)", message)
+            self.assertIn("servo_error=0x01", message)
+            self.assertIn("Input voltage error", message)
+            self.assertIn(
+                "Servo reported input voltage outside its configured limits; "
+                "check voltage at the servo and configured voltage limits", message,
+            )
+            self.assertIn("attempts=1", message)
+            self.assertEqual([(p[4], p[5]) for p in self.serial.requests], [(3, address)])
+
     def test_passive_calibration_keeps_position_and_fault_validation(self):
         device = self.new_device(position_calibrations={}, velocity_limits={})
         device.connect("calibration")
@@ -1612,14 +1660,60 @@ class FeetechDeviceTests(unittest.TestCase):
         from serial import SerialTimeoutException
 
         self.connect()
-        with patch.object(
-            self.serial, "write", side_effect=SerialTimeoutException("Write timeout")
+        with (
+            patch.object(
+                self.serial, "write", side_effect=SerialTimeoutException("Write timeout")
+            ) as write,
+            patch.object(self.serial, "read", wraps=self.serial.read) as read,
         ):
             with self.assertRaisesRegex(
                 ConnectionError, r"/dev/test-only wheel \(ID 2\): Write 46=0: Write timeout"
-            ):
+            ) as caught:
                 self.device._write_register("wheel", 46, 2, 0)
+        self.assertEqual(write.call_count, 4)
+        read.assert_not_called()
+        self.assertIn(
+            "USB/serial write timed out; check USB cable, hub, and serial connection; "
+            "command acceptance is unknown", str(caught.exception),
+        )
+        self.assertIn("attempts=4", str(caught.exception))
+        self.assertNotIn("No valid reply", str(caught.exception))
         self.assertEqual(self.serial.write_timeout, 0.005)
+
+    def test_serial_write_timeout_while_sending_read3_is_not_a_missing_servo_reply(self):
+        from serial import SerialTimeoutException
+
+        self.connect()
+        with (
+            patch.object(
+                self.serial, "write", side_effect=SerialTimeoutException("Write timeout")
+            ) as write,
+            patch.object(self.serial, "read", wraps=self.serial.read) as read,
+        ):
+            with self.assertRaises(ConnectionError) as caught:
+                self.device._read_register("joint", 3, 2)
+        self.assertEqual(write.call_count, 4)
+        read.assert_not_called()
+        message = str(caught.exception)
+        for context in (
+            "/dev/test-only joint (ID 1)", "Read 3 (model number register)", "Write timeout",
+            "USB/serial write timed out", "command acceptance is unknown", "attempts=4",
+        ):
+            self.assertIn(context, message)
+        self.assertNotIn("No valid reply", message)
+
+    def test_register_receive_deadline_is_not_reported_as_serial_write_timeout(self):
+        self.connect()
+        with patch.object(self.serial, "read", side_effect=TimeoutError("transaction deadline")):
+            with self.assertRaises(ConnectionError) as caught:
+                self.device._read_register("joint", 3, 2)
+        message = str(caught.exception)
+        self.assertIn("Read 3 (model number register)", message)
+        self.assertIn("No valid reply from servo before timeout", message)
+        self.assertIn("transaction deadline", message)
+        self.assertNotIn("USB/serial write timed out", message)
+        self.assertEqual(len(self.serial.requests), 4)
+        self.assertFalse(self.writes())
 
     def test_register_fallback_write_cannot_exceed_its_cyclic_deadline(self):
         self.connect()
