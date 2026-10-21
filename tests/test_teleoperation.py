@@ -263,6 +263,72 @@ class LeaderTests(unittest.TestCase):
         self.assertFalse(any(s.is_open for s in self.serials.values()))
         self.assertFalse(any(p[4] == 3 for p in self.serials["right"].requests))
 
+    def test_cli_reports_leader_side_and_timeout_cause_without_starting_preview(self):
+        from scservo_sdk.protocol_packet_handler import protocol_packet_handler
+        from scservo_sdk.scservo_def import COMM_RX_TIMEOUT
+
+        receive = protocol_packet_handler.rxPacket
+        for side, label in (("left", "左主臂"), ("right", "右主臂")):
+            with self.subTest(side=side):
+                self.prepare_model("alohamini2pro")
+                self.factory.side_effect = iter(self.serials.values())
+                self.serials[side].drop.add((1, 2, 3))
+                failed = self.serials[side]
+
+                def receive_or_timeout(handler, port, failed_serial=failed):
+                    if (
+                        port.serial is failed_serial
+                        and failed_serial.requests[-1][4:6] == bytes([2, 3])
+                    ):
+                        return [], COMM_RX_TIMEOUT
+                    return receive(handler, port)
+
+                with (
+                    patch.object(
+                        protocol_packet_handler,
+                        "rxPacket",
+                        autospec=True,
+                        side_effect=receive_or_timeout,
+                    ),
+                    patch("alohamini.apps.teleoperation.HostClient"),
+                    patch("alohamini.apps.visualization.init_rerun") as preview,
+                    contextlib.redirect_stderr(io.StringIO()) as errors,
+                ):
+                    code = main(
+                        [
+                            "teleoperate",
+                            "--robot_model",
+                            "alohamini2pro",
+                            "--host",
+                            "127.0.0.1",
+                            "--no_keyboard",
+                            "--calibration_dir",
+                            str(self.directory),
+                            "--left_port",
+                            "/dev/test-left",
+                            "--right_port",
+                            "/dev/test-right",
+                        ]
+                    )
+                self.assertEqual(code, 1)
+                message = errors.getvalue()
+                for expected in (
+                    f"{label}连接失败",
+                    f"/dev/test-{side}",
+                    "shoulder_pan (ID 1)",
+                    "Read 3（型号寄存器）",
+                    "等待对应舵机的有效回复超时",
+                    "transport=-6",
+                    "attempts=4",
+                ):
+                    self.assertIn(expected, message)
+                self.assertNotIn("Traceback", message)
+                self.assertNotIn("全部", message)  # Only the failing ID was checked.
+                preview.assert_not_called()
+                self.assertFalse(any(serial.is_open for serial in self.serials.values()))
+                self.assertEqual(len(failed.requests), 4)
+                self.assertTrue(all(packet[4] == 2 for packet in failed.requests))
+
     def test_calibration_mismatch_is_not_silently_written_back(self):
         self.serials["right"].set(3, 31, 2, 0)
         with self.assertRaisesRegex(ValueError, "calibration mismatch"):
@@ -1099,17 +1165,31 @@ class TeleoperationTests(unittest.TestCase):
         leader.return_value.__enter__.assert_not_called()
         preview.assert_not_called()
 
-    def test_viewer_cleanup_runs_when_leader_connection_fails(self):
+    def test_viewer_is_not_started_when_leader_connection_fails(self):
         with (
             patch("alohamini.apps.teleoperation.HostClient") as client,
             patch("alohamini.apps.teleoperation.BimanualLeader") as leader,
-            patch("alohamini.apps.visualization.init_rerun"),
+            patch("alohamini.apps.visualization.init_rerun") as preview,
             patch("alohamini.apps.visualization.shutdown_rerun") as shutdown,
         ):
             leader.return_value.__enter__.side_effect = OSError("right port failed")
             with self.assertRaisesRegex(OSError, "right port"):
                 teleoperate("127.0.0.1", "alohamini2pro", no_keyboard=True)
+        preview.assert_not_called()
+        shutdown.assert_not_called()
+        client.return_value.__exit__.assert_called_once()
+
+    def test_preview_startup_failure_closes_leader_and_client(self):
+        with (
+            patch("alohamini.apps.teleoperation.HostClient") as client,
+            patch("alohamini.apps.teleoperation.BimanualLeader") as leader,
+            patch("alohamini.apps.visualization.init_rerun", side_effect=OSError("viewer failed")),
+            patch("alohamini.apps.visualization.shutdown_rerun") as shutdown,
+        ):
+            with self.assertRaisesRegex(OSError, "viewer failed"):
+                teleoperate("127.0.0.1", "alohamini2pro", no_keyboard=True)
         shutdown.assert_called_once()
+        leader.return_value.__exit__.assert_called_once()
         client.return_value.__exit__.assert_called_once()
 
     def test_legacy_optional_profile_is_validated_before_io(self):

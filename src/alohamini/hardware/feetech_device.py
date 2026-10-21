@@ -192,6 +192,8 @@ class FeetechBusDevice(MotorsBus):
         )
         attempts = _REGISTER_ATTEMPTS if deadline is None and repeatable else 1
         operation = f"Read {address}" if value is None else f"Write {address}={value}"
+        if value is None and address == 3:
+            operation += "（型号寄存器）"
         context = f"{self._path} {name} (ID {self._ids[name]}): {operation}"
         for attempt in range(attempts):
             port = self._packet_port(deadline, register=True)
@@ -231,6 +233,13 @@ class FeetechBusDevice(MotorsBus):
                     if len(packet) == expected + 6 and packet[3] == expected + 2:
                         return bytes(packet[5:-1])
                 reason = f"transport={result}, servo_error=0x{error:02x}"
+                description = {
+                    COMM_RX_TIMEOUT: "等待对应舵机的有效回复超时",
+                    COMM_RX_CORRUPT: "舵机回复数据损坏或校验失败",
+                    COMM_TX_FAIL: "发送舵机指令失败",
+                }.get(result)
+                if description is not None:
+                    reason = f"{description}；{reason}"
                 if error:
                     reason += f" ({self._handler.getRxPacketError(error)})"
                 retry = not error and result in (COMM_RX_TIMEOUT, COMM_RX_CORRUPT, COMM_TX_FAIL)
@@ -240,6 +249,8 @@ class FeetechBusDevice(MotorsBus):
                 if not isinstance(exc, (TimeoutError, SerialTimeoutException)):
                     raise ConnectionError(f"{context}: {exc}") from exc
                 reason, retry = str(exc), True
+                if value is None and isinstance(exc, TimeoutError):
+                    reason = f"读取舵机寄存器超时；{reason}"
             finally:
                 port.is_using = False
             if not retry or attempt + 1 == attempts:
