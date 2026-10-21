@@ -116,6 +116,18 @@ alohamini-mujoco cad-tessellate \
 
 `cad-tessellate` 仅接受有效实体，每个原始实体及其空腔整体离散，输出零件定义坐标系中的 float64 米制 NPZ 网格。检查闭合性和朝向，记录离散参数、缝合位移与校验值；不自动将开口表面实体化。弦高参数不是经独立验证的表面误差上界。CAD 输出尚未映射到机器人连杆，不能直接作为 `--collision-bundle`。
 
+整机逐件检查：
+
+```bash
+OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco cad-tessellate-all \
+  --cad-bundle ~/Alohamini_workspace/simulation/cad/assembly \
+  --output ~/Alohamini_workspace/simulation/cad/library
+```
+
+每个零件在独立进程中离散，`library.json` 逐件原子更新，保留全部装配实例变换及 `meshed`、`surface_only`、`invalid_brep`、`meshing_failed`、`worker_failed` 状态。`complete` 表示全部定义已检查，`fully_meshed` 才表示全部成功；存在未通过项时退出码为 1，不能将缺失零件当作可用碰撞模型。
+
+`--reuse-library 旧目录` 可向新目录复用已有网格，严格检查同一 STEP、BRep 校验值、定义坐标、OCCT 版本、离散参数及全部网格文件；不兼容缓存返回失败，不覆盖旧输出。派生装配中未变的零件可复用，网格原始清单保留，当前装配绑定记录于新 `library.json`。中断后的目录也可作为只读缓存；此操作只生成来源网格，不决定刚体归属或接触近似。
+
 ### 零件坐标校验
 
 ```bash

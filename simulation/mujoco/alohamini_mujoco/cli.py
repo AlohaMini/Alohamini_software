@@ -120,6 +120,14 @@ def main(argv=None):
     tessellate.add_argument("--linear-deflection-m", type=float, default=5e-5)
     tessellate.add_argument("--angular-deflection-rad", type=float, default=0.1)
     tessellate.add_argument("--output", type=Path, required=True)
+    library = commands.add_parser(
+        "cad-tessellate-all", help="inventory every CAD part with isolated meshing workers"
+    )
+    library.add_argument("--cad-bundle", type=Path, required=True)
+    library.add_argument("--linear-deflection-m", type=float, default=5e-5)
+    library.add_argument("--angular-deflection-rad", type=float, default=0.1)
+    library.add_argument("--reuse-library", type=Path)
+    library.add_argument("--output", type=Path, required=True)
     registration = commands.add_parser(
         "cad-register", help="verify an explicit CAD-part transform against a visual component"
     )
@@ -194,6 +202,31 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "cad-tessellate-all":
+            from .cad_library import tessellate_assembly
+
+            report = tessellate_assembly(
+                args.cad_bundle,
+                args.output,
+                linear_deflection_m=args.linear_deflection_m,
+                angular_deflection_rad=args.angular_deflection_rad,
+                reuse_library=args.reuse_library,
+            )
+            counts = {
+                status: sum(r["status"] == status for r in report["parts"].values())
+                for status in sorted({r["status"] for r in report["parts"].values()})
+            }
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output),
+                        "complete": report["complete"],
+                        "fully_meshed": report["fully_meshed"],
+                        "counts": counts,
+                    }
+                )
+            )
+            return 0 if report["fully_meshed"] else 1
         if args.operation == "collision-fit-primitives":
             from .primitives import fit_primitives
 
