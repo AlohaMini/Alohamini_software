@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 from test_feetech_device import DelayedRegisterSerial, RegisterSerial, SimulatedClock
 
+from alohamini.apps.teleop_monitor import TeleopMonitor, tracking_rows
 from alohamini.apps.teleoperation import (
     KeyboardInput,
     KeyboardTargets,
@@ -70,6 +71,48 @@ def snapshot(model="alohamini2pro"):
         }
     )
     return HostSnapshot(payload, {}, time.monotonic(), time.monotonic())
+
+
+class GripperMonitorTests(unittest.TestCase):
+    def test_tracking_reports_motion_output_without_changing_position_values(self):
+        payload = snapshot().payload
+        motor = "arm_right_gripper"
+        key = f"{motor}.pos"
+        payload[key] = 70.6
+        payload["_safety"].update(
+            {
+                "requested_targets": {key: 28.97},
+                "accepted_targets": {key: 28.9},
+                "currents_ma": {motor: 78},
+                "gripper_control": {motor: {"phase": "moving", "output_limit_fraction": 1.0}},
+            }
+        )
+        row = tracking_rows(payload)[0][3]
+        self.assertIn("target=28.97 command=28.90 measured=70.60 gap=-41.70", row)
+        self.assertIn("current=+78.0mA grip_phase=moving output_limit=100.0%", row)
+
+    def test_zero_current_and_zero_joint_holds_do_not_hide_latched_gripper(self):
+        payload = snapshot().payload
+        motor = "arm_right_gripper"
+        key = f"{motor}.pos"
+        payload["_safety"].update(
+            {
+                "requested_targets": {key: 0},
+                "accepted_targets": {key: 47},
+                "currents_ma": {motor: 0},
+                "gripper_holds": {motor: 0.47},
+                "gripper_control": {motor: {"phase": "holding", "output_limit_fraction": 0.05}},
+            }
+        )
+        with patch("time.perf_counter", return_value=0):
+            monitor = TeleopMonitor()
+        with (
+            patch("time.perf_counter", return_value=1.1),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            monitor.update(payload, sent=True, fresh=True, permitted=True)
+        self.assertIn("joint_holds=0 gripper_holds=1", output.getvalue())
+        self.assertIn("current=+0.0mA grip_phase=holding output_limit=5.0%", output.getvalue())
 
 
 @unittest.skipUnless(importlib.util.find_spec("scservo_sdk"), "optional STS SDK not installed")
@@ -276,9 +319,8 @@ class LeaderTests(unittest.TestCase):
                 failed = self.serials[side]
 
                 def receive_or_timeout(handler, port, failed_serial=failed):
-                    if (
-                        port.serial is failed_serial
-                        and failed_serial.requests[-1][4:6] == bytes([2, 3])
+                    if port.serial is failed_serial and failed_serial.requests[-1][4:6] == bytes(
+                        [2, 3]
                     ):
                         return [], COMM_RX_TIMEOUT
                     return receive(handler, port)

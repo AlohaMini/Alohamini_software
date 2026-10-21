@@ -182,7 +182,11 @@ def _open_host(
                 m.name: initial_limits[m.name] for m in device.actuators if m.name in initial_limits
             }
             if limits:
-                device.write_output_limits(limits)
+                applied = device.initialize_output_limits(limits)
+                logger.info(
+                    "Gripper motion output limits: %s",
+                    ", ".join(f"{name}={value:.1%}" for name, value in applied.items()),
+                )
         # No bus is enabled until every bus has a verified safe target.
         for device in devices.values():
             device.stop()

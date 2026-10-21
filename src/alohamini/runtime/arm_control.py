@@ -94,7 +94,7 @@ class ArmController:
 
     @property
     def initial_output_limits(self) -> dict[str, float]:
-        """Free-motion ceilings at startup; the device retains lower installed caps."""
+        """Free-motion ceilings at startup, bounded by persistent device settings."""
         return {
             name: self._guard.gripper_hold.motion_output_fraction
             for name, spec in self._joints.items()

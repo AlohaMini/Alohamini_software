@@ -294,14 +294,17 @@ class StartupTests(unittest.TestCase):
             caps = [
                 (index, bus, packet)
                 for index, (bus, packet) in enumerate(self.events)
-                if packet[4:7] == b"\x02\x30\x02"
+                if packet[4:7] in (b"\x02\x10\x02", b"\x02\x30\x02")
             ]
             grippers = [motor for motor in self.model.actuators if motor.name.endswith("_gripper")]
             self.assertEqual(
-                {(bus, packet[2]) for _, bus, packet in caps},
-                {(motor.bus, motor.motor_id) for motor in grippers},
+                {(bus, packet[2], packet[5]) for _, bus, packet in caps},
+                {
+                    (motor.bus, motor.motor_id, address)
+                    for motor in grippers for address in (16, 48)
+                },
             )
-            self.assertEqual(len(caps), len(grippers))
+            self.assertEqual(len(caps), len(grippers) * 2)
             initial = host.control.arms.initial_output_limits
             for index, bus, packet in caps:
                 motor = next(m for m in grippers if (m.bus, m.motor_id) == (bus, packet[2]))
@@ -312,48 +315,111 @@ class StartupTests(unittest.TestCase):
                     1000,
                 )
             self.assertFalse(any(packet[4:6] == b"\x03\x30" for _, packet in self.events))
+            self.assertFalse(any(packet[4:6] == b"\x03\x10" for _, packet in self.events))
         finally:
             host.close()
         self.assert_closed()
 
-    def test_startup_preserves_lower_installed_gripper_output_cap(self):
+    def test_startup_restores_nominal_gripper_output_cap_from_stale_ram(self):
         gripper = next(m for m in self.model.actuators if m.name == "arm_right_gripper")
         serial = self.serials["/dev/am_arm_follower_right"]
-        serial.set(gripper.motor_id, 48, 2, 640)
-        host = self.open()
+        serial.set(gripper.motor_id, 16, 2, 640)
+        serial.set(gripper.motor_id, 48, 2, 250)
+        with self.assertLogs(level="INFO") as output:
+            host = self.open()
         try:
             self.assertEqual(serial.get(gripper.motor_id, 48, 2), 640)
-            self.assertFalse(any(packet[4:6] == b"\x03\x30" for _, packet in self.events))
-            self.assertTrue(any(
-                bus == "right" and packet[2] == gripper.motor_id
-                and packet[4:7] == b"\x02\x30\x02"
-                for bus, packet in self.events
-            ))
+            caps = [(bus, packet) for bus, packet in self.events if packet[4:6] == b"\x03\x30"]
+            self.assertEqual(len(caps), 1)
+            self.assertEqual(caps[0][0], "right")
+            self.assertEqual(caps[0][1][2], gripper.motor_id)
+            self.assertEqual(int.from_bytes(caps[0][1][6:-1], "little"), 640)
+            self.assertEqual(serial.get(gripper.motor_id, 16, 2), 640)
+            self.assertFalse(any(packet[4:6] == b"\x03\x10" for _, packet in self.events))
+            self.assertIn(
+                "Gripper motion output limits: arm_right_gripper=64.0%",
+                [record.getMessage() for record in output.records],
+            )
+            for motor in self.model.actuators:
+                bus = self.serials[f"/dev/am_arm_follower_{motor.bus}"]
+                if motor.name.startswith("arm_"):
+                    for address, width, expected in (
+                        (46, 2, 2000), (21, 1, 16), (23, 1, 0), (22, 1, 32),
+                    ):
+                        self.assertEqual(bus.get(motor.motor_id, address, width), expected)
+                if not motor.name.endswith("_gripper"):
+                    self.assertEqual(bus.get(motor.motor_id, 48, 2), 1000)
         finally:
             host.close()
         self.assertEqual(serial.get(gripper.motor_id, 48, 2), 640)
         self.assert_closed()
 
+    def test_startup_preserves_zero_nominal_gripper_output_cap(self):
+        gripper = next(m for m in self.model.actuators if m.name == "arm_right_gripper")
+        serial = self.serials["/dev/am_arm_follower_right"]
+        serial.set(gripper.motor_id, 16, 2, 0)
+        serial.set(gripper.motor_id, 48, 2, 250)
+        host = self.open()
+        try:
+            self.assertEqual(serial.get(gripper.motor_id, 16, 2), 0)
+            self.assertEqual(serial.get(gripper.motor_id, 48, 2), 0)
+            self.assertFalse(any(packet[4:6] == b"\x03\x10" for _, packet in self.events))
+        finally:
+            host.close()
+        self.assertEqual(serial.get(gripper.motor_id, 48, 2), 0)
+        self.assert_closed()
+
     def test_invalid_gripper_output_cap_never_enables_and_cleans_up_both_buses(self):
         gripper = next(m for m in self.model.actuators if m.name == "arm_right_gripper")
-        self.serials["/dev/am_arm_follower_right"].set(gripper.motor_id, 48, 2, 1001)
-        with self.assertRaisesRegex(ConnectionError, "Invalid STS output limit.*raw=1001"):
-            self.open()
-        self.assertFalse(any(packet[4:7] == b"\x03\x28\x01" for _, packet in self.events))
-        self.assertFalse(any(packet[4:6] == b"\x03\x30" for _, packet in self.events))
-        self.assertEqual(
-            {bus for bus, packet in self.events if packet[4:7] == b"\x02\x30\x02"},
-            {"left", "right"},
-        )
-        self.assert_closed()
+        serial = self.serials["/dev/am_arm_follower_right"]
+        for address in (16, 48):
+            with self.subTest(address=address):
+                self.events.clear()
+                serial.set(gripper.motor_id, address, 2, 1001)
+                with self.assertRaisesRegex(ConnectionError, "Invalid STS.*raw=1001"):
+                    self.open()
+                self.assertFalse(any(packet[4:7] == b"\x03\x28\x01" for _, packet in self.events))
+                self.assertFalse(any(packet[4:6] == b"\x03\x30" for _, packet in self.events))
+                self.assert_closed()
+                serial.set(gripper.motor_id, address, 2, 1000)
 
     def test_unreadable_gripper_output_cap_never_enables_and_cleans_up_both_buses(self):
         gripper = next(m for m in self.model.actuators if m.name == "arm_right_gripper")
-        self.serials["/dev/am_arm_follower_right"].drop.add((gripper.motor_id, 2, 48))
-        with self.assertRaisesRegex(ConnectionError, "Read 48.*超时.*attempts=4"):
+        serial = self.serials["/dev/am_arm_follower_right"]
+        for address in (16, 48):
+            with self.subTest(address=address):
+                self.events.clear()
+                serial.drop.add((gripper.motor_id, 2, address))
+                with self.assertRaisesRegex(ConnectionError, f"Read {address}.*超时.*attempts=4"):
+                    self.open()
+                self.assertFalse(any(packet[4:7] == b"\x03\x28\x01" for _, packet in self.events))
+                self.assertFalse(any(packet[4:6] == b"\x03\x30" for _, packet in self.events))
+                self.assert_closed()
+                serial.drop.remove((gripper.motor_id, 2, address))
+
+    def test_failed_gripper_output_cap_restoration_never_enables_and_cleans_up_both_buses(self):
+        gripper = next(m for m in self.model.actuators if m.name == "arm_right_gripper")
+        serial = self.serials["/dev/am_arm_follower_right"]
+        serial.set(gripper.motor_id, 48, 2, 250)
+        write = serial.write
+        ignored = []
+
+        def ignore_initial_cap_write(packet):
+            if not ignored and packet[2] == gripper.motor_id and packet[4:6] == b"\x03\x30":
+                ignored.append(packet)
+                serial.ignore_writes.add((gripper.motor_id, 48))
+                try:
+                    return write(packet)
+                finally:
+                    serial.ignore_writes.remove((gripper.motor_id, 48))
+            return write(packet)
+
+        serial.write = ignore_initial_cap_write
+        with self.assertRaisesRegex(ConnectionError, "Register write not accepted.*address 48"):
             self.open()
+        self.assertEqual(len(ignored), 1)
         self.assertFalse(any(packet[4:7] == b"\x03\x28\x01" for _, packet in self.events))
-        self.assertFalse(any(packet[4:6] == b"\x03\x30" for _, packet in self.events))
+        self.assertFalse(any(packet[4:6] == b"\x03\x10" for _, packet in self.events))
         self.assert_closed()
 
     def test_startup_skips_output_limit_call_for_bus_without_grippers(self):
@@ -367,12 +433,12 @@ class StartupTests(unittest.TestCase):
             if name != gripper.name
         }), encoding="utf-8")
         del self.serials["/dev/am_arm_follower_right"].registers[gripper.motor_id]
-        write_output_limits = FeetechBusDevice.write_output_limits
+        initialize_output_limits = FeetechBusDevice.initialize_output_limits
         with (
             patch("alohamini.runtime.startup.get_robot_model", return_value=model),
             patch.object(
-                FeetechBusDevice, "write_output_limits", autospec=True,
-                side_effect=write_output_limits,
+                FeetechBusDevice, "initialize_output_limits", autospec=True,
+                side_effect=initialize_output_limits,
             ) as write,
         ):
             host = self.open()
@@ -665,6 +731,8 @@ class StartupTests(unittest.TestCase):
             [
                 "Configuring AlohaMini",
                 "Connecting AlohaMini",
+                "Gripper motion output limits: arm_left_gripper=100.0%",
+                "Gripper motion output limits: arm_right_gripper=100.0%",
                 "Disable torque output (motor will be released)",
                 "Lift axis homed to 0mm.",
                 "Waiting for commands...",
