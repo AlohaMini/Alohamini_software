@@ -24,6 +24,8 @@ class ArmDevice(Protocol):
 
     def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]: ...
 
+    def ensure_position_targets(self, positions_rad: Mapping[str, float]) -> None: ...
+
 
 class ArmController:
     """Arm-only cycle controller, supplied to HostSupervisor as its control dependency.
@@ -92,8 +94,9 @@ class ArmController:
 
     @property
     def initial_output_limits(self) -> dict[str, float]:
+        """Free-motion ceilings at startup; the device retains lower installed caps."""
         return {
-            name: self._guard.gripper_hold.initial_output_fraction
+            name: self._guard.gripper_hold.motion_output_fraction
             for name, spec in self._joints.items()
             if isinstance(spec.contact, GripperContactCalibration)
         }
@@ -209,7 +212,14 @@ class ArmController:
         for name, position in limited.items():
             self._joints[name].calibration.validate_position(position)
         output_limits = self._guard.output_limits
-        # Apply verified output ceilings on both arms before sending any position.
+        # A previous low-output opening SyncWrite may have been lost. Confirm
+        # the currently intended target under that low cap before raising it.
+        restorations = self._guard.motion_output_restorations
+        for source, group in self._groups.items():
+            positions = {name: limited[name] for name in restorations if name in group}
+            if positions:
+                self._devices[source].ensure_position_targets(positions)
+        # In particular, reduce both gripper caps before sending contact preload.
         for source, group in self._groups.items():
             requested = {name: value for name, value in output_limits.items() if name in group}
             if requested:

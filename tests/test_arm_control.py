@@ -302,6 +302,23 @@ class GripperHoldTests(unittest.TestCase):
                 self.assertEqual(self.sample(index * 0.02, 0.6, goal=goal)[0], expected)
             self.assertEqual(self.guard.hold_events, 1)
 
+    def test_free_closing_keeps_installed_output_then_contact_immediately_lowers_it(self):
+        for closed, opened in ((0, 1), (1, 0)):
+            for ceiling in (1, 0.64, 0.1):
+                with self.subTest(closed=closed, ceiling=ceiling):
+                    self.guard = ArmContactGuard(
+                        {"joint": joint_spec(contact=GripperContactCalibration(closed, opened))}
+                    )
+                    for stamp, current in ((0, 0.1), (0.02, 0.15), (0.04, 0.2)):
+                        position, output = self.sample(stamp, current, goal=closed, ceiling=ceiling)
+                        self.assertEqual(position, closed)
+                        self.assertEqual(output, ceiling)
+                        self.assertFalse(self.guard.holds)
+                    position, output = self.sample(0.06, 0.4, goal=closed, ceiling=ceiling)
+                    self.assertAlmostEqual(position, 0.5 - 0.03 * (opened - closed))
+                    self.assertEqual(output, min(ceiling, 0.25))
+                    self.assertFalse(self.guard.motion_output_restorations)
+
     def test_feedback_beyond_contact_endpoint_is_not_corrected_by_opening(self):
         position, _ = self.sample(0, 0.6, goal=-0.2, position=-0.1)
         self.assertEqual(position, -0.1)
@@ -353,7 +370,7 @@ class GripperHoldTests(unittest.TestCase):
         for index in range(3, 10):
             position, output = self.sample(index * 0.02, 0.8, goal=0.8)
             self.assertEqual(position, 0.8)
-            self.assertEqual(output, 0.25)
+            self.assertEqual(output, 1)
             self.assertFalse(self.guard.holds)
         self.sample(0.2, 0.8, goal=0)
         self.assertTrue(self.guard.holds)
@@ -373,6 +390,8 @@ class GripperHoldTests(unittest.TestCase):
             {"preload_fraction": 0.04},
             {"target_current_a": 0},
             {"initial_output_fraction": 0.5},
+            {"motion_output_fraction": 0.3},
+            {"motion_output_fraction": 1.1},
             {"minimum_output_fraction": -0.1},
             {"output_slew_per_s": 0},
             {"output_gain_per_a_s": float("nan")},
@@ -423,6 +442,10 @@ class ArmDeviceMemory:
 
     def write_output_limits(self, limits):
         return {name: int(value * 1000) / 1000 for name, value in limits.items()}
+
+    def ensure_position_targets(self, positions_rad):
+        for name, value in positions_rad.items():
+            self.position_calibrations[name].validate_position(value)
 
     def stop(self):
         self.fixture.stops.append(self.spec.actuator.bus)
@@ -631,9 +654,13 @@ class ArmControllerTests(unittest.TestCase):
         def positions(*, positions_rad, velocities_raw):
             events.append(("position", positions_rad["joint"]))
 
+        def ensure(positions_rad):
+            events.append(("confirmed_position", positions_rad["joint"]))
+
         with (
             patch.object(device, "write_output_limits", side_effect=limits),
             patch.object(device, "write_targets", side_effect=positions),
+            patch.object(device, "ensure_position_targets", side_effect=ensure),
         ):
             for stamp, current, goal in (
                 (0, 0.6, 0),
@@ -647,7 +674,42 @@ class ArmControllerTests(unittest.TestCase):
                 controller.supervise()
         opening_index = events.index(("position", 0.8))
         self.assertLess(events[opening_index - 1][1], 0.25)
-        self.assertEqual(events[opening_index + 1], ("output", 0.25))
+        self.assertEqual(events[opening_index + 1], ("confirmed_position", 0.8))
+        self.assertEqual(events[opening_index + 2], ("output", 1))
+
+    def test_unconfirmed_opening_cannot_restore_output_or_report_command_applied(self):
+        specs = [replace(spec, contact=GripperContactCalibration(0, 1)) for spec in self.specs]
+        self.controller = ArmController(self.devices, specs)
+        self.host = HostSupervisor(
+            self.devices, [spec.actuator for spec in specs], control=self.controller
+        )
+        self.host.start()
+        for device, spec in zip(self.devices.values(), specs, strict=True):
+            device.current = 0.6
+            device.position = spec.calibration.position_to_tick(0.5)
+        for sequence, goal in enumerate((0, 0.8)):
+            self.now = sequence * 0.02
+            result = self.host.cycle(
+                self.command({spec.actuator.name: goal for spec in specs}, sequence=sequence)
+            )
+            self.assertTrue(result.command_applied)
+        self.writes.clear()
+        self.now = 0.04
+        with (
+            patch.object(
+                self.devices["right"], "ensure_position_targets", side_effect=OSError("no ACK")
+            ),
+            patch.object(self.devices["left"], "write_output_limits") as left_limits,
+            patch.object(self.devices["right"], "write_output_limits") as right_limits,
+        ):
+            result = self.host.cycle(
+                self.command({spec.actuator.name: 0.8 for spec in specs}, sequence=2)
+            )
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertFalse(result.command_applied)
+        left_limits.assert_not_called()
+        right_limits.assert_not_called()
+        self.assertFalse(self.writes)
 
     def test_projection_cannot_reuse_old_feedback_to_write_again(self):
         self.host.cycle(self.command({"left_joint": 0.5}))
@@ -747,6 +809,7 @@ class ArmBackendIntegrationTests(unittest.TestCase):
         with patch("serial.Serial", return_value=serial), host:
             # The measured physical position is zero. Closing stroke direction is negative.
             serial.set(1, 56, 2, spec.calibration.position_to_tick(0.5))
+            serial.requests.clear()
             identity = CommandIdentity("pc", 0, host.status.host_session_id, 0)
             result = host.cycle(
                 CommandSubmission(identity, lambda: controller.set_targets({"joint": 0}))
@@ -755,14 +818,56 @@ class ArmBackendIntegrationTests(unittest.TestCase):
             held = controller.contact_holds["joint"]
             self.assertAlmostEqual(held, 0.47, delta=math.tau / 4096)
             self.assertEqual(serial.get(1, 42, 2), spec.calibration.position_to_tick(held))
+            cap_write = next(
+                i for i, packet in enumerate(serial.requests) if packet[4:6] == b"\x03\x30"
+            )
+            position_write = next(
+                i for i, packet in enumerate(serial.requests) if packet[4:6] == b"\x83\x2a"
+            )
+            self.assertLess(cap_write, position_write)
+            self.assertEqual(serial.get(1, 48, 2), 250)
+
+            original_write = serial.write
+
+            def lose_opening_syncwrite(packet):
+                if packet[4:6] == b"\x83\x2a":
+                    return len(packet)
+                return original_write(packet)
+
+            with patch.object(serial, "write", side_effect=lose_opening_syncwrite):
+                result = host.cycle(
+                    CommandSubmission(
+                        replace(identity, sequence=1),
+                        lambda: controller.set_targets({"joint": 0.7}),
+                    )
+                )
+            self.assertTrue(result.command_applied)
+            self.assertFalse(controller.contact_holds)
+            self.assertEqual(serial.get(1, 42, 2), spec.calibration.position_to_tick(held))
+            self.assertEqual(serial.get(1, 48, 2), 250)
+
+            serial.requests.clear()
             result = host.cycle(
                 CommandSubmission(
-                    replace(identity, sequence=1), lambda: controller.set_targets({"joint": 0.7})
+                    replace(identity, sequence=2), lambda: controller.set_targets({"joint": 0.7})
                 )
             )
             self.assertTrue(result.command_applied)
-            self.assertFalse(controller.contact_holds)
             self.assertEqual(serial.get(1, 42, 2), spec.calibration.position_to_tick(0.7))
+            self.assertEqual(serial.get(1, 48, 2), 1000)
+            restore = next(
+                i for i, packet in enumerate(serial.requests) if packet[4:6] == b"\x03\x30"
+            )
+            repair = next(
+                i for i, packet in enumerate(serial.requests) if packet[4:6] == b"\x03\x2a"
+            )
+            verified = next(
+                i
+                for i, packet in enumerate(serial.requests[repair + 1 :], repair + 1)
+                if packet[4:7] == b"\x02\x2a\x02"
+            )
+            self.assertLess(repair, verified)
+            self.assertLess(verified, restore)
 
 
 if __name__ == "__main__":
