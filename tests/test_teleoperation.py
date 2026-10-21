@@ -311,7 +311,7 @@ class LeaderTests(unittest.TestCase):
         from scservo_sdk.scservo_def import COMM_RX_TIMEOUT
 
         receive = protocol_packet_handler.rxPacket
-        for side, label in (("left", "左主臂"), ("right", "右主臂")):
+        for side, label in (("left", "Left leader"), ("right", "Right leader")):
             with self.subTest(side=side):
                 self.prepare_model("alohamini2pro")
                 self.factory.side_effect = iter(self.serials.values())
@@ -355,17 +355,18 @@ class LeaderTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 message = errors.getvalue()
                 for expected in (
-                    f"{label}连接失败",
+                    f"{label} connection failed",
                     f"/dev/test-{side}",
                     "shoulder_pan (ID 1)",
-                    "Read 3（型号寄存器）",
-                    "等待对应舵机的有效回复超时",
+                    "Read 3 (model number register)",
+                    "No valid reply from servo before timeout",
+                    "Check motor power supply, bus cable, servo ID, and baud rate",
                     "transport=-6",
                     "attempts=4",
                 ):
                     self.assertIn(expected, message)
                 self.assertNotIn("Traceback", message)
-                self.assertNotIn("全部", message)  # Only the failing ID was checked.
+                self.assertNotIn("No power", message)  # Timeout cannot prove loss of power.
                 preview.assert_not_called()
                 self.assertFalse(any(serial.is_open for serial in self.serials.values()))
                 self.assertEqual(len(failed.requests), 4)

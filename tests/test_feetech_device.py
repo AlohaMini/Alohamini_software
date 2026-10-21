@@ -598,7 +598,7 @@ class FeetechDeviceTests(unittest.TestCase):
         self.connect()
         self.serial.set(1, 40, 1, 0)
         self.serial.set(1, 48, 2, 250)
-        with self.assertRaisesRegex(ConnectionError, "Disable every motor.*wheel"):
+        with self.assertRaisesRegex(ConnectionError, "Expected torque OFF.*wheel"):
             self.device.initialize_output_limits({"joint": 1})
         self.assertEqual([(p[2], p[5]) for p in self.serial.requests], [(1, 40), (2, 40)])
         self.assertFalse(self.writes())

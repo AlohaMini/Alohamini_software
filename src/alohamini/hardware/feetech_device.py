@@ -201,7 +201,7 @@ class FeetechBusDevice(MotorsBus):
         attempts = _REGISTER_ATTEMPTS if deadline is None and repeatable else 1
         operation = f"Read {address}" if value is None else f"Write {address}={value}"
         if value is None and address == 3:
-            operation += "（型号寄存器）"
+            operation += " (model number register)"
         context = f"{self._path} {name} (ID {self._ids[name]}): {operation}"
         for attempt in range(attempts):
             port = self._packet_port(deadline, register=True)
@@ -242,12 +242,17 @@ class FeetechBusDevice(MotorsBus):
                         return bytes(packet[5:-1])
                 reason = f"transport={result}, servo_error=0x{error:02x}"
                 description = {
-                    COMM_RX_TIMEOUT: "等待对应舵机的有效回复超时",
-                    COMM_RX_CORRUPT: "舵机回复数据损坏或校验失败",
-                    COMM_TX_FAIL: "发送舵机指令失败",
+                    COMM_RX_TIMEOUT: (
+                        "No valid reply from servo before timeout"
+                        if value is None
+                        else "No acknowledgement from servo; command acceptance is unknown"
+                    )
+                    + ". Check motor power supply, bus cable, servo ID, and baud rate",
+                    COMM_RX_CORRUPT: "Invalid servo reply (corrupt data or checksum error)",
+                    COMM_TX_FAIL: "Failed to send servo request; check USB/serial connection",
                 }.get(result)
                 if description is not None:
-                    reason = f"{description}；{reason}"
+                    reason = f"{description}; {reason}"
                 if error:
                     reason += f" ({self._handler.getRxPacketError(error)})"
                 retry = not error and result in (COMM_RX_TIMEOUT, COMM_RX_CORRUPT, COMM_TX_FAIL)
@@ -257,8 +262,16 @@ class FeetechBusDevice(MotorsBus):
                 if not isinstance(exc, (TimeoutError, SerialTimeoutException)):
                     raise ConnectionError(f"{context}: {exc}") from exc
                 reason, retry = str(exc), True
-                if value is None and isinstance(exc, TimeoutError):
-                    reason = f"读取舵机寄存器超时；{reason}"
+                if isinstance(exc, TimeoutError):
+                    description = (
+                        "No valid reply from servo before timeout"
+                        if value is None
+                        else "Servo write timed out; command acceptance is unknown"
+                    )
+                    reason = (
+                        f"{description}. Check motor power supply, bus cable, servo ID, "
+                        f"and baud rate; {reason}"
+                    )
             finally:
                 port.is_using = False
             if not retry or attempt + 1 == attempts:
@@ -425,8 +438,8 @@ class FeetechBusDevice(MotorsBus):
             torque = self._read_register(name, _TORQUE_ENABLE, 1)
             if torque != 0:
                 raise ConnectionError(
-                    f"Disable every motor before preparation: {self._path} {name} "
-                    f"(ID {self._ids[name]}), register 40 raw={torque}"
+                    f"Expected torque OFF before preparation: {self._path} {name} "
+                    f"(ID {self._ids[name]}), register 40 raw={torque}; startup aborted"
                 )
             for address, expected in (
                 (31, calibration.offset_register),
@@ -842,8 +855,8 @@ class FeetechBusDevice(MotorsBus):
             torque = self._read_register(name, _TORQUE_ENABLE, 1)
             if torque != 0:
                 raise ConnectionError(
-                    f"Disable every motor before output initialization: {self._path} {name} "
-                    f"(ID {self._ids[name]}), register 40 raw={torque}"
+                    f"Expected torque OFF before output initialization: {self._path} {name} "
+                    f"(ID {self._ids[name]}), register 40 raw={torque}; startup aborted"
                 )
         baselines, actual = {}, {}
         for name in encoded:
