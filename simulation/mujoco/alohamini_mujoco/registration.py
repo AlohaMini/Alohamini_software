@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -11,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from .cad import file_sha256
-from .collision import components, signed_volume, visual_sources
+from .collision import components, manifold_parts, signed_volume, visual_sources
 from .frames import points_in_frame, rigid_transform
 from .geometry import SurfaceIndex, directed_surface_bounds
 from .meshes import Mesh, binary_stl
@@ -27,6 +28,7 @@ def register_part(
     T_link_part,
     tolerance_m,
     visual_index=0,
+    surface_index=None,
     max_samples=1_000_000,
 ):
     """Check a declared rigid transform; never fit or replace robot geometry.
@@ -53,6 +55,24 @@ def register_part(
     if type(component_index) is not int or not 0 <= component_index < len(parts):
         raise ValueError("Select an existing vertex-connected visual component")
     selected = parts[component_index]
+    partition = None
+    if surface_index is not None:
+        surfaces = manifold_parts(selected)
+        if type(surface_index) is not int or not 0 <= surface_index < len(surfaces):
+            raise ValueError("Select an existing manifold surface within the visual component")
+        face_ids = surfaces[surface_index]
+        partition = {
+            "method": "face adjacency across edges with exactly two incident faces",
+            "surface_index": surface_index,
+            "surface_count": len(surfaces),
+            "component_triangles": len(selected.faces),
+            "source_face_indices_sha256": hashlib.sha256(
+                face_ids.astype("<i8").tobytes()
+            ).hexdigest(),
+            "geometry_changed": False,
+        }
+        used, faces = np.unique(selected.faces[face_ids], return_inverse=True)
+        selected = Mesh(selected.vertices[used], faces.reshape(-1, 3))
     target = Mesh(
         points_in_frame(source["T_link_visual"], selected.vertices * np.asarray(source["scale"])),
         selected.faces,
@@ -139,6 +159,7 @@ def register_part(
             "visual_index": visual_index,
             "component_index": component_index,
             "component_count": len(parts),
+            "surface_partition": partition,
             "triangles": len(target.faces),
             "signed_volume_m3": signed_volume(target),
         },

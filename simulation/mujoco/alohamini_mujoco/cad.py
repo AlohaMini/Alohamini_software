@@ -191,18 +191,16 @@ def tessellate_definition(
 ):
     """Mesh each original CAD solid, preserving its cavity shells and face orientation."""
     try:
-        from OCP.BRep import BRep_Builder, BRep_Tool
-        from OCP.BRepMesh import BRepMesh_IncrementalMesh
+        from OCP.BRep import BRep_Builder
         from OCP.BRepTools import BRepTools
-        from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED, TopAbs_SOLID
+        from OCP.TopAbs import TopAbs_SOLID
         from OCP.TopExp import TopExp_Explorer
-        from OCP.TopLoc import TopLoc_Location
         from OCP.TopoDS import TopoDS, TopoDS_Shape
     except ImportError as exc:
         raise ValueError("Install the simulation cad extra to tessellate CAD solids") from exc
 
-    from .collision import signed_volume, topology, weld_precision_seams
-    from .meshes import Mesh
+    from ._cad_mesh import TESSELLATION_METHOD, mesh_solid
+    from .collision import signed_volume
 
     if (
         not math.isfinite(linear_deflection_m)
@@ -238,50 +236,7 @@ def tessellate_definition(
         stage.mkdir()
         while solids.More():
             solid = TopoDS.Solid_s(solids.Current())
-            mesher = BRepMesh_IncrementalMesh(
-                solid, linear_deflection_m * 1000, False, angular_deflection_rad, False
-            )
-            if not mesher.IsDone() or mesher.GetStatusFlags():
-                raise RuntimeError("OpenCascade meshing failed or reported a geometry warning")
-            faces = TopExp_Explorer(solid, TopAbs_FACE)
-            points, indices, offset = [], [], 0
-            while faces.More():
-                face = TopoDS.Face_s(faces.Current())
-                location = TopLoc_Location()
-                triangulation = BRep_Tool.Triangulation_s(face, location)
-                if triangulation is None:
-                    raise RuntimeError("A CAD face has no triangulation")
-                vertices = (
-                    np.array(
-                        [
-                            triangulation.Node(i).Transformed(location.Transformation()).Coord()
-                            for i in range(1, triangulation.NbNodes() + 1)
-                        ]
-                    )
-                    * 0.001
-                )
-                triangles = (
-                    np.array(
-                        [
-                            triangulation.Triangle(i).Get()
-                            for i in range(1, triangulation.NbTriangles() + 1)
-                        ]
-                    )
-                    - 1
-                )
-                if face.Orientation() == TopAbs_REVERSED:
-                    triangles = triangles[:, ::-1]
-                points.append(vertices)
-                indices.append(triangles + offset)
-                offset += len(vertices)
-                faces.Next()
-            vertices, inverse = np.unique(np.vstack(points), axis=0, return_inverse=True)
-            mesh, weld = weld_precision_seams(Mesh(vertices, inverse[np.vstack(indices)]), 5e-8)
-            if any(topology(mesh).values()) or signed_volume(mesh) <= 0:
-                raise ValueError(
-                    "CAD tessellation is not a closed outward surface; "
-                    "no repair or thickness was invented"
-                )
+            mesh, binding = mesh_solid(solid, linear_deflection_m, angular_deflection_rad)
             relative = f"solid_{len(records):04d}.npz"
             np.savez_compressed(stage / relative, vertices=mesh.vertices, faces=mesh.faces)
             records.append(
@@ -291,7 +246,7 @@ def tessellate_definition(
                     "vertices": len(mesh.vertices),
                     "triangles": len(mesh.faces),
                     "signed_mesh_volume_m3": signed_volume(mesh),
-                    "weld": weld,
+                    "boundary_binding": binding,
                 }
             )
             solids.Next()
@@ -315,6 +270,7 @@ def tessellate_definition(
             "coordinates": "CAD part definition frame, float64",
             "linear_deflection_m": linear_deflection_m,
             "angular_deflection_rad": angular_deflection_rad,
+            "tessellation_method": TESSELLATION_METHOD,
             "exact_brep_volume_m3": record["volume_m3"],
             "solids": records,
         }

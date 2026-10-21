@@ -114,7 +114,7 @@ alohamini-mujoco cad-tessellate \
 
 `cad-inspect` 保留源 STEP、逐零件 BRep、装配实例变换、有效性和实体数量。`cad.json` 的长度、变换平移和体积使用 m/m³；BRep 文件明确保留 OCCT 的 mm 单位。
 
-`cad-tessellate` 仅接受有效实体，每个原始实体及其空腔整体离散，输出零件定义坐标系中的 float64 米制 NPZ 网格。检查闭合性和朝向，记录离散参数、缝合位移与校验值；不自动将开口表面实体化。弦高参数不是经独立验证的表面误差上界。CAD 输出尚未映射到机器人连杆，不能直接作为 `--collision-bundle`。
+`cad-tessellate` 仅接受有效实体，每个原始实体及其空腔整体离散，输出零件定义坐标系中的 float64 米制 NPZ 网格。相邻曲面通过原始 CAD 共享边的参数和顶点身份拼接，不按距离合并独立边；边界点取自原始顶点或三维边曲线，逐点验证局部原生容差。记录 `tessellation_method`、`boundary_binding`、闭合性、朝向及校验值。退化三角形仅在其塌缩结果已被保留边界覆盖时移除，不补面或封洞。弦高参数不是经独立验证的表面误差上界。CAD 输出尚未映射到机器人连杆，不能直接作为 `--collision-bundle`。
 
 整机逐件检查：
 
@@ -126,7 +126,22 @@ OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco cad-tessellate-all \
 
 每个零件在独立进程中离散，`library.json` 逐件原子更新，保留全部装配实例变换及 `meshed`、`surface_only`、`invalid_brep`、`meshing_failed`、`worker_failed` 状态。`complete` 表示全部定义已检查，`fully_meshed` 才表示全部成功；存在未通过项时退出码为 1，不能将缺失零件当作可用碰撞模型。
 
-`--reuse-library 旧目录` 可向新目录复用已有网格，严格检查同一 STEP、BRep 校验值、定义坐标、OCCT 版本、离散参数及全部网格文件；不兼容缓存返回失败，不覆盖旧输出。派生装配中未变的零件可复用，网格原始清单保留，当前装配绑定记录于新 `library.json`。中断后的目录也可作为只读缓存；此操作只生成来源网格，不决定刚体归属或接触近似。
+`--reuse-library 旧目录` 可向新目录复用已有网格，严格检查同一 STEP、BRep 校验值、定义坐标、OCCT 版本、离散方法版本、参数及全部网格文件；不兼容缓存返回失败，不覆盖旧输出。派生装配中未变的零件可复用，网格原始清单保留，当前装配绑定记录于新 `library.json`。中断后的目录也可作为只读缓存；此操作只生成来源网格，不决定刚体归属或接触近似。
+
+### 方管解析碰撞组件
+
+```bash
+alohamini-mujoco cad-prism \
+  --cad-bundle ~/Alohamini_workspace/simulation/cad/assembly \
+  --definition "${CAD_DEFINITION:?请选择空心方管零件的定义ID}" --axis z \
+  --output ~/Alohamini_workspace/simulation/cad/beam-component
+python -m mujoco.viewer \
+  --mjcf ~/Alohamini_workspace/simulation/cad/beam-component/component.xml
+```
+
+`--axis` 是零件定义坐标系中的贯通方向。命令只接受单个、轴向平面组成的空心矩形柱体，生成保留贯通空腔的 4 个原生 box。原实体与组合体的两个方向布尔差集均须为空，检查精度受 OCCT 及源 CAD 容差限制；MuJoCo 另行验证空腔与四面管壁。额外孔、端盖、曲面或差集残留均拒绝，不丢弃几何特征。
+
+输出 `component.json` 和可直接查看的静态 `component.xml`。组件位于 CAD 零件定义坐标系，保留装配实例变换；须明确刚体归属和零件到连杆的变换后，才能组合进整机模型。组件不是完整连杆替换清单，不能直接传给 `--collision-bundle`。
 
 ### 零件坐标校验
 
@@ -141,6 +156,8 @@ alohamini-mujoco cad-register \
 ```
 
 `T_link_part` 将零件定义坐标变换到 URDF 连杆局部坐标，平移单位为 m；程序验证给定变换，不自动拟合。`--visual-index` 默认 0；分量序号对应 `collision.components(meshes.binary_stl(原始STL字节))`，在缝合之前确定，并与源网格校验值绑定。
+
+多个闭壳在原 STL 中共享边时，可额外指定 `--surface-index`，按仅有两面相邻的边划分所选连通分量。选择仅引用原三角面，不补面或改变坐标；输出保留分区索引校验值，不据此推断独立实体或刚体归属。
 
 检查覆盖两个网格的全部三角面，使用自适应细分给出双向最大表面距离的 float64 上下界。`--max-samples` 是每个方向的查询预算，预算不足记为 `inconclusive`，返回失败。输出 `registration.json`、连杆坐标下的 CAD 网格和所选视觉分量。校验仅适用于所选零件与视觉分量，不包含解析 CAD 离散误差、其他零件或实物尺寸，也不替换机器人碰撞体。
 

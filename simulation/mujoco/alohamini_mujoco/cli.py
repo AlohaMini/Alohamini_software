@@ -128,6 +128,13 @@ def main(argv=None):
     library.add_argument("--angular-deflection-rad", type=float, default=0.1)
     library.add_argument("--reuse-library", type=Path)
     library.add_argument("--output", type=Path, required=True)
+    prism = commands.add_parser(
+        "cad-prism", help="extract four native walls of a CAD hollow rectangular prism"
+    )
+    prism.add_argument("--cad-bundle", type=Path, required=True)
+    prism.add_argument("--definition", required=True)
+    prism.add_argument("--axis", choices=("x", "y", "z"), required=True)
+    prism.add_argument("--output", type=Path, required=True)
     registration = commands.add_parser(
         "cad-register", help="verify an explicit CAD-part transform against a visual component"
     )
@@ -135,6 +142,7 @@ def main(argv=None):
     registration.add_argument("--link", required=True)
     registration.add_argument("--visual-index", type=int, default=0)
     registration.add_argument("--component-index", type=int, required=True)
+    registration.add_argument("--surface-index", type=int)
     registration.add_argument("--T-link-part", type=json.loads, required=True)
     registration.add_argument("--tolerance-m", type=float, required=True)
     registration.add_argument("--max-samples", type=int, default=1_000_000)
@@ -202,6 +210,22 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "cad-prism":
+            from .cad_prism import export_hollow_prism
+
+            report = export_hollow_prism(
+                args.cad_bundle, args.definition, args.output, axis="xyz".index(args.axis)
+            )
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output),
+                        "primitives": len(report["primitives"]),
+                        "proof": report["proof"],
+                    }
+                )
+            )
+            return 0
         if args.operation == "cad-tessellate-all":
             from .cad_library import tessellate_assembly
 
@@ -265,6 +289,7 @@ def main(argv=None):
                 link=args.link,
                 visual_index=args.visual_index,
                 component_index=args.component_index,
+                surface_index=args.surface_index,
                 T_link_part=args.T_link_part,
                 tolerance_m=args.tolerance_m,
                 max_samples=args.max_samples,

@@ -13,6 +13,7 @@ import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
+from ._cad_mesh import TESSELLATION_METHOD
 from .cad import file_sha256
 from .frames import rigid_transform
 
@@ -109,6 +110,7 @@ def tessellate_assembly(
         ):
             raise ValueError(f"CAD source checksum or unit mismatch: {definition}")
     settings = {
+        "tessellation_method": TESSELLATION_METHOD,
         "linear_deflection_m": linear_deflection_m,
         "angular_deflection_rad": angular_deflection_rad,
     }

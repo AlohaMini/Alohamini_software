@@ -76,11 +76,14 @@ def test_subdivision_finds_a_gap_away_from_initial_vertices_and_centroids():
     assert report["subdivision_levels"] > 1
 
 
-def test_registration_binds_explicit_component_transform_and_rejects_tampering(tmp_path):
+@pytest.mark.parametrize("joined", [False, True])
+def test_registration_binds_explicit_component_transform_and_rejects_tampering(tmp_path, joined):
     vertices = np.array([[0, 0, 0], [0.02, 0, 0], [0, 0.03, 0], [0, 0, 0.04]])
     faces = np.array([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]])
     triangles = vertices[faces]
-    stl = b"\0" * 80 + struct.pack("<I", len(faces))
+    if joined:
+        triangles = np.vstack((triangles, (vertices * [1, -1, -1])[faces]))
+    stl = b"\0" * 80 + struct.pack("<I", len(triangles))
     for triangle in triangles:
         stl += struct.pack("<12fH", *([0, 0, 0] + triangle.reshape(-1).tolist()), 0)
     (tmp_path / "part.stl").write_bytes(stl)
@@ -117,11 +120,28 @@ def test_registration_binds_explicit_component_transform_and_rejects_tampering(t
         tmp_path / "registered",
         link="part",
         component_index=0,
+        surface_index=0 if joined else None,
         T_link_part=transform,
         tolerance_m=1e-7,
     )
     assert report["passed"]
+    if joined:
+        assert report["target"]["surface_partition"]["surface_count"] == 2
+        assert not report["target"]["surface_partition"]["geometry_changed"]
+        assert report["target"]["surface_partition"]["component_triangles"] == 8
     assert report["target"]["visual"]["sha256"] == file_sha256(tmp_path / "part.stl")
+    for invalid_surface in (True, -1, 2):
+        with pytest.raises(ValueError, match="manifold surface"):
+            register_part(
+                description,
+                source,
+                tmp_path / "invalid",
+                link="part",
+                component_index=0,
+                surface_index=invalid_surface,
+                T_link_part=transform,
+                tolerance_m=1e-7,
+            )
     for name, expected in report["files"].items():
         assert file_sha256(tmp_path / "registered" / name) == expected
     transform[0, 3] += 0.01
@@ -131,6 +151,7 @@ def test_registration_binds_explicit_component_transform_and_rejects_tampering(t
         tmp_path / "wrong",
         link="part",
         component_index=0,
+        surface_index=0 if joined else None,
         T_link_part=transform,
         tolerance_m=1e-7,
     )
@@ -143,6 +164,7 @@ def test_registration_binds_explicit_component_transform_and_rejects_tampering(t
             tmp_path / "tampered",
             link="part",
             component_index=0,
+            surface_index=0 if joined else None,
             T_link_part=transform,
             tolerance_m=1e-7,
         )
