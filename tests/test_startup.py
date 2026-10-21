@@ -495,7 +495,9 @@ class StartupTests(unittest.TestCase):
             with self.subTest(address=address):
                 self.events.clear()
                 serial.drop.add((gripper.motor_id, 2, address))
-                with self.assertRaisesRegex(ConnectionError, f"Read {address}.*超时.*attempts=4"):
+                with self.assertRaisesRegex(
+                    ConnectionError, f"Read {address}.*timeout.*attempts=4"
+                ):
                     self.open()
                 self.assertFalse(any(packet[4:7] == b"\x03\x28\x01" for _, packet in self.events))
                 self.assertFalse(any(packet[4:6] == b"\x03\x30" for _, packet in self.events))

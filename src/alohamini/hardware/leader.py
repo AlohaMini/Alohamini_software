@@ -110,8 +110,8 @@ class BimanualLeader:
                     try:
                         device.connect_passive(session)
                     except OSError as exc:
-                        label = "左主臂" if side == "left" else "右主臂"
-                        raise ConnectionError(f"{label}连接失败：{exc}") from exc
+                        label = "Left leader" if side == "left" else "Right leader"
+                        raise ConnectionError(f"{label} connection failed: {exc}") from exc
                     self._resources.callback(device.disable_torque)
                 for device in self.devices.values():
                     device.disable_torque()
