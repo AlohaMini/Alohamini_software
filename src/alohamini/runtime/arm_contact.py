@@ -58,6 +58,8 @@ class GripperHoldSettings:
     preload_fraction: float = 0.03
     target_current_a: float = 0.6
     current_deadband_a: float = 0.05
+    motion_output_fraction: float = 1.0
+    # Initial holding output, applied only when closing contact is detected.
     initial_output_fraction: float = 0.25
     minimum_output_fraction: float = 0.05
     maximum_output_fraction: float = 0.35
@@ -76,6 +78,7 @@ class GripperHoldSettings:
             <= self.minimum_output_fraction
             <= self.initial_output_fraction
             <= self.maximum_output_fraction
+            <= self.motion_output_fraction
             <= 1
         ):
             raise ValueError("Gripper output fractions must be ordered within [0, 1]")
@@ -150,6 +153,7 @@ class ArmContactGuard:
         self._gripper_outputs: dict[str, float] = {}
         self._gripper_output_requests: dict[str, float] = {}
         self._restore_outputs: set[str] = set()
+        self._motion_output_restorations: set[str] = set()
         self._opening_retreats: dict[str, float] = {}
         self._active_grips: set[str] = set()
         self._holds: dict[str, float] = {}
@@ -181,6 +185,11 @@ class ArmContactGuard:
     def output_limits(self) -> dict[str, float]:
         """Requested output ceilings for grippers supervised in this cycle."""
         return {name: self._gripper_output_requests[name] for name in self._gripper_samples}
+
+    @property
+    def motion_output_restorations(self) -> set[str]:
+        """Grippers whose position target must be confirmed before restoring output."""
+        return set(self._motion_output_restorations)
 
     @property
     def gripper_status(self) -> dict[str, dict]:
@@ -228,6 +237,7 @@ class ArmContactGuard:
         self._gripper_samples.clear()
         self._active_grips.clear()
         self._restore_outputs.clear()
+        self._motion_output_restorations.clear()
         self._opening_retreats.clear()
         self._gripper_output_requests.update(self._gripper_outputs)
         self._joint_stall_currents_a.clear()
@@ -263,6 +273,7 @@ class ArmContactGuard:
             self.cancel_candidates()
             raise
         self._last_time = now
+        self._motion_output_restorations.clear()
         self._candidates = {k: v for k, v in self._candidates.items() if k in goals_rad}
         self._gripper_samples = {k: v for k, v in self._gripper_samples.items() if k in goals_rad}
         self._joint_stall_currents_a.clear()
@@ -280,13 +291,14 @@ class ArmContactGuard:
                 received = now if feedback_times_s is None else feedback_times_s[name]
                 previous = self._gripper_samples.get(name)
                 self._gripper_samples[name] = _GripperCurrentSample(received, current, closing)
-                self._gripper_outputs.setdefault(name, self.gripper_hold.initial_output_fraction)
+                self._gripper_outputs.setdefault(name, self.gripper_hold.motion_output_fraction)
                 self._gripper_output_requests.setdefault(
-                    name, self.gripper_hold.initial_output_fraction
+                    name, self.gripper_hold.motion_output_fraction
                 )
                 if name in self._restore_outputs:
-                    self._gripper_output_requests[name] = self.gripper_hold.initial_output_fraction
+                    self._gripper_output_requests[name] = self.gripper_hold.motion_output_fraction
                     self._restore_outputs.remove(name)
+                    self._motion_output_restorations.add(name)
                 if name in self._holds and (
                     (goal - self._holds[name]) * self._release_directions[name] >= release_margin
                 ):
@@ -328,6 +340,12 @@ class ArmContactGuard:
                     spec.calibration.validate_position(present)
                     hold = present
                     if closing:
+                        # Free motion keeps the installed output ceiling. Reduce
+                        # it immediately on contact, before the preload is sent.
+                        self._gripper_output_requests[name] = min(
+                            self._gripper_outputs[name], self.gripper_hold.initial_output_fraction
+                        )
+                        self._motion_output_restorations.discard(name)
                         # One bounded inward preload, never accumulated each tick.
                         remaining = max(
                             0.0, (present - contact.closed_position_rad) * open_direction

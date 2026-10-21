@@ -383,6 +383,104 @@ class FeetechDeviceTests(unittest.TestCase):
                 )
         self.assertFalse(self.writes())
 
+    def test_ensure_position_targets_repairs_dropped_sync_write_without_other_changes(self):
+        self.connect()
+        self.serial.set(1, 40, 1, 0)
+        self.serial.set(1, 48, 2, 400)
+        serial_write = self.serial.write
+
+        def drop_group_write(packet):
+            if packet[4:6] == bytes([0x83, 42]):
+                self.serial.requests.append(packet)
+                return len(packet)
+            return serial_write(packet)
+
+        with patch.object(self.serial, "write", side_effect=drop_group_write):
+            self.device.write_targets(positions_rad={"joint": math.pi / 8}, velocities_raw={})
+        self.assertEqual(self.serial.get(1, 42, 2), 3000)
+        expected = {motor_id: data.copy() for motor_id, data in self.serial.registers.items()}
+        expected[1][42:44] = (2304).to_bytes(2, "little")
+        self.serial.requests.clear()
+        self.assertIsNone(self.device.ensure_position_targets({"joint": math.pi / 8}))
+        self.assertEqual(self.serial.registers, expected)
+        self.assertEqual(
+            [(packet[2], packet[4], packet[5]) for packet in self.serial.requests],
+            [(1, 2, 42), (1, 3, 42), (1, 2, 42)],
+        )
+        self.serial.requests.clear()
+        self.device.ensure_position_targets({"joint": math.pi / 8})
+        self.assertEqual(
+            [(packet[2], packet[4], packet[5]) for packet in self.serial.requests],
+            [(1, 2, 42)],
+        )
+
+    def test_ensure_position_targets_validates_entire_batch_before_io(self):
+        self.serial.set(2, 33, 1, 0)
+        self.serial.set(2, 46, 2, 2000)
+        self.device = self.new_device(
+            position_calibrations={"joint": self.calibration, "wheel": self.calibration},
+            velocity_limits={},
+        )
+        self.connect()
+        for value in (True, None, "0", -2, 2, math.nan, math.inf):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.device.ensure_position_targets({"joint": 0, "wheel": value})
+        for values in ({}, {"unknown": 0}, {"joint": 0, "unknown": 0}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                self.device.ensure_position_targets(values)
+        self.assertFalse(self.serial.requests)
+
+    def test_ensure_position_targets_requires_ready_verified_position_motors(self):
+        with self.assertRaises(ConnectionError):
+            self.device.ensure_position_targets({"joint": 0})
+        self.factory.assert_not_called()
+        self.connect()
+        for field, value in (("_ready", False), ("_verified", {"joint"}), ("_modes", {"joint"})):
+            with self.subTest(field=field), patch.object(self.device, field, value):
+                with self.assertRaises(ConnectionError):
+                    self.device.ensure_position_targets({"joint": 0})
+        with self.assertRaises(ValueError):
+            self.device.ensure_position_targets({"wheel": 0})
+        self.assertFalse(self.serial.requests)
+
+    def test_ensure_position_targets_cannot_succeed_with_unaccepted_repair(self):
+        self.connect()
+        self.serial.ignore_writes.add((1, 42))
+        with self.assertRaisesRegex(ConnectionError, "Register write not accepted.*address 42"):
+            self.device.ensure_position_targets({"joint": 0})
+        self.assertEqual(self.serial.get(1, 42, 2), 3000)
+        self.assertEqual([packet[4] for packet in self.serial.requests], [2, 3, 2])
+
+    def test_ensure_position_targets_requires_ack_even_if_target_register_changed(self):
+        self.connect()
+        self.serial.drop.add((1, 3, 42))
+        with self.assertRaisesRegex(ConnectionError, "Write 42=2048.*attempts=4"):
+            self.device.ensure_position_targets({"joint": 0})
+        self.assertEqual(self.serial.get(1, 42, 2), 2048)
+        self.assertEqual(len(self.writes()), 4)
+
+    def test_ensure_position_targets_read_failure_never_writes_or_claims_success(self):
+        self.connect()
+        self.serial.drop.add((1, 2, 42))
+        with self.assertRaisesRegex(ConnectionError, "Read 42.*attempts=4"):
+            self.device.ensure_position_targets({"joint": 0})
+        self.assertFalse(self.writes())
+
+    def test_ensure_position_targets_repair_requires_fresh_readback(self):
+        self.connect()
+        serial_write = self.serial.write
+
+        def lose_repair_readback(packet):
+            if packet[4:6] == bytes([3, 42]):
+                self.serial.drop.add((1, 2, 42))
+            return serial_write(packet)
+
+        with patch.object(self.serial, "write", side_effect=lose_repair_readback):
+            with self.assertRaisesRegex(ConnectionError, "Read 42.*attempts=4"):
+                self.device.ensure_position_targets({"joint": 0})
+        self.assertEqual(self.serial.get(1, 42, 2), 2048)
+        self.assertEqual(len(self.writes()), 1)
+
     def test_output_limits_use_acknowledged_per_mille_register_and_read_only_state(self):
         self.connect()
         limits = self.device.output_limits

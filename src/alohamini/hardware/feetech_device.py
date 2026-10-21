@@ -779,6 +779,27 @@ class FeetechBusDevice(MotorsBus):
         self._sync_write(_GOAL_POSITION, positions)
         self._sync_write(_GOAL_VELOCITY, velocities)
 
+    def ensure_position_targets(self, positions_rad: Mapping[str, float]) -> None:
+        """Confirm accepted position goals before the robot layer raises output.
+
+        Reuse matching goals; repair missing group-write targets with an
+        acknowledged write and readback. This confirms the target register,
+        not physical motion, and never enables torque or changes output caps.
+        """
+        self._check_thread()
+        if (
+            not self._ready
+            or self._verified != self._ids.keys()
+            or self._modes != self._ids.keys()
+        ):
+            raise ConnectionError("Bus has not passed connection validation")
+        if not positions_rad or not positions_rad.keys() <= self._positions.keys():
+            raise ValueError("Expected nonempty known position-controlled motors")
+        positions = self.encode_positions(positions_rad)
+        for name, target in positions.items():
+            if self._read_register(name, _GOAL_POSITION, 2) != target:
+                self._write_verified(name, _GOAL_POSITION, 2, target)
+
     def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
         """Set acknowledged RAM output caps for calibrated position motors.
 
