@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 from alohamini.calibration import EncoderCalibration
 from alohamini.calibration.servo import MotorCalibration
-from alohamini.hardware.feetech_device import DeviceOperationError, FeetechBusDevice
+from alohamini.hardware.feetech_device import (
+    DeviceOperationError,
+    FeetechBusDevice,
+    PositionMotionProfile,
+)
 from alohamini.model import ActuatorSpec
 from alohamini.runtime.lifecycle import CommandSubmission, HostPhase, HostSupervisor
 from alohamini.schema import CommandIdentity
@@ -147,6 +151,26 @@ class DelayedRegisterSerial(RegisterSerial):
         super().reset_input_buffer()  # Future replies survive clearing current input.
 
 
+class PositionMotionProfileTests(unittest.TestCase):
+    def test_profile_defaults_are_immutable_and_allow_register_boundaries(self):
+        profile = PositionMotionProfile()
+        self.assertEqual((profile.goal_velocity, profile.acceleration), (2000, 100))
+        with self.assertRaises(AttributeError):
+            profile.goal_velocity = 2400
+        for velocity, acceleration in ((1, 0), (32767, 254)):
+            self.assertEqual(
+                PositionMotionProfile(velocity, acceleration).goal_velocity, velocity
+            )
+
+    def test_profile_rejects_non_integer_and_out_of_register_values(self):
+        for value in (True, False, None, "2000", 2000.0, math.nan, math.inf, -1, 0, 32768):
+            with self.subTest(goal_velocity=value), self.assertRaises(ValueError):
+                PositionMotionProfile(goal_velocity=value)
+        for value in (True, False, None, "100", 100.0, math.nan, math.inf, -1, 255):
+            with self.subTest(acceleration=value), self.assertRaises(ValueError):
+                PositionMotionProfile(acceleration=value)
+
+
 @unittest.skipUnless(importlib.util.find_spec("scservo_sdk"), "optional Feetech SDK not installed")
 class FeetechDeviceTests(unittest.TestCase):
     def setUp(self):
@@ -168,6 +192,7 @@ class FeetechDeviceTests(unittest.TestCase):
             self.actuators,
             position_calibrations=kwargs.get("position_calibrations", {"joint": self.calibration}),
             velocity_limits=kwargs.get("velocity_limits", {"wheel": 3000}),
+            position_profiles=kwargs.get("position_profiles"),
         )
 
     def connect(self):
@@ -177,7 +202,7 @@ class FeetechDeviceTests(unittest.TestCase):
     def writes(self):
         return [p for p in self.serial.requests if p[4] in (3, 0x83)]
 
-    def connect_for_preparation(self):
+    def connect_for_preparation(self, *, position_profiles=None):
         calibrations = {
             "joint": MotorCalibration(1, 0, 0, 1400, 2700),
             "wheel": MotorCalibration(2, 0, 0, 1400, 2700),
@@ -186,7 +211,8 @@ class FeetechDeviceTests(unittest.TestCase):
             self.serial.set(motor_id, 9, 2, 1400)
             self.serial.set(motor_id, 11, 2, 2700)
         self.device = self.new_device(
-            position_calibrations={"joint": calibrations["joint"].encoder_calibration()}
+            position_calibrations={"joint": calibrations["joint"].encoder_calibration()},
+            position_profiles=position_profiles,
         )
         self.connect()
         self.device.disable_torque()
@@ -201,6 +227,87 @@ class FeetechDeviceTests(unittest.TestCase):
         self.assertTrue(self.factory.call_args.kwargs["exclusive"])
         self.assertEqual(self.factory.call_args.kwargs["timeout"], 0)
         self.assertEqual(self.factory.call_args.kwargs["write_timeout"], 0.005)
+
+    def test_position_profiles_require_complete_position_only_mapping_before_io(self):
+        profile = PositionMotionProfile(2400, 120)
+        for profiles in ({}, {"wheel": profile}, {"joint": profile, "wheel": profile}):
+            with self.subTest(profiles=profiles), self.assertRaises(ValueError):
+                self.new_device(position_profiles=profiles)
+        for profiles in ([], {"joint": {"goal_velocity": 2400}}, {"joint": None}):
+            with self.subTest(profiles=profiles), self.assertRaises(TypeError):
+                self.new_device(position_profiles=profiles)
+        with self.assertRaises(ValueError):
+            self.new_device(
+                position_calibrations={"joint": self.calibration, "wheel": self.calibration},
+                velocity_limits={}, position_profiles={"joint": profile},
+            )
+        self.assertEqual(self.device.position_profiles, {"joint": PositionMotionProfile()})
+        profiles = {"joint": profile}
+        device = self.new_device(position_profiles=profiles)
+        profiles.clear()
+        self.assertEqual(device.position_profiles, {"joint": profile})
+        with self.assertRaises(TypeError):
+            device.position_profiles["joint"] = PositionMotionProfile()
+        unconfigured = self.new_device(
+            position_calibrations={}, velocity_limits={}, position_profiles={}
+        )
+        self.assertEqual(unconfigured.position_profiles, {})
+        self.factory.assert_not_called()
+
+    def test_connect_checks_per_position_profile_without_inferring_roles_from_names(self):
+        profiles = {
+            "joint": PositionMotionProfile(2400, 120),
+            "wheel": PositionMotionProfile(1800, 90),
+        }
+        for motor_id, name in ((1, "joint"), (2, "wheel")):
+            self.serial.set(motor_id, 33, 1, 0)
+            self.serial.set(motor_id, 46, 2, profiles[name].goal_velocity)
+            self.serial.set(motor_id, 41, 1, profiles[name].acceleration)
+        self.device = self.new_device(
+            position_calibrations={"joint": self.calibration, "wheel": self.calibration},
+            velocity_limits={}, position_profiles=profiles,
+        )
+        self.connect()
+        self.assertTrue(self.device._ready)
+        self.device.write_targets(positions_rad={"joint": 0, "wheel": 0}, velocities_raw={})
+        self.device.stop()
+        self.assertTrue(all(packet[5] == 42 for packet in self.writes()))
+        for motor_id, name in ((1, "joint"), (2, "wheel")):
+            self.assertEqual(self.serial.get(motor_id, 46, 2), profiles[name].goal_velocity)
+            self.assertEqual(self.serial.get(motor_id, 41, 1), profiles[name].acceleration)
+
+    def test_custom_profile_mismatch_is_read_only_and_blocks_targets(self):
+        for velocity, acceleration in ((2000, 120), (2400, 100)):
+            self.serial.set(1, 46, 2, velocity)
+            self.serial.set(1, 41, 1, acceleration)
+            self.device = self.new_device(
+                position_profiles={"joint": PositionMotionProfile(2400, 120)}
+            )
+            self.connect()
+            with self.subTest(velocity=velocity, acceleration=acceleration):
+                with self.assertRaises(ConnectionError):
+                    self.device.write_targets(positions_rad={"joint": 0}, velocities_raw={})
+                self.assertFalse(self.writes())
+
+    def test_prepare_uses_custom_profile_and_stop_preserves_it(self):
+        calibrations = self.connect_for_preparation(
+            position_profiles={"joint": PositionMotionProfile(2400, 120)}
+        )
+        self.device.prepare(calibrations)
+        self.assertEqual(self.serial.get(1, 46, 2), 2400)
+        self.assertEqual(self.serial.get(1, 41, 1), 120)
+        self.assertEqual(self.serial.get(2, 46, 2), 0)
+        self.assertEqual(self.serial.get(2, 41, 1), 254)
+        self.assertEqual(self.serial.get(1, 85, 1), 254)
+        self.assertEqual(self.serial.get(1, 21, 1), 16)
+        self.assertEqual(self.serial.get(1, 22, 1), 32)
+        self.assertEqual(self.serial.get(1, 23, 1), 0)
+        self.serial.requests.clear()
+        self.device.stop()
+        self.device.write_targets(positions_rad={"joint": 0}, velocities_raw={})
+        self.assertFalse(any(p[2] == 1 and p[5] in (41, 46, 85) for p in self.writes()))
+        self.assertEqual(self.serial.get(1, 46, 2), 2400)
+        self.assertEqual(self.serial.get(1, 41, 1), 120)
 
     def test_read_calibration_is_read_only_and_decodes_live_offsets(self):
         with self.assertRaises(ConnectionError):
@@ -537,7 +644,7 @@ class FeetechDeviceTests(unittest.TestCase):
                 self.assertEqual(self.serial.registers, expected)
                 self.assertEqual(
                     [(p[2], p[4], p[5]) for p in self.serial.requests],
-                    [(1, 2, 40), (2, 2, 40), (1, 2, 16), (1, 2, 48),
+                    [(1, 2, 40), (1, 2, 16), (1, 2, 48),
                      (1, 3, 48), (1, 2, 48)],
                 )
                 self.assertEqual(
@@ -594,13 +701,48 @@ class FeetechDeviceTests(unittest.TestCase):
             self.device.initialize_output_limits({"wheel": 1})
         self.assertFalse(self.serial.requests)
 
-    def test_initialize_output_limits_checks_torque_off_for_the_entire_bus(self):
+    def test_initialize_output_limits_skips_unrelated_velocity_motor(self):
+        self.connect()
+        self.serial.set(1, 40, 1, 0)
+        self.serial.set(1, 48, 2, 250)
+        self.serial.errors[(2, 2, 40)] = 0x04
+        wheel = self.serial.registers[2].copy()
+        self.assertEqual(self.device.initialize_output_limits({"joint": 1}), {"joint": 1})
+        self.assertFalse(any(packet[2] == 2 for packet in self.serial.requests))
+        self.assertEqual(self.serial.registers[2], wheel)
+        self.assertEqual(self.serial.get(2, 40, 1), 1)
+
+    def test_initialize_output_limits_checks_all_selected_before_reading_or_writing_caps(self):
+        self.serial.set(2, 33, 1, 0)
+        self.serial.set(2, 46, 2, 2000)
+        self.device = self.new_device(
+            position_calibrations={"joint": self.calibration, "wheel": self.calibration},
+            velocity_limits={},
+        )
         self.connect()
         self.serial.set(1, 40, 1, 0)
         self.serial.set(1, 48, 2, 250)
         with self.assertRaisesRegex(ConnectionError, "Expected torque OFF.*wheel"):
-            self.device.initialize_output_limits({"joint": 1})
+            self.device.initialize_output_limits({"joint": 1, "wheel": 1})
         self.assertEqual([(p[2], p[5]) for p in self.serial.requests], [(1, 40), (2, 40)])
+        self.assertFalse(self.writes())
+        self.assertEqual(self.device.output_limits, {})
+        self.serial.set(2, 40, 1, 0)
+        self.serial.requests.clear()
+        self.device.initialize_output_limits({"joint": 1, "wheel": 1})
+        self.assertEqual(
+            [(p[2], p[5]) for p in self.serial.requests[:6]],
+            [(1, 40), (2, 40), (1, 16), (1, 48), (2, 16), (2, 48)],
+        )
+        self.assertTrue(all(p[4] == 2 for p in self.serial.requests[:6]))
+
+    def test_initialize_output_limits_still_rejects_selected_torque_on(self):
+        self.connect()
+        self.serial.set(1, 40, 1, 2)
+        self.serial.set(1, 48, 2, 250)
+        with self.assertRaisesRegex(ConnectionError, "Expected torque OFF.*joint"):
+            self.device.initialize_output_limits({"joint": 1})
+        self.assertEqual([(p[2], p[5]) for p in self.serial.requests], [(1, 40)])
         self.assertFalse(self.writes())
         self.assertEqual(self.serial.get(1, 48, 2), 250)
         self.assertEqual(self.device.output_limits, {})
@@ -632,7 +774,7 @@ class FeetechDeviceTests(unittest.TestCase):
         for motor_id in (1, 2):
             self.serial.set(motor_id, 40, 1, 0)
         self.serial.set(1, 48, 2, 250)
-        for motor_id, address in ((2, 40), (1, 16), (1, 48)):
+        for motor_id, address in ((1, 40), (1, 16), (1, 48)):
             self.serial.errors[(motor_id, 2, address)] = 0x04
             with self.subTest(address=address), self.assertRaises(ConnectionError):
                 self.device.initialize_output_limits({"joint": 1})
@@ -821,14 +963,18 @@ class FeetechDeviceTests(unittest.TestCase):
             with self.subTest(operation=operation):
                 calibrations = self.connect_for_preparation()
                 self.device.prepare(calibrations)
-                self.serial.set(2, 40, 1, 2)
+                motor_id = 2 if operation == "preparation" else 1
+                name = "wheel" if motor_id == 2 else "joint"
+                self.serial.set(motor_id, 40, 1, 2)
                 self.serial.requests.clear()
                 with self.assertRaises(ConnectionError) as caught:
                     if operation == "preparation":
                         self.device.verify_calibration(calibrations)
                     else:
                         self.device.initialize_output_limits({"joint": 1})
-                for context in (operation, "/dev/test-only", "wheel", "ID 2", "40 raw=2"):
+                for context in (
+                    operation, "/dev/test-only", name, f"ID {motor_id}", "40 raw=2"
+                ):
                     self.assertIn(context, str(caught.exception))
                 self.assertFalse(self.writes())
 
