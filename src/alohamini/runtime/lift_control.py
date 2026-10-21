@@ -206,8 +206,11 @@ class LiftHoming:
         Use the source's 10-tick position tolerance over a longer, one-second
         window, not its 50 ms contact interval. Moving is diagnostic here, not
         proof of physical motion with torque off. A speed peak accompanying
-        encoder jitter must not veto the whole window; sustained reported
-        velocity or position drift still prevents zeroing.
+        encoder jitter must not veto the whole window. If jitter dominates the
+        speed median, require at most one tick of motion, zero median drift and
+        a quiet tail with the latest sample reporting rest. This exception only
+        covers reported speed peaks up to 50, as seen with one-tick jitter.
+        Sustained recent velocity or position drift still prevents zeroing.
         """
         self.velocity_raw = 0
         if not self._released:
@@ -232,11 +235,14 @@ class LiftHoming:
             first = [p for t, p, _ in samples if t <= samples[0][0] + 0.25]
             last = [p for t, p, _ in samples if t >= now - 0.25]
             drift = statistics.median(last) - statistics.median(first)
+            quantized_jitter = (
+                span <= 1 and drift == 0 and max_speed <= 50 and speed == 0 and moving == 0
+            )
             if (
                 max_gap <= 0.1
                 and span <= 10
                 and abs(drift) <= 2
-                and median_speed <= 10
+                and (median_speed <= 10 or quantized_jitter)
                 and tail_speed <= 10
             ):
                 self.phase = "complete"
