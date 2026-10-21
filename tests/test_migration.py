@@ -978,7 +978,7 @@ class SourceDifferentialTests(unittest.TestCase):
                 self.assertEqual(new.velocity_raw, writes[-1])
                 self.assertEqual(new.target_height_m * 1000, result["lift_axis.height_mm"])
 
-    def test_gripper_omits_extra_closing_and_joint_stalls_are_intentionally_advisory(self):
+    def test_gripper_preload_matches_source_and_joint_stalls_are_intentionally_advisory(self):
         names = (
             "_CURRENT_MA_PER_RAW_UNIT",
             "_JOINT_COLLISION_DURATION_S",
@@ -1067,10 +1067,8 @@ class SourceDifferentialTests(unittest.TestCase):
                         now=stamp,
                     )[name]
                     if gripper:
-                        # Intentional change: hold measured position, without the
-                        # source's additional 3% closing stroke. Retreat still releases.
-                        self.assertEqual(actual, position(50 if stamp < 0.3 else goal))
-                        self.assertEqual(expected, 47 if stamp < 0.3 else goal)
+                        # Same bounded 3% preload; SI conversion may round one tick.
+                        self.assertAlmostEqual(actual, position(expected), delta=math.tau / 4096)
                     else:
                         self.assertEqual(actual, position(goal))
                         self.assertFalse(new.holds)

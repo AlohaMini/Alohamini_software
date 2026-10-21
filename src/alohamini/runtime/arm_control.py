@@ -8,7 +8,7 @@ from alohamini._validation import identifier
 from alohamini.calibration import EncoderCalibration
 from alohamini.hardware.feedback import FeedbackBatch
 from alohamini.model import ActuatorSpec
-from alohamini.runtime.arm_contact import ArmContactGuard, ArmJointSpec
+from alohamini.runtime.arm_contact import ArmContactGuard, ArmJointSpec, GripperContactCalibration
 
 
 class ArmDevice(Protocol):
@@ -21,6 +21,8 @@ class ArmDevice(Protocol):
     def write_targets(
         self, *, positions_rad: Mapping[str, float], velocities_raw: Mapping[str, int]
     ) -> None: ...
+
+    def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]: ...
 
 
 class ArmController:
@@ -88,6 +90,18 @@ class ArmController:
     def joint_stall_currents_a(self) -> dict[str, float]:
         return self._guard.joint_stall_currents_a
 
+    @property
+    def initial_output_limits(self) -> dict[str, float]:
+        return {
+            name: self._guard.gripper_hold.initial_output_fraction
+            for name, spec in self._joints.items()
+            if isinstance(spec.contact, GripperContactCalibration)
+        }
+
+    @property
+    def gripper_status(self) -> dict[str, dict]:
+        return self._guard.gripper_status
+
     def bind_session(self, host_session_id: str) -> None:
         identifier(host_session_id, "host_session_id")
         if self._session is not None:
@@ -96,6 +110,7 @@ class ArmController:
 
     def clear_targets(self) -> None:
         """Cancel motion on stop; preserve contact holds until explicit retreat."""
+        self._guard.stop_holds(self._positions)
         self._targets.clear()
         self._sent.clear()
         self._positions.clear()
@@ -193,6 +208,15 @@ class ArmController:
         # target bounds faults the Host; its stop backend can hold actual raw position.
         for name, position in limited.items():
             self._joints[name].calibration.validate_position(position)
+        output_limits = self._guard.output_limits
+        # Apply verified output ceilings on both arms before sending any position.
+        for source, group in self._groups.items():
+            requested = {name: value for name, value in output_limits.items() if name in group}
+            if requested:
+                applied = self._devices[source].write_output_limits(requested)
+                if applied.keys() != requested.keys():
+                    raise RuntimeError("Device did not confirm every gripper output limit")
+                self._guard.confirm_output_limits(applied)
         for source, group in self._groups.items():
             changed = {
                 name: position

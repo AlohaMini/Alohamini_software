@@ -176,6 +176,13 @@ def _open_host(
             return None
         for device in devices.values():
             device.prepare({m.name: calibrations[m.name] for m in device.actuators})
+        initial_limits = host.control.arms.initial_output_limits
+        for device in devices.values():
+            limits = {
+                m.name: initial_limits[m.name] for m in device.actuators if m.name in initial_limits
+            }
+            if limits:
+                device.write_output_limits(limits)
         # No bus is enabled until every bus has a verified safe target.
         for device in devices.values():
             device.stop()

@@ -5,7 +5,7 @@ import socket
 import tempfile
 import time
 import unittest
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,6 +14,7 @@ from test_feetech_device import DelayedRegisterSerial, RegisterSerial, Simulated
 
 from alohamini.calibration.servo import MotorCalibration, load_motor_calibration
 from alohamini.errors import CommandRejectedError
+from alohamini.hardware.feetech_device import FeetechBusDevice
 from alohamini.hardware.motors_bus import MotorsBus
 from alohamini.model import get_robot_model
 from alohamini.runtime.lifecycle import CommandSubmission, HostPhase
@@ -281,6 +282,92 @@ class StartupTests(unittest.TestCase):
                 )
         finally:
             host.close()
+        self.assert_closed()
+
+    def test_startup_verifies_both_gripper_output_caps_before_any_bus_enable(self):
+        host = self.open()
+        try:
+            first_enable = next(
+                index for index, (_, packet) in enumerate(self.events)
+                if packet[4:7] == b"\x03\x28\x01"
+            )
+            caps = [
+                (index, bus, packet)
+                for index, (bus, packet) in enumerate(self.events)
+                if packet[4:6] == b"\x03\x30"
+            ]
+            grippers = [motor for motor in self.model.actuators if motor.name.endswith("_gripper")]
+            self.assertEqual(
+                {(bus, packet[2]) for _, bus, packet in caps},
+                {(motor.bus, motor.motor_id) for motor in grippers},
+            )
+            self.assertEqual(len(caps), len(grippers))
+            initial = host.control.arms.initial_output_limits
+            for index, bus, packet in caps:
+                motor = next(m for m in grippers if (m.bus, m.motor_id) == (bus, packet[2]))
+                expected = int(initial[motor.name] * 1000)
+                self.assertEqual(int.from_bytes(packet[6:-1], "little"), expected)
+                self.assertLess(index, first_enable)
+                self.assertTrue(any(
+                    source == bus and read[2] == motor.motor_id and read[4:7] == b"\x02\x30\x02"
+                    for source, read in self.events[index + 1:first_enable]
+                ))
+                self.assertEqual(
+                    self.serials[f"/dev/am_arm_follower_{bus}"].get(motor.motor_id, 48, 2),
+                    expected,
+                )
+        finally:
+            host.close()
+        self.assert_closed()
+
+    def test_failed_gripper_output_cap_never_enables_and_cleans_up_both_buses(self):
+        gripper = next(m for m in self.model.actuators if m.name == "arm_right_gripper")
+        self.serials["/dev/am_arm_follower_right"].ignore_writes.add((gripper.motor_id, 48))
+        with self.assertRaisesRegex(ConnectionError, "Register write not accepted.*address 48"):
+            self.open()
+        self.assertFalse(any(packet[4:7] == b"\x03\x28\x01" for _, packet in self.events))
+        initial_caps = [
+            (bus, packet) for bus, packet in self.events
+            if packet[4:6] == b"\x03\x30" and int.from_bytes(packet[6:-1], "little") < 1000
+        ]
+        self.assertEqual([bus for bus, _ in initial_caps], ["left", "right"])
+        self.assert_closed()
+        for motor in self.model.actuators:
+            if motor.name.endswith("_gripper"):
+                serial = self.serials[f"/dev/am_arm_follower_{motor.bus}"]
+                self.assertEqual(serial.get(motor.motor_id, 48, 2), 1000)
+
+    def test_startup_skips_output_limit_call_for_bus_without_grippers(self):
+        gripper = next(m for m in self.model.actuators if m.name == "arm_right_gripper")
+        model = replace(
+            self.model,
+            actuators=tuple(m for m in self.model.actuators if m != gripper),
+        )
+        self.path.write_text(json.dumps({
+            name: asdict(value) for name, value in self.calibrations.items()
+            if name != gripper.name
+        }), encoding="utf-8")
+        del self.serials["/dev/am_arm_follower_right"].registers[gripper.motor_id]
+        write_output_limits = FeetechBusDevice.write_output_limits
+        with (
+            patch("alohamini.runtime.startup.get_robot_model", return_value=model),
+            patch.object(
+                FeetechBusDevice, "write_output_limits", autospec=True,
+                side_effect=write_output_limits,
+            ) as write,
+        ):
+            host = self.open()
+            try:
+                write.assert_called_once()
+                device, limits = write.call_args.args
+                self.assertEqual(device.actuators[0].bus, "left")
+                self.assertEqual(set(limits), {"arm_left_gripper"})
+                self.assertTrue(all(
+                    serial.get(motor_id, 40, 1) == 1
+                    for serial in self.serials.values() for motor_id in serial.registers
+                ))
+            finally:
+                host.close()
         self.assert_closed()
 
     def test_startup_lift_and_cleanup_wrist_recover_from_one_missing_ack(self):
