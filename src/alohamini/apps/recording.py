@@ -507,9 +507,16 @@ def record_loop(
                 totals = dict.fromkeys(totals, 0.0)
                 report_started = loop_done_t
     finally:
-        client.set_recording_cameras(False)
-        stop_owned_robot(client, robot_model, identity)
-        print(flush=True)
+        primary = sys.exc_info()[1]
+        try:
+            client.set_recording_cameras(False)
+        except Exception as exc:
+            if primary is None:
+                raise
+            logging.warning("Recording camera cleanup failed: %s", exc)
+        finally:
+            stop_owned_robot(client, robot_model, identity)
+            print(flush=True)
 
 
 def record(
@@ -617,7 +624,7 @@ def record(
         if display_data:
             from alohamini.apps.visualization import init_rerun, log_snapshot, shutdown_rerun
 
-            cleanup.callback(shutdown_rerun)
+            cleanup.push(shutdown_rerun)
             init_rerun("alohamini_record")
             on_frame = log_snapshot
         recorded_episodes = 0

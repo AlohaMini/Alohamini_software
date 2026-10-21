@@ -1213,7 +1213,9 @@ class TeleoperationTests(unittest.TestCase):
             patch("alohamini.apps.teleoperation.HostClient") as client,
             patch("alohamini.apps.teleoperation.BimanualLeader") as leader,
             patch("alohamini.apps.visualization.init_rerun") as preview,
-            patch("alohamini.apps.visualization.shutdown_rerun") as shutdown,
+            patch(
+                "alohamini.apps.visualization.shutdown_rerun", autospec=True, return_value=False
+            ) as shutdown,
         ):
             leader.return_value.__enter__.side_effect = OSError("right port failed")
             with self.assertRaisesRegex(OSError, "right port"):
@@ -1227,13 +1229,55 @@ class TeleoperationTests(unittest.TestCase):
             patch("alohamini.apps.teleoperation.HostClient") as client,
             patch("alohamini.apps.teleoperation.BimanualLeader") as leader,
             patch("alohamini.apps.visualization.init_rerun", side_effect=OSError("viewer failed")),
-            patch("alohamini.apps.visualization.shutdown_rerun") as shutdown,
+            patch(
+                "alohamini.apps.visualization.shutdown_rerun", autospec=True, return_value=False
+            ) as shutdown,
         ):
             with self.assertRaisesRegex(OSError, "viewer failed"):
                 teleoperate("127.0.0.1", "alohamini2pro", no_keyboard=True)
         shutdown.assert_called_once()
         leader.return_value.__exit__.assert_called_once()
         client.return_value.__exit__.assert_called_once()
+
+    def test_runtime_leader_failure_stops_robot_and_closes_preview_before_ports(self):
+        events = []
+        failure = ConnectionError("USB/serial write timed out")
+        identity = CommandIdentity("client", 1, "session", 0)
+        with (
+            patch("alohamini.apps.teleoperation.HostClient") as client_type,
+            patch("alohamini.apps.teleoperation.BimanualLeader") as leader_type,
+            patch("alohamini.apps.visualization.init_rerun"),
+            patch("alohamini.apps.visualization.TeleopPreview") as preview_type,
+            patch(
+                "alohamini.apps.visualization.shutdown_rerun",
+                autospec=True,
+                side_effect=lambda *_: events.append("viewer"),
+            ) as shutdown,
+            patch(
+                "alohamini.apps.teleoperation.stop_owned_robot",
+                side_effect=lambda *_: events.append("stop"),
+            ) as stop,
+        ):
+            client = client_type.return_value.__enter__.return_value
+            client.client_id = "client"
+            client.read.side_effect = [snapshot(), snapshot()]
+            client.send_command.return_value = identity
+            leader = leader_type.return_value
+            leader.__enter__.return_value = leader
+            leader.read.side_effect = [{}, failure]
+            for resource, label in (
+                (preview_type, "preview"), (leader_type, "leader"), (client_type, "client")
+            ):
+                resource.return_value.__exit__.side_effect = (
+                    lambda *_args, label=label: events.append(label)
+                )
+            with self.assertRaises(ConnectionError) as caught:
+                teleoperate("127.0.0.1", "alohamini2pro", no_keyboard=True)
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(events, ["stop", "preview", "viewer", "leader", "client"])
+        stop.assert_called_once_with(client, "alohamini2pro", identity)
+        self.assertIs(shutdown.call_args.args[1], failure)
+        preview_type.return_value.__enter__.return_value.submit.assert_called_once()
 
     def test_legacy_optional_profile_is_validated_before_io(self):
         with patch("alohamini.apps.teleoperation.BimanualLeader") as leader:
