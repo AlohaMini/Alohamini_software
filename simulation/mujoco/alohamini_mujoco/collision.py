@@ -205,6 +205,71 @@ def visual_sources(description, link):
     return sources
 
 
+def collision_sources(description, link):
+    """Bind collision provenance to the source shapes as well as visual CAD."""
+    if link not in description.links:
+        raise ValueError(f"Unknown link: {link}")
+    result = []
+    for index, node in enumerate(description.links[link].findall("collision")):
+        geometry = node.find("geometry")
+        if geometry is None or len(geometry) != 1:
+            raise ValueError(f"Expected one source collision shape: {link}")
+        shape = geometry[0]
+        record = {
+            "index": index,
+            "name": node.get("name"),
+            "T_link_geometry": origin(node).tolist(),
+            "type": shape.tag,
+            "parameters": dict(shape.attrib),
+        }
+        if shape.tag == "mesh":
+            path = description.mesh_path(shape)
+            record["mesh"] = {
+                "path": path.relative_to(description.robot_model.directory).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "scale": numbers(shape.get("scale", "1 1 1"), 3, "collision scale").tolist(),
+            }
+        result.append(record)
+    return result
+
+
+def ordered_convex_parts(mesh):
+    """Recover consecutive closed convex shells from an assembled collision STL.
+
+    Shared vertices/edges cannot join neighboring pieces when each shell's
+    original face range remains intact. Every triangle is assigned once; no
+    weld, cap, normal reversal, simplification or decomposition is performed.
+    Unordered, concave, inward or incomplete input is explicitly rejected.
+    """
+    start, unpaired, counts, parts, ranges = 0, 0, {}, [], []
+    for index, face in enumerate(mesh.faces):
+        for a, b in zip(face, np.roll(face, -1), strict=True):
+            key = tuple(sorted((int(a), int(b))))
+            count = counts.get(key, 0) + 1
+            counts[key] = count
+            if count > 2:
+                raise ValueError("Source is not a sequence of closed convex shells")
+            unpaired += 1 if count == 1 else -1
+        if unpaired == 0:
+            selected = mesh.faces[start : index + 1]
+            used, faces = np.unique(selected, return_inverse=True)
+            part = Mesh(mesh.vertices[used].copy(), faces.reshape(-1, 3))
+            validate_convex(part)
+            if signed_volume(part) <= 0:
+                raise ValueError("Inward source shell cannot be interpreted as a convex solid")
+            parts.append(part)
+            ranges.append([start, index + 1])
+            start, counts = index + 1, {}
+    if counts or not parts:
+        raise ValueError("Incomplete source convex shell; no missing faces were added")
+    return parts, {
+        "algorithm": "ordered-closed-convex-shells-v1",
+        "source_triangles": len(mesh.faces),
+        "face_ranges": ranges,
+        "geometry_changed": False,
+    }
+
+
 def validate_convex(mesh):
     if (
         not np.isfinite(mesh.vertices).all()
@@ -477,6 +542,33 @@ def load_bundle(description, directory):
         or not metadata["links"]
     ):
         raise ValueError("Collision bundle has an incompatible coordinate contract")
+
+    def validate_generation(definition, represented_links):
+        if "assembly_inventory" in definition:
+            from .organization import validate_inventory
+
+            inventory = definition["assembly_inventory"]
+            if not isinstance(inventory, dict):
+                raise ValueError("Invalid whole-robot collision inventory")
+            validate_inventory(description, inventory)
+            if set(inventory.get("replaced_links", [])) != represented_links:
+                raise ValueError("Whole-robot collision replacement coverage changed")
+            for link in represented_links:
+                if len(metadata["links"][link].get("pieces", [])) != inventory["links"][link].get(
+                    "recovered_convex_count"
+                ):
+                    raise ValueError(f"Whole-robot collision piece coverage changed: {link}")
+        for parent in definition.get("source_manifests", []):
+            if (
+                not isinstance(parent, dict)
+                or not isinstance(parent.get("generator"), dict)
+                or not isinstance(parent.get("links"), list)
+                or not set(parent["links"]) <= represented_links
+            ):
+                raise ValueError("Invalid collision composition provenance")
+            validate_generation(parent["generator"], set(parent["links"]))
+
+    validate_generation(metadata, set(metadata["links"]))
     result = {}
     for link, record in metadata["links"].items():
         if (
@@ -485,6 +577,12 @@ def load_bundle(description, directory):
             or record.get("source_visuals") != visual_sources(description, link)
         ):
             raise ValueError(f"Collision candidate does not match current CAD frames: {link}")
+        if "source_collisions" in record and record["source_collisions"] != collision_sources(
+            description, link
+        ):
+            raise ValueError(
+                f"Collision candidate does not match current collision sources: {link}"
+            )
         if not isinstance(record.get("pieces"), list):
             raise ValueError(f"Invalid collision pieces: {link}")
         pieces = []

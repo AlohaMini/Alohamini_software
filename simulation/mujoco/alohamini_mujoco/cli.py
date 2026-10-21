@@ -131,6 +131,12 @@ def main(argv=None):
     registration.add_argument("--tolerance-m", type=float, required=True)
     registration.add_argument("--max-samples", type=int, default=1_000_000)
     registration.add_argument("--output", type=Path, required=True)
+    organize = commands.add_parser(
+        "collision-organize",
+        help="inventory the whole robot and recover merged source convex shells",
+    )
+    organize.add_argument("--cad-bundle", type=Path)
+    organize.add_argument("--output", type=Path, required=True)
     merger = commands.add_parser(
         "collision-merge", help="combine disjoint CAD collision candidates"
     )
@@ -140,6 +146,12 @@ def main(argv=None):
         "collision-export", help="export the same convex pieces as URDF/OBJ"
     )
     exporter.add_argument("--collision-bundle", type=Path, required=True)
+    exporter.add_argument(
+        "--mesh-unit",
+        choices=("m", "mm"),
+        default="m",
+        help="OBJ coordinates; URDF poses remain metres",
+    )
     exporter.add_argument("--output", type=Path, required=True)
     checker = commands.add_parser(
         "collision-check-sapien", help="check actual cooked SAPIEN convex shapes"
@@ -177,6 +189,26 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "collision-organize":
+            from .organization import organize_collisions
+
+            report = organize_collisions(
+                Description(get_robot_model("alohamini2pro")),
+                args.output,
+                cad_bundle=args.cad_bundle,
+            )
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output),
+                        "physical_links": report["physical_links"],
+                        "replaced_links": len(report["replaced_links"]),
+                        "collision_shapes": report["organized_collision_shapes"],
+                        "status": report["status"],
+                    }
+                )
+            )
+            return 0
         if args.operation == "cad-register":
             from .registration import register_part
 
@@ -232,7 +264,10 @@ def main(argv=None):
             from .interop import export_collision_urdf
 
             output = export_collision_urdf(
-                Description(get_robot_model("alohamini2pro")), args.collision_bundle, args.output
+                Description(get_robot_model("alohamini2pro")),
+                args.collision_bundle,
+                args.output,
+                mesh_unit=args.mesh_unit,
             )
             print(json.dumps({"output": str(output)}))
             return 0

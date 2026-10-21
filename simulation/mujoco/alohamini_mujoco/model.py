@@ -414,7 +414,9 @@ def build_model(robot_model=None, profile=None, *, scene=None):
         "collision_profile": "cad-bundle" if collision_metadata else profile.collision_profile,
         "collision_bundle": collision_metadata,
         "collision_profile_status": (
-            "explicit CAD candidate; not contact-certified"
+            collision_metadata["definition"].get(
+                "status", "explicit CAD candidate; not contact-certified"
+            )
             if collision_metadata
             else "URDF collision geometry retained; distal contact pads remain provisional"
             if profile.collision_profile == "authoritative"

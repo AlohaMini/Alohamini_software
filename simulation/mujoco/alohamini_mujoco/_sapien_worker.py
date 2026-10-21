@@ -90,6 +90,10 @@ def check(directory):
                         if row.startswith("v ")
                     ]
                 )
+                scale = np.asarray(expected.get("scale", [1.0, 1.0, 1.0]), dtype=float)
+                if scale.shape != (3,) or not np.isfinite(scale).all() or (scale <= 0).any():
+                    raise ValueError("Invalid expected mesh scale")
+                vertices *= scale
                 cooked = np.asarray(shape.vertices) * np.asarray(shape.scale)
                 transform = shape.local_pose.to_transformation_matrix().astype(float)
                 cooked = cooked @ transform[:3, :3].T + transform[:3, 3]
@@ -112,6 +116,7 @@ def check(directory):
         "sapien_version": sapien.__version__,
         "scope": "piece counts and cooked convex surfaces in link frames; not dynamics equivalence",
         "collision_bundle_sha256": manifest["collision_bundle_sha256"],
+        "mesh_coordinate_unit": manifest.get("mesh_coordinate_unit", "m"),
         "links": reports,
     }
 

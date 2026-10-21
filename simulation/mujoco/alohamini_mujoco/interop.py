@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .collision import load_bundle
+from .meshes import Mesh
 
 
 def obj_bytes(mesh):
@@ -20,7 +21,11 @@ def obj_bytes(mesh):
     return ("\n".join(rows) + "\n").encode("ascii")
 
 
-def export_collision_urdf(description, bundle, output):
+def export_collision_urdf(description, bundle, output, *, mesh_unit="m"):
+    if mesh_unit not in ("m", "mm"):
+        raise ValueError("OBJ coordinate unit must be m or mm; URDF poses always use metres")
+    coordinate_scale = 1.0 if mesh_unit == "m" else 1000.0
+    physical_scale = 1.0 / coordinate_scale
     bundle = Path(bundle).expanduser().resolve()
     pieces, provenance = load_bundle(description, bundle)
     output = Path(output).expanduser().resolve()
@@ -46,14 +51,18 @@ def export_collision_urdf(description, bundle, output):
                 body.remove(node)
             records[link] = []
             for index, mesh in enumerate(meshes):
-                contents = obj_bytes(mesh)
+                encoded = Mesh(mesh.vertices.astype(float) * coordinate_scale, mesh.faces)
+                contents = obj_bytes(encoded)
                 fingerprint = hashlib.sha256(contents).hexdigest()
                 filename = f"assets/{fingerprint}.obj"
                 (stage / filename).write_bytes(contents)
                 collision = ET.SubElement(body, "collision", name=f"cad_piece_{index}")
                 ET.SubElement(collision, "origin", xyz="0 0 0", rpy="0 0 0")
                 ET.SubElement(
-                    ET.SubElement(collision, "geometry"), "mesh", filename=filename, scale="1 1 1"
+                    ET.SubElement(collision, "geometry"),
+                    "mesh",
+                    filename=filename,
+                    scale=" ".join([format(physical_scale, ".17g")] * 3),
                 )
                 records[link].append(
                     {
@@ -61,6 +70,8 @@ def export_collision_urdf(description, bundle, output):
                         "sha256": fingerprint,
                         "vertices": len(mesh.vertices),
                         "triangles": len(mesh.faces),
+                        "coordinate_unit": mesh_unit,
+                        "scale": [physical_scale] * 3,
                     }
                 )
         ET.indent(root)
@@ -82,7 +93,16 @@ def export_collision_urdf(description, bundle, output):
             "robot_model": description.robot_model.model_id,
             "asset_revision": description.robot_model.asset_revision,
             "units": {"length": "m", "angle": "rad", "mass": "kg"},
-            "frame": "one convex piece per collision element, vertices in URDF link-local frame",
+            "frame": (
+                "one convex piece per collision element; link-local coordinates, "
+                "explicit mesh scale restores metres"
+            ),
+            "mesh_coordinate_unit": mesh_unit,
+            "mesh_transport": (
+                "OBJ numeric coordinates use mesh_coordinate_unit; "
+                "explicit URDF mesh scales restore physical metre-scale geometry; "
+                "transforms and inertia units are unchanged"
+            ),
             "source_urdf_sha256": hashlib.sha256(
                 description.source_bytes[description.path]
             ).hexdigest(),

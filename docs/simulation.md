@@ -132,6 +132,21 @@ alohamini-mujoco cad-register \
 
 检查覆盖两个网格的全部三角面，使用自适应细分给出双向最大表面距离的 float64 上下界。`--max-samples` 是每个方向的查询预算，预算不足记为 `inconclusive`，返回失败。输出 `registration.json`、连杆坐标下的 CAD 网格和所选视觉分量。校验仅适用于所选零件与视觉分量，不包含解析 CAD 离散误差、其他零件或实物尺寸，也不替换机器人碰撞体。
 
+### 整机碰撞组织
+
+```bash
+alohamini-mujoco collision-organize \
+  --cad-bundle ~/Alohamini_workspace/simulation/cad/assembly \
+  --output ~/Alohamini_workspace/simulation/collision/organized
+alohamini-mujoco view --collisions --paused \
+  --collision-bundle ~/Alohamini_workspace/simulation/collision/organized \
+  --initial-positions '{"vertical_move":0.2}'
+```
+
+`collision.json` 的 `assembly_inventory` 覆盖整棵连杆树，记录各连杆的视觉、碰撞形状、坐标、来源校验值和处理状态。程序从已有碰撞 STL 的连续面序列中恢复闭合凸体；每个源三角形恰好归属一次，不缝合、补面或重新分解。原生基本形状及混合夹爪接触组件保持原定义，惯量继续取自 URDF，完整 SRDF 自碰撞过滤保留。
+
+无法恢复的网格明确保留并标记 `requires_authored_geometry`。此命令整理旧碰撞代理，不应用 STEP 尺寸更新；整机 CAD 映射、形状误差及接触验收仍须完成。加载与合并候选时继续验证整机来源，不能遗漏未替换连杆的几何变化。
+
 ### STL 候选
 
 ```bash
@@ -151,6 +166,8 @@ alohamini-mujoco inspect --initial-positions '{"vertical_move":0.2}' \
 `collision-merge --bundles 目录1 目录2 --output 新目录` 合并替换不同连杆的候选，保留全部凸体及各自生成参数；重复连杆拒绝合并。
 
 `collision-export --collision-bundle 候选目录 --output 新目录` 导出可搬移的 URDF/SRDF/OBJ，每个凸体对应独立碰撞元素，保留连杆坐标、关节和惯量。`collision-check-sapien --asset 导出目录 --python SAPIEN环境的Python路径 --output 新JSON文件` 从 SAPIEN CPU 后端读回实际凸体，检查数量及逐凸体凸包 Hausdorff 距离；超过 1 μm 返回失败。此项只检查几何，不保证两个引擎的动力学一致；加载成功不代表通过验收。
+
+`collision-export --mesh-unit mm` 将生成的 OBJ 坐标以 mm 编码，通过 URDF 的 `scale="0.001 0.001 0.001"` 恢复物理米制尺寸；机器人位姿和惯性参数仍使用 SI。此选项用于检查后端网格预处理的数值精度，验收阈值保持 1 μm。
 
 `inspect` 的 `convexification` 报告列出每个物理网格的凸包与源网格诊断；非闭合或朝向不一致的网格不提供体积比。夹爪截面报告两指各自接触面的 X 坐标、偏差和命中统计，并比较开口宽度，避免两指同向偏移时误差抵消。`probe_counts` 区分开口配对是否可测量，缺失不等于零误差。`validation.passed` 仅表示模型导入一致性通过，候选仍须验证接触、间隙与动力学性能。碰撞候选不会自动成为默认模型。
 
