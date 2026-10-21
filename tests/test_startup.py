@@ -223,14 +223,71 @@ class StartupTests(unittest.TestCase):
             self.assertFalse(serial.is_open)
             self.assertTrue(all(serial.get(i, 40, 1) == 0 for i in serial.registers))
 
+    def simulate_profile_torque_reenable(self, names, *, reject_final_off=False):
+        """Adversarial register emulator; this does not assert a firmware behavior."""
+        induced, rejected = [], []
+        for bus in ("left", "right"):
+            targets = {
+                motor.motor_id for motor in self.model.actuators
+                if motor.bus == bus and motor.name in names
+            }
+            if not targets:
+                continue
+            serial = self.serials[f"/dev/am_arm_follower_{bus}"]
+            write = serial.write
+
+            def changed_after_profile(packet, serial=serial, write=write, bus=bus, targets=targets):
+                key = (bus, packet[2])
+                if (
+                    reject_final_off and not rejected and key in {item[:2] for item in induced}
+                    and packet[4:7] == b"\x03\x28\x00"
+                ):
+                    rejected.append(key)
+                    serial.ignore_writes.add((packet[2], 40))
+                    try:
+                        return write(packet)
+                    finally:
+                        serial.ignore_writes.remove((packet[2], 40))
+                result = write(packet)
+                if packet[2] in targets and packet[4:6] == b"\x03\x2c":
+                    serial.set(packet[2], 40, 1, 1)
+                    induced.append((*key, len(self.events) - 1))
+                return result
+
+            serial.write = changed_after_profile
+        return induced, rejected
+
     def test_full_startup_initializes_both_buses_and_preserves_protection_and_calibration(self):
         host = self.open()
         try:
             writes = self.writes()
             first_enable = next(n for n, (_, p) in enumerate(writes) if p[5:7] == b"\x28\x01")
             disabled = [(bus, p[2]) for bus, p in writes[:first_enable] if p[5:7] == b"\x28\x00"]
-            self.assertEqual(len(disabled), 18)
-            self.assertTrue(all(p[5] == 40 for _, p in writes[:18]))
+            motors = [(motor.bus, motor.motor_id) for motor in self.model.actuators]
+            self.assertCountEqual(disabled, motors * 2)
+            initial_off = writes[:len(motors)]
+            self.assertTrue(all(packet[5:7] == b"\x28\x00" for _, packet in initial_off))
+            self.assertCountEqual([(bus, packet[2]) for bus, packet in initial_off], motors)
+            enable_event = next(
+                index for index, (_, packet) in enumerate(self.events)
+                if packet[4:7] == b"\x03\x28\x01"
+            )
+            before_enable = self.events[:enable_event]
+            for motor in self.model.actuators:
+                address = 42 if motor.name.startswith("arm_") else 46
+                safe_value = 2048 if address == 42 else 0
+                targets = [
+                    index for index, (bus, packet) in enumerate(before_enable)
+                    if bus == motor.bus and packet[2] == motor.motor_id
+                    and packet[4:6] == bytes((3, address))
+                    and int.from_bytes(packet[6:-1], "little") == safe_value
+                ]
+                self.assertTrue(targets, motor.name)
+                self.assertTrue(any(
+                    bus == motor.bus and packet[2] == motor.motor_id
+                    and packet[4:7] == bytes((2, address, 2))
+                    for bus, packet in before_enable[targets[-1] + 1:]
+                ), motor.name)
             self.assertFalse(any(p[5] in (9, 11, 19, 20, 28, 31) for _, p in writes))
             for motor in self.model.actuators:
                 serial = self.serials[f"/dev/am_arm_follower_{motor.bus}"]
@@ -282,6 +339,54 @@ class StartupTests(unittest.TestCase):
                 )
         finally:
             host.close()
+        self.assert_closed()
+
+    def test_startup_reconfirms_torque_off_after_simulated_profile_side_effect(self):
+        induced, rejected = self.simulate_profile_torque_reenable(
+            {"base_back_wheel", "lift_axis"}
+        )
+        host = self.open()
+        try:
+            self.assertEqual({(bus, motor_id) for bus, motor_id, _ in induced}, {
+                (motor.bus, motor.motor_id) for motor in self.model.actuators
+                if motor.name in {"base_back_wheel", "lift_axis"}
+            })
+            self.assertEqual(rejected, [])
+            first_cap = next(
+                index for index, (_, packet) in enumerate(self.events)
+                if packet[4:7] == b"\x02\x10\x02"
+            )
+            first_enable = next(
+                index for index, (_, packet) in enumerate(self.events)
+                if packet[4:7] == b"\x03\x28\x01"
+            )
+            self.assertLess(first_cap, first_enable)
+            for bus, motor_id, changed in induced:
+                off = next(
+                    index for index, (source, packet) in enumerate(self.events)
+                    if index > changed and source == bus and packet[2] == motor_id
+                    and packet[4:7] == b"\x03\x28\x00"
+                )
+                self.assertLess(off, first_cap)
+                self.assertTrue(any(
+                    source == bus and packet[2] == motor_id
+                    and packet[4:7] == b"\x02\x28\x01"
+                    for source, packet in self.events[off + 1:first_cap]
+                ))
+        finally:
+            host.close()
+        self.assert_closed()
+
+    def test_rejected_final_torque_off_prevents_startup_enable_and_cleans_up_both_buses(self):
+        induced, rejected = self.simulate_profile_torque_reenable(
+            {"base_back_wheel", "lift_axis"}, reject_final_off=True
+        )
+        with self.assertRaisesRegex(ConnectionError, "Register write not accepted.*address 40"):
+            self.open()
+        self.assertEqual(len(induced), 2)
+        self.assertEqual(len(rejected), 1)
+        self.assertFalse(any(packet[4:7] == b"\x03\x28\x01" for _, packet in self.events))
+        self.assertFalse(any(packet[4:7] == b"\x02\x10\x02" for _, packet in self.events))
         self.assert_closed()
 
     def test_startup_verifies_both_gripper_output_caps_before_any_bus_enable(self):

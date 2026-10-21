@@ -177,6 +177,22 @@ class FeetechDeviceTests(unittest.TestCase):
     def writes(self):
         return [p for p in self.serial.requests if p[4] in (3, 0x83)]
 
+    def connect_for_preparation(self):
+        calibrations = {
+            "joint": MotorCalibration(1, 0, 0, 1400, 2700),
+            "wheel": MotorCalibration(2, 0, 0, 1400, 2700),
+        }
+        for motor_id in (1, 2):
+            self.serial.set(motor_id, 9, 2, 1400)
+            self.serial.set(motor_id, 11, 2, 2700)
+        self.device = self.new_device(
+            position_calibrations={"joint": calibrations["joint"].encoder_calibration()}
+        )
+        self.connect()
+        self.device.disable_torque()
+        self.serial.requests.clear()
+        return calibrations
+
     def test_construction_has_no_device_access_and_connect_is_read_only(self):
         self.factory.assert_not_called()
         self.device.connect("session")
@@ -728,6 +744,93 @@ class FeetechDeviceTests(unittest.TestCase):
         self.device.enable_torque()
         self.assertEqual(self.serial.get(1, 48, 2), 600)
         self.assertTrue(all(self.serial.get(motor_id, 40, 1) == 1 for motor_id in (1, 2)))
+
+    def test_prepare_reconfirms_torque_off_after_all_profile_writes(self):
+        for torque in (1, 2):
+            with self.subTest(torque=torque):
+                calibrations = self.connect_for_preparation()
+                serial_write = self.serial.write
+
+                def change_torque_after_profile(packet, write=serial_write, value=torque):
+                    result = write(packet)
+                    if packet[2] == 2 and packet[4:6] == bytes([3, 44]):
+                        # Inject a changed device state; this models no specific firmware.
+                        self.serial.set(2, 40, 1, value)
+                    return result
+
+                with patch.object(self.serial, "write", side_effect=change_torque_after_profile):
+                    self.device.prepare(calibrations)
+                self.assertTrue(self.device._ready)
+                self.assertTrue(self.device._prepared)
+                self.assertTrue(all(self.serial.get(i, 40, 1) == 0 for i in (1, 2)))
+                self.assertEqual(
+                    [(p[2], p[4], p[5]) for p in self.serial.requests[-4:]],
+                    [(1, 3, 40), (1, 2, 40), (2, 3, 40), (2, 2, 40)],
+                )
+                self.assertFalse(any(p[5] == 40 and p[6] != 0 for p in self.writes()))
+                for motor_id in (1, 2):
+                    self.assertEqual(self.serial.get(motor_id, 85, 1), 254)
+                    self.assertEqual(
+                        self.serial.get(motor_id, 41, 1), 100 if motor_id == 1 else 254
+                    )
+                    self.assertEqual(self.serial.get(motor_id, 46, 2), 2000 if motor_id == 1 else 0)
+                    self.assertEqual(self.serial.get(motor_id, 44, 2), 0)
+                    self.assertEqual(self.serial.get(motor_id, 21, 1), 16)
+                    self.assertEqual(self.serial.get(motor_id, 22, 1), 32)
+                    self.assertEqual(self.serial.get(motor_id, 23, 1), 0)
+                self.assertEqual(self.device.initialize_output_limits({"joint": 1}), {"joint": 1})
+
+    def test_prepare_final_torque_off_failure_cannot_be_ready_or_enable_torque(self):
+        for failure in ("unaccepted", "missing_ack"):
+            with self.subTest(failure=failure):
+                self.serial.ignore_writes.clear()
+                self.serial.drop.clear()
+                calibrations = self.connect_for_preparation()
+                serial_write = self.serial.write
+
+                def fail_final_torque_off(packet, write=serial_write, variant=failure):
+                    result = write(packet)
+                    if packet[2] == 2 and packet[4:6] == bytes([3, 44]):
+                        self.serial.set(2, 40, 1, 2)
+                        if variant == "unaccepted":
+                            self.serial.ignore_writes.add((2, 40))
+                        else:
+                            self.serial.drop.add((2, 3, 40))
+                    return result
+
+                with patch.object(self.serial, "write", side_effect=fail_final_torque_off):
+                    with self.assertRaises(ConnectionError) as caught:
+                        self.device.prepare(calibrations)
+                if failure == "unaccepted":
+                    for context in (
+                        "wheel, address 40", "/dev/test-only", "ID 2", "actual=2", "expected=0"
+                    ):
+                        self.assertIn(context, str(caught.exception))
+                self.assertFalse(self.device._ready)
+                self.assertFalse(self.device._prepared)
+                self.assertFalse(any(p[5] == 40 and p[6] != 0 for p in self.writes()))
+                self.serial.requests.clear()
+                with self.assertRaisesRegex(RuntimeError, "Prepare the bus"):
+                    self.device.enable_torque()
+                with self.assertRaises(ConnectionError):
+                    self.device.initialize_output_limits({"joint": 1})
+                self.assertFalse(self.serial.requests)
+
+    def test_torque_off_precondition_errors_report_port_id_and_register_value(self):
+        for operation in ("preparation", "output initialization"):
+            with self.subTest(operation=operation):
+                calibrations = self.connect_for_preparation()
+                self.device.prepare(calibrations)
+                self.serial.set(2, 40, 1, 2)
+                self.serial.requests.clear()
+                with self.assertRaises(ConnectionError) as caught:
+                    if operation == "preparation":
+                        self.device.verify_calibration(calibrations)
+                    else:
+                        self.device.initialize_output_limits({"joint": 1})
+                for context in (operation, "/dev/test-only", "wheel", "ID 2", "40 raw=2"):
+                    self.assertIn(context, str(caught.exception))
+                self.assertFalse(self.writes())
 
     def test_output_limit_invalid_baseline_never_gets_written(self):
         self.connect()
