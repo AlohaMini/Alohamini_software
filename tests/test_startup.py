@@ -295,8 +295,14 @@ class StartupTests(unittest.TestCase):
                 self.assertEqual(serial.get(motor.motor_id, 40, 1), 1)
                 self.assertEqual(serial.get(motor.motor_id, 55, 1), 1)
                 self.assertEqual(serial.get(motor.motor_id, 33, 1), 0 if position else 1)
-                self.assertEqual(serial.get(motor.motor_id, 46, 2), 2000 if position else 0)
-                self.assertEqual(serial.get(motor.motor_id, 41, 1), 100 if position else 254)
+                if position:
+                    speed, acceleration = (
+                        (2000, 100) if motor.name.endswith("_gripper") else (2400, 120)
+                    )
+                else:
+                    speed, acceleration = 0, 254
+                self.assertEqual(serial.get(motor.motor_id, 46, 2), speed)
+                self.assertEqual(serial.get(motor.motor_id, 41, 1), acceleration)
                 self.assertEqual(serial.get(motor.motor_id, 44, 2), 0)
                 if position:
                     self.assertEqual(serial.get(motor.motor_id, 42, 2), 2048)
@@ -315,9 +321,25 @@ class StartupTests(unittest.TestCase):
             self.assertIn("host_clock_reference", timing)
             metadata = payload["_robot_metadata"]["motors"]
             self.assertEqual(len(metadata), 18)
+            arm_profile = payload["_robot_metadata"]["arm_profile"]
+            self.assertEqual(arm_profile["arm_goal_velocity"], 2400)
+            self.assertEqual(arm_profile["arm_acceleration"], 120)
+            self.assertCountEqual(arm_profile["motor_names"], [
+                motor.name for motor in self.model.actuators
+                if motor.name.startswith("arm_") and not motor.name.endswith("_gripper")
+            ])
             for name, calibration in self.calibrations.items():
                 self.assertEqual(metadata[name]["homing_offset"], calibration.homing_offset)
                 self.assertEqual(metadata[name]["drive_mode"], calibration.drive_mode)
+                motor = next(m for m in self.model.actuators if m.name == name)
+                if name.startswith("arm_"):
+                    serial = self.serials[f"/dev/am_arm_follower_{motor.bus}"]
+                    self.assertEqual(metadata[name]["motion_profile"], {
+                        "goal_velocity": serial.get(motor.motor_id, 46, 2),
+                        "acceleration": serial.get(motor.motor_id, 41, 1),
+                    })
+                else:
+                    self.assertNotIn("motion_profile", metadata[name])
             names = [key for key in payload if not key.startswith("_")]
             expected = [f"{m.name}.pos" for m in self.model.actuators if m.name.startswith("arm_")]
             self.assertEqual(
@@ -390,7 +412,20 @@ class StartupTests(unittest.TestCase):
         self.assert_closed()
 
     def test_startup_verifies_both_gripper_output_caps_before_any_bus_enable(self):
-        host = self.open()
+        initialized = []
+        initialize_output_limits = FeetechBusDevice.initialize_output_limits
+
+        def capture_initialization(device, limits):
+            first = len(self.events)
+            result = initialize_output_limits(device, limits)
+            initialized.extend(self.events[first:])
+            return result
+
+        with patch.object(
+            FeetechBusDevice, "initialize_output_limits", autospec=True,
+            side_effect=capture_initialization,
+        ):
+            host = self.open()
         try:
             first_enable = next(
                 index for index, (_, packet) in enumerate(self.events)
@@ -410,6 +445,11 @@ class StartupTests(unittest.TestCase):
                 },
             )
             self.assertEqual(len(caps), len(grippers) * 2)
+            self.assertCountEqual(
+                [(bus, packet[2]) for bus, packet in initialized
+                 if packet[4:7] == b"\x02\x28\x01"],
+                [(motor.bus, motor.motor_id) for motor in grippers],
+            )
             initial = host.control.arms.initial_output_limits
             for index, bus, packet in caps:
                 motor = next(m for m in grippers if (m.bus, m.motor_id) == (bus, packet[2]))
@@ -448,8 +488,12 @@ class StartupTests(unittest.TestCase):
             for motor in self.model.actuators:
                 bus = self.serials[f"/dev/am_arm_follower_{motor.bus}"]
                 if motor.name.startswith("arm_"):
+                    speed, acceleration = (
+                        (2000, 100) if motor.name.endswith("_gripper") else (2400, 120)
+                    )
                     for address, width, expected in (
-                        (46, 2, 2000), (21, 1, 16), (23, 1, 0), (22, 1, 32),
+                        (46, 2, speed), (41, 1, acceleration),
+                        (21, 1, 16), (23, 1, 0), (22, 1, 32),
                     ):
                         self.assertEqual(bus.get(motor.motor_id, address, width), expected)
                 if not motor.name.endswith("_gripper"):

@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from alohamini._validation import finite_number, identifier
@@ -31,6 +31,20 @@ _GOAL_POSITION = 42
 _GOAL_VELOCITY = 46
 _OUTPUT_LIMIT = 48
 _TORQUE_ENABLE = 40
+
+
+@dataclass(frozen=True)
+class PositionMotionProfile:
+    """Raw STS position-mode speed and acceleration register values."""
+
+    goal_velocity: int = 2000
+    acceleration: int = 100
+
+    def __post_init__(self) -> None:
+        if type(self.goal_velocity) is not int or not 1 <= self.goal_velocity <= 32767:
+            raise ValueError("Position goal velocity must be an integer in [1, 32767]")
+        if type(self.acceleration) is not int or not 0 <= self.acceleration <= 254:
+            raise ValueError("Position acceleration must be an integer in [0, 254]")
 
 
 class CalibrationMismatchError(ValueError):
@@ -78,6 +92,7 @@ class FeetechBusDevice(MotorsBus):
         position_calibrations: Mapping[str, EncoderCalibration],
         velocity_limits: Mapping[str, int],
         position_units: Mapping[str, HostPositionUnits] | None = None,
+        position_profiles: Mapping[str, PositionMotionProfile] | None = None,
     ) -> None:
         if not isinstance(port, str) or not port or "\x00" in port:
             raise ValueError("Provide a serial device path")
@@ -120,6 +135,21 @@ class FeetechBusDevice(MotorsBus):
         super().__init__(
             position_calibrations=position_calibrations, position_units=position_units
         )
+        if position_profiles is None:
+            self._position_profiles = {name: PositionMotionProfile() for name in self._positions}
+        else:
+            if not isinstance(position_profiles, Mapping):
+                raise TypeError("Position profiles must be a mapping")
+            if position_profiles.keys() != self._positions.keys():
+                raise ValueError(
+                    "Position profiles must cover exactly the calibrated position motors"
+                )
+            if any(
+                not isinstance(profile, PositionMotionProfile)
+                for profile in position_profiles.values()
+            ):
+                raise TypeError("Expected PositionMotionProfile values")
+            self._position_profiles = dict(position_profiles)
         self._velocities = dict(velocity_limits)
         self._position_io_budget_s = (
             _IO_BUDGET_S if self._positions or self._velocities else _REGISTER_IO_BUDGET_S
@@ -148,6 +178,10 @@ class FeetechBusDevice(MotorsBus):
     @property
     def velocity_limits(self) -> Mapping[str, int]:
         return MappingProxyType(self._velocities)
+
+    @property
+    def position_profiles(self) -> Mapping[str, PositionMotionProfile]:
+        return MappingProxyType(self._position_profiles)
 
     @property
     def output_limits(self) -> Mapping[str, float]:
@@ -328,9 +362,10 @@ class FeetechBusDevice(MotorsBus):
                 else:
                     continue
                 if mode == 0:
+                    profile = self._position_profiles[name]
                     for address, width, expected in (
-                        (46, 2, 2000),
-                        (41, 1, 100),
+                        (46, 2, profile.goal_velocity),
+                        (41, 1, profile.acceleration),
                         (21, 1, 16),
                         (23, 1, 0),
                         (22, 1, 32),
@@ -706,8 +741,13 @@ class FeetechBusDevice(MotorsBus):
             self._calibration_write(name, [(address, 1, value) for address, value in settings])
             self._modes.add(name)
             self._write_verified(name, 85, 1, 254)
-            self._write_verified(name, 41, 1, 100 if position else 254)
-            self._write_verified(name, _GOAL_VELOCITY, 2, 2000 if position else 0)
+            self._write_verified(
+                name, 41, 1, self._position_profiles[name].acceleration if position else 254
+            )
+            self._write_verified(
+                name, _GOAL_VELOCITY, 2,
+                self._position_profiles[name].goal_velocity if position else 0,
+            )
             self._write_verified(name, 44, 2, 0)
         # Configuration is not complete until every motor is confirmed unloaded
         # after all mode/Profile writes. Keep readiness false on any failure.
@@ -846,12 +886,12 @@ class FeetechBusDevice(MotorsBus):
     def initialize_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
         """Initialize torque-off RAM caps from the persistent maximum at register 16.
 
-        The caller must unload all buses first. Check this bus independently,
-        then treat its persistent configuration as authoritative over RAM values
-        left by a previous Host session. EEPROM is never changed here.
+        prepare establishes torque-off for the whole bus. Recheck every selected
+        position motor before changing any cap, then treat persistent settings as
+        authoritative over RAM left by a previous Host. EEPROM is never changed.
         """
         encoded = self._encode_output_limits(limits)
-        for name in self._ids:
+        for name in encoded:
             torque = self._read_register(name, _TORQUE_ENABLE, 1)
             if torque != 0:
                 raise ConnectionError(
