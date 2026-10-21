@@ -398,8 +398,12 @@ class FeetechBusDevice(MotorsBus):
 
     def _write_verified(self, name: str, address: int, width: int, value: int) -> None:
         self._write_register(name, address, width, value)
-        if self._read_register(name, address, width) != value:
-            raise ConnectionError(f"Register write not accepted: {name}, address {address}")
+        actual = self._read_register(name, address, width)
+        if actual != value:
+            raise ConnectionError(
+                f"Register write not accepted: {name}, address {address} "
+                f"({self._path}, ID {self._ids[name]}, raw actual={actual}, expected={value})"
+            )
 
     def verify_calibration(self, calibrations: Mapping[str, MotorCalibration]) -> None:
         """Check torque-off and installed coordinates without configuring motion."""
@@ -418,8 +422,12 @@ class FeetechBusDevice(MotorsBus):
                 and calibration.encoder_calibration() != self._positions[name]
             ):
                 raise ValueError(f"Encoder coordinate mismatch: {name}")
-            if self._read_register(name, _TORQUE_ENABLE, 1) != 0:
-                raise ConnectionError(f"Disable every motor before preparation: {name}")
+            torque = self._read_register(name, _TORQUE_ENABLE, 1)
+            if torque != 0:
+                raise ConnectionError(
+                    f"Disable every motor before preparation: {self._path} {name} "
+                    f"(ID {self._ids[name]}), register 40 raw={torque}"
+                )
             for address, expected in (
                 (31, calibration.offset_register),
                 (9, calibration.range_min),
@@ -688,6 +696,10 @@ class FeetechBusDevice(MotorsBus):
             self._write_verified(name, 41, 1, 100 if position else 254)
             self._write_verified(name, _GOAL_VELOCITY, 2, 2000 if position else 0)
             self._write_verified(name, 44, 2, 0)
+        # Configuration is not complete until every motor is confirmed unloaded
+        # after all mode/Profile writes. Keep readiness false on any failure.
+        for name in self._ids:
+            self._write_verified(name, _TORQUE_ENABLE, 1, 0)
         self._prepared = self._ready = True
 
     def enable_torque(self) -> None:
@@ -827,8 +839,12 @@ class FeetechBusDevice(MotorsBus):
         """
         encoded = self._encode_output_limits(limits)
         for name in self._ids:
-            if self._read_register(name, _TORQUE_ENABLE, 1) != 0:
-                raise ConnectionError(f"Disable every motor before output initialization: {name}")
+            torque = self._read_register(name, _TORQUE_ENABLE, 1)
+            if torque != 0:
+                raise ConnectionError(
+                    f"Disable every motor before output initialization: {self._path} {name} "
+                    f"(ID {self._ids[name]}), register 40 raw={torque}"
+                )
         baselines, actual = {}, {}
         for name in encoded:
             baseline = self._read_register(name, 16, 2)
