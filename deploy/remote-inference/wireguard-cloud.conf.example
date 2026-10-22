@@ -1,0 +1,9 @@
+# 将本模板复制到云端仓库之外，填入密钥后 chmod 600。
+[Interface]
+Address = 10.88.0.1/32
+ListenPort = 51820
+PrivateKey = CLOUD_PRIVATE_KEY_BASE64
+
+[Peer]
+PublicKey = PI_PUBLIC_KEY_BASE64
+AllowedIPs = 10.88.0.2/32

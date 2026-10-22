@@ -296,7 +296,8 @@ class NativePolicy:
                 .cpu()
             )
 
-    def select_action(self, snapshot):
+    def _observation_batch(self, snapshot):
+        """Prepare one live Host snapshot with the checkpoint's original input contract."""
         self._check_calibration(snapshot)
         observation = {}
         if self.selection:
@@ -327,7 +328,38 @@ class NativePolicy:
         batch = {k: v[None] for k, v in observation.items()}
         if self.algorithm.include_task:
             batch["task"] = [self.task]
-        batch = self.processor(self.fixed_input(batch))
+        return self.processor(self.fixed_input(batch))
+
+    @torch.inference_mode()
+    def predict_action_chunk(self, snapshot):
+        """Return one absolute CPU action chunk without using the model's action queue."""
+        batch = self._observation_batch(snapshot)
+        with self.inference_context():
+            action = self.model.predict_action_chunk(batch)
+            if (
+                not isinstance(action, torch.Tensor)
+                or action.ndim != 3
+                or action.shape[0] != 1
+                or action.shape[1] < 1
+                or action.shape[2] < 1
+            ):
+                raise ValueError("Policy returned invalid action chunk dimensions or values")
+            raw_finite = torch.isfinite(action).all()
+            values = self.execution_action(action, context=batch.get("_action_context"))
+        if not isinstance(values, torch.Tensor) or values.shape != (
+            1, action.shape[1], len(self.names)
+        ):
+            raise ValueError("Policy returned invalid absolute action chunk")
+        # Transfer the absolute outputs and raw validity in one operation. PI0.5
+        # pads model coordinates beyond the Host targets; validate those too
+        # without forcing an extra CUDA synchronization before the CPU copy.
+        copied = torch.cat((values.reshape(-1).float(), raw_finite.reshape(1).float())).cpu()
+        if copied[-1] != 1 or not torch.isfinite(copied[:-1]).all():
+            raise ValueError("Policy returned invalid absolute action chunk values")
+        return copied[:-1].reshape(action.shape[1], len(self.names))
+
+    def select_action(self, snapshot):
+        batch = self._observation_batch(snapshot)
         with torch.inference_mode(), self.inference_context():
             action = self.model.select_action(batch)
             values = (

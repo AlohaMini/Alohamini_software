@@ -39,6 +39,10 @@ def _ensemble_coefficient(value: str) -> float | None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["inference"]:
+        from alohamini.remote.cli import main as remote_inference
+
+        return remote_inference(argv[1:])
     if argv[:2] == ["dataset", "analyze"]:
         try:
             from alohamini.analysis.cli import main as analyze_dataset
@@ -59,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     parser = argparse.ArgumentParser(prog="alohamini", description="AlohaMini 机器人接口")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("inference", help="云端策略服务与树莓派本地动作执行")
     commands.add_parser("paths", help="显示工作文件保存路径，不创建目录或移动文件")
     commands.add_parser(
         "find-port", help="拔下单个控制板 USB 前后对比串口；先停止遥操、数采或 Host"
