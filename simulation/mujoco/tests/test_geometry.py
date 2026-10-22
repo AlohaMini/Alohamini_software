@@ -6,7 +6,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from alohamini_mujoco.cad import file_sha256
-from alohamini_mujoco.geometry import SurfaceIndex, directed_surface_bounds
+from alohamini_mujoco.geometry import (
+    SurfaceIndex,
+    directed_surface_bounds,
+    measure_surface_distance,
+)
 from alohamini_mujoco.meshes import surface_distances
 from alohamini_mujoco.registration import register_part
 
@@ -52,6 +56,23 @@ def test_surface_check_bounds_offset_and_never_passes_on_budget_exhaustion():
     assert limited["status"] == "inconclusive"
     assert limited["lower_bound_m"] <= 0.01 < limited["upper_bound_m"]
     assert directed_surface_bounds(square, other, tolerance_m=0.01)["status"] == "passed"
+
+
+def test_distance_measurement_bounds_an_interior_maximum_without_an_admission_threshold():
+    corners = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], dtype=float)
+    source = corners[[[0, 1, 2], [0, 2, 3]]]
+    target = np.repeat(corners[:, None], 3, axis=1)
+    limited = measure_surface_distance(source, target, resolution_m=0.001, max_samples=2)
+    assert limited["status"] == "inconclusive"
+    report = measure_surface_distance(source, target, resolution_m=0.001)
+    assert report["status"] == "bounded"
+    assert report["lower_bound_m"] <= np.sqrt(2) <= report["upper_bound_m"]
+    assert report["upper_bound_m"] - report["lower_bound_m"] <= 0.001
+    assert report["subdivision_levels"] > 1
+    witness = report["witness"]
+    assert 0 <= witness["source_triangle"] < 2
+    assert 0 <= witness["target_triangle"] < 4
+    assert witness["sample_distance_m"] >= report["lower_bound_m"]
 
 
 def test_subdivision_finds_a_gap_away_from_initial_vertices_and_centroids():
@@ -123,8 +144,10 @@ def test_registration_binds_explicit_component_transform_and_rejects_tampering(t
         surface_index=0 if joined else None,
         T_link_part=transform,
         tolerance_m=1e-7,
+        measure_resolution_m=1e-6,
     )
     assert report["passed"]
+    assert all(m["status"] == "bounded" for m in report["measurements"].values())
     if joined:
         assert report["target"]["surface_partition"]["surface_count"] == 2
         assert not report["target"]["surface_partition"]["geometry_changed"]
@@ -154,8 +177,10 @@ def test_registration_binds_explicit_component_transform_and_rejects_tampering(t
         surface_index=0 if joined else None,
         T_link_part=transform,
         tolerance_m=1e-7,
+        measure_resolution_m=1e-6,
     )
     assert not bad["passed"]
+    assert bad["measurements"]["cad_to_visual"]["lower_bound_m"] > 1e-7
     (source / "solid.npz").write_bytes(b"changed")
     with pytest.raises(ValueError, match="checksum"):
         register_part(

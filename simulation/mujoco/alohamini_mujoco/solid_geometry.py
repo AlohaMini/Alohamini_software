@@ -49,6 +49,26 @@ def _solid(mesh):
     return solid
 
 
+def _spatial_union(solids):
+    """Evaluate a balanced spatial Boolean tree without changing any operand.
+
+    Spatially adjacent operands combine first, limiting the intermediate
+    intersection complexity of CAD partitions. Tolerances and coordinates are
+    untouched; final native status and exported topology still must pass.
+    """
+    centers = np.array([np.array(s.bounding_box()).reshape(2, 3).mean(0) for s in solids])
+
+    def combine(indices):
+        if len(indices) == 1:
+            return solids[indices[0]]
+        axis = np.ptp(centers[indices], axis=0).argmax()
+        order = indices[np.argsort(centers[indices, axis], kind="stable")]
+        middle = len(order) // 2
+        return combine(order[:middle]) + combine(order[middle:])
+
+    return combine(np.arange(len(solids)))
+
+
 def union_boundary(pieces):
     """Remove internal partitions and overlaps without filling source openings.
 
@@ -62,7 +82,7 @@ def union_boundary(pieces):
     solids = [_solid(piece) for piece in pieces]
     import manifold3d as manifold
 
-    union = manifold.Manifold.batch_boolean(solids, manifold.OpType.Add)
+    union = _spatial_union(solids)
     if union.status() != manifold.Error.NoError or union.is_empty() or union.volume() <= 0:
         raise ValueError(f"Native collision union failed: {union.status()}")
     exported = union.to_mesh64()
@@ -78,7 +98,7 @@ def union_boundary(pieces):
         boundary,
         union,
         {
-            "algorithm": "Manifold float64 Boolean union of complete closed pieces",
+            "algorithm": "Manifold float64 spatially balanced Boolean union of closed pieces",
             "algorithm_version": version("manifold3d"),
             "input_pieces": len(pieces),
             "input_triangles": sum(len(p.faces) for p in pieces),

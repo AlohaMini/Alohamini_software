@@ -191,3 +191,77 @@ def directed_surface_bounds(
         "method": "adaptive-triangle-cover-v1",
         "scope": "continuous triangle surfaces in float64; excludes CAD tessellation error",
     }
+
+
+def measure_surface_distance(
+    source_triangles, target, *, resolution_m, max_samples=1_000_000, progress=None
+):
+    """Bound a directed surface maximum to a requested interval width.
+
+    This measures geometry; it does not choose or change an admission tolerance.
+    The same continuous triangle covers as directed_surface_bounds are used.
+    A witness identifies a sampled lower bound, never an exact maximum point.
+    """
+    frontier = _triangles(source_triangles).copy()
+    if (
+        not math.isfinite(resolution_m)
+        or resolution_m <= 0
+        or type(max_samples) is not int
+        or max_samples < len(frontier)
+    ):
+        raise ValueError("Use a positive metric resolution and budget for every source triangle")
+    if not isinstance(target, SurfaceIndex):
+        target = SurfaceIndex(target)
+    guard = max(target.guard, 64 * np.finfo(float).eps * max(1.0, np.abs(frontier).max()))
+    source_ids = np.arange(len(frontier))
+    lower, accepted_upper, samples, levels, witness = 0.0, 0.0, 0, 0, None
+    while True:
+        centers = frontier.mean(axis=1)
+        distance, closest = target.closest(centers)
+        radius = np.linalg.norm(frontier - centers[:, None], axis=2).max(axis=1)
+        vertex_bound = np.sqrt(_squared_distances(frontier, target.triangles[closest, None])).max(
+            axis=1
+        )
+        bounds = np.minimum(distance + radius, vertex_bound) + guard
+        row = int(distance.argmax())
+        if witness is None or distance[row] - guard > lower:
+            lower = max(0.0, float(distance[row]) - guard)
+            witness = {
+                "source_triangle": int(source_ids[row]),
+                "target_triangle": int(closest[row]),
+                "source_point_m": centers[row].tolist(),
+                "sample_distance_m": float(distance[row]),
+            }
+        upper = max(accepted_upper, float(bounds.max()))
+        samples += len(frontier)
+        levels += 1
+        unresolved = bounds > lower + resolution_m
+        if progress is not None:
+            progress({"centroid_queries": samples, "lower_bound_m": lower, "upper_bound_m": upper})
+        if upper - lower <= resolution_m:
+            status = "bounded"
+            break
+        if samples + 2 * int(unresolved.sum()) > max_samples:
+            status = "inconclusive"
+            break
+        if (~unresolved).any():
+            accepted_upper = max(accepted_upper, float(bounds[~unresolved].max()))
+        triangles = frontier[unresolved]
+        first = np.sum((triangles - np.roll(triangles, -1, axis=1)) ** 2, axis=2).argmax(axis=1)
+        rows = np.arange(len(triangles))
+        a, b, c = (triangles[rows, (first + i) % 3] for i in range(3))
+        midpoint = (a + b) / 2
+        frontier = np.concatenate((np.stack((a, midpoint, c), 1), np.stack((midpoint, b, c), 1)))
+        source_ids = np.tile(source_ids[unresolved], 2)
+    return {
+        "status": status,
+        "lower_bound_m": lower,
+        "upper_bound_m": upper,
+        "resolution_m": resolution_m,
+        "centroid_queries": samples,
+        "subdivision_levels": levels,
+        "max_samples": max_samples,
+        "rounding_guard_m": guard,
+        "witness": witness,
+        "scope": "directed continuous mesh distance; no admission or analytic CAD accuracy claim",
+    }

@@ -159,13 +159,20 @@ def main(argv=None):
     cad_collision.add_argument("--reuse-decomposition", type=Path)
     cad_collision.add_argument("--refine", action="store_true")
     cad_collision.add_argument("--merge-verified", action="store_true")
+    cad_collision.add_argument(
+        "--component-only",
+        action="store_true",
+        help="export isolated components; never replace whole links",
+    )
     cad_collision.add_argument("--output", type=Path, required=True)
     contact_probe = commands.add_parser(
         "collision-probe", help="check native contacts at named CAD surface points"
     )
     contact_probe.add_argument("--mesh-bundle", type=Path, required=True)
     contact_probe.add_argument("--configuration", type=Path, required=True)
-    contact_probe.add_argument("--collision-bundle", type=Path, required=True)
+    probe_geometry = contact_probe.add_mutually_exclusive_group(required=True)
+    probe_geometry.add_argument("--collision-bundle", type=Path)
+    probe_geometry.add_argument("--component-bundle", type=Path)
     contact_probe.add_argument("--initial-positions", type=json.loads, default={})
     contact_probe.add_argument("--output", type=Path, required=True)
     registration = commands.add_parser(
@@ -179,6 +186,11 @@ def main(argv=None):
     registration.add_argument("--T-link-part", type=json.loads, required=True)
     registration.add_argument("--tolerance-m", type=float, required=True)
     registration.add_argument("--max-samples", type=int, default=1_000_000)
+    registration.add_argument(
+        "--measure-resolution-m",
+        type=float,
+        help="also measure distance bounds; does not change admission",
+    )
     registration.add_argument("--output", type=Path, required=True)
     organize = commands.add_parser(
         "collision-organize",
@@ -254,7 +266,9 @@ def main(argv=None):
                     collision_bundle=args.collision_bundle, initial_positions=args.initial_positions
                 )
             )
-            report = probe_cad_contacts(robot, args.mesh_bundle, args.configuration)
+            report = probe_cad_contacts(
+                robot, args.mesh_bundle, args.configuration, component_bundle=args.component_bundle
+            )
             output.parent.mkdir(parents=True, exist_ok=True)
             with output.open("x") as stream:
                 json.dump(report, stream, indent=2, allow_nan=False)
@@ -275,6 +289,7 @@ def main(argv=None):
                 reuse_decomposition=args.reuse_decomposition,
                 refine=args.refine,
                 merge_verified=args.merge_verified,
+                component_only=args.component_only,
             )
             print(json.dumps({"output": str(args.output), "passed": report["passed"]}))
             return 0 if report["passed"] else 1
@@ -387,6 +402,7 @@ def main(argv=None):
                 T_link_part=args.T_link_part,
                 tolerance_m=args.tolerance_m,
                 max_samples=args.max_samples,
+                measure_resolution_m=args.measure_resolution_m,
             )
             print(json.dumps({"output": str(args.output), "passed": report["passed"]}))
             return 0 if report["passed"] else 1

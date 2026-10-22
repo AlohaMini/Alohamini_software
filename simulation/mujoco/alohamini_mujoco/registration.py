@@ -14,7 +14,7 @@ import numpy as np
 from .cad import file_sha256
 from .collision import components, manifold_parts, signed_volume, visual_sources
 from .frames import points_in_frame, rigid_transform
-from .geometry import SurfaceIndex, directed_surface_bounds
+from .geometry import SurfaceIndex, directed_surface_bounds, measure_surface_distance
 from .meshes import Mesh, binary_stl
 
 
@@ -30,6 +30,7 @@ def register_part(
     visual_index=0,
     surface_index=None,
     max_samples=1_000_000,
+    measure_resolution_m=None,
 ):
     """Check a declared rigid transform; never fit or replace robot geometry.
 
@@ -44,6 +45,10 @@ def register_part(
     )
     if output.exists():
         raise FileExistsError(output)
+    if measure_resolution_m is not None and (
+        not np.isfinite(measure_resolution_m) or measure_resolution_m <= 0
+    ):
+        raise ValueError("Use a finite positive surface-distance measurement resolution")
     transform = rigid_transform(T_link_part)
     sources = visual_sources(description, link)
     if type(visual_index) is not int or not 0 <= visual_index < len(sources):
@@ -109,7 +114,7 @@ def register_part(
     if not vertices:
         raise ValueError("CAD tessellation contains no solids")
     mapped = Mesh(np.vstack(vertices), np.vstack(faces))
-    directions = {}
+    directions, measurements = {}, {}
     for name, first, second in (
         ("cad_to_visual", mapped, target),
         ("visual_to_cad", target, mapped),
@@ -126,6 +131,14 @@ def register_part(
             max_samples=max_samples,
             progress=progress,
         )
+        if measure_resolution_m is not None:
+            measurements[name] = measure_surface_distance(
+                first.triangles,
+                SurfaceIndex(second.triangles),
+                resolution_m=measure_resolution_m,
+                max_samples=max_samples,
+                progress=progress,
+            )
     passed = all(value["status"] == "passed" for value in directions.values())
     if (
         file_sha256(manifest_path) != fingerprint
@@ -164,6 +177,7 @@ def register_part(
             "signed_volume_m3": signed_volume(target),
         },
         "directions": directions,
+        "measurements": measurements,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:

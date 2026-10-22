@@ -88,6 +88,10 @@ class FollowerSettings:
 
 class DynamicFollower:
     def __init__(self, robot, data=None, settings=None):
+        if "cad_component_fixture" in robot.manifest:
+            raise ValueError(
+                "Isolated CAD component contact fixtures cannot run dynamics or collection"
+            )
         self.robot = robot
         self.model = robot.model
         self.data = robot.data() if data is None else data

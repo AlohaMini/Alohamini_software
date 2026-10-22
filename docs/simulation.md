@@ -174,6 +174,8 @@ alohamini-mujoco cad-register \
 
 检查覆盖两个网格的全部三角面，使用自适应细分给出双向最大表面距离的 float64 上下界。`--max-samples` 是每个方向的查询预算，预算不足记为 `inconclusive`，返回失败。输出 `registration.json`、连杆坐标下的 CAD 网格和所选视觉分量。校验仅适用于所选零件与视觉分量，不包含解析 CAD 离散误差、其他零件或实物尺寸，也不替换机器人碰撞体。
 
+可加 `--measure-resolution-m 0.00005`，独立测量最大距离的上下界，目标区间宽度为 0.05 mm，并记录距离见证点及源、目标三角面序号。测量不改变验收预算或配准结果；查询预算不足时测量状态为 `inconclusive`。
+
 安装平面可单独核对：
 
 ```bash
@@ -198,7 +200,9 @@ OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco cad-collision \
   --output ~/Alohamini_workspace/simulation/collision/cad-part
 ```
 
-仅接受单个闭合 CAD 实体及覆盖整条连杆全部视觉三角形的已通过配准；不推断刚体归属、镜像或缩放。多个连杆须分别提供配准目录。CoACD 关闭重网格、减面和膨胀；`--concavity-m` 是分解目标，`--tolerance-m` 是独立的实体距离验收预算。
+默认仅接受单个闭合 CAD 实体及覆盖整条连杆全部视觉三角形的已通过配准；不推断刚体归属、镜像或缩放。多个连杆须分别提供配准目录。CoACD 关闭重网格、减面和膨胀；`--concavity-m` 是分解目标，`--tolerance-m` 是独立的实体距离验收预算。
+
+多零件连杆可加 `--component-only`，针对所选完整视觉分量导出 `component.json`。此模式不接受 `--surface-index` 分区，也不生成 `collision.json`；零件包不能直接用于整机替换、跟随或数采。加载时同时校验分量选择、当前源资产与碰撞体文件，不把零件验收解释为整条连杆验收。
 
 验收检查 CAD 与 float32 碰撞凸体并集的双向实体包容关系，使用内接于误差球的凸多面体作 Minkowski 膨胀核，并记录布尔核容差。此项验证材料覆盖，不能替代接触法向、功能间隙或实物标定。`--refine` 仅裁剪超过包络的凸体，在六个误差区域边界平面中选择保留体积最大的合格裁剪，再检查整个结果。验收失败只保存 `qualification.json`，不生成可加载的 `collision.json`。
 
@@ -215,6 +219,8 @@ alohamini-mujoco collision-probe \
 ```
 
 配置字段为 `schema_version: 1`、`source_mesh_manifest_sha256`、`sphere_radius_m`、`tolerance_m`、`clearances_m` 和 `cases`。每个 case 指定 `link`、`point_link_m`、`outward_normal_link`、`joint_positions`（具名 URDF 关节位置字典列表，m/rad）。探针中心须位于 CAD 材料外；检查原生碰撞距离、接触是否产生，并报告法向偏差。结果仅覆盖指定采样点、关节配置和球体尺寸，不代表完整抓取验收。
+
+检查零件包时，将 `--collision-bundle` 换为 `--component-bundle`。夹具保留所有原机器人碰撞体，只查询新增零件与探针之间的距离、接触；输出标记 `coverage: visual-component`。该夹具禁止动力学跟随和数采，不能用于验证整机抓取。
 
 ### 整机碰撞组织
 

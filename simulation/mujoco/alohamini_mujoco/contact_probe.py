@@ -12,7 +12,7 @@ import mujoco
 import numpy as np
 
 from .cad import file_sha256
-from .cad_collision import _file, _source
+from .cad_collision import _file, _source, load_cad_components
 from .compilation import compile_xml
 from .frames import points_in_frame, vector
 from .geometry import SurfaceIndex
@@ -32,7 +32,59 @@ def _winding(mesh, point):
     return float(np.arctan2(numerator, denominator).sum() / (2 * math.pi))
 
 
-def probe_cad_contacts(robot, mesh_bundle, configuration):
+def _component_fixture_inputs(robot, directory):
+    if robot.scene is not None:
+        raise ValueError("Use a robot-only model for isolated CAD component fixtures")
+    pieces, metadata = load_cad_components(robot.description, directory)
+    root = ET.fromstring(robot.xml)
+    assets, geometry, selected = dict(robot.assets), dict(robot.geometry), {}
+    for link, meshes in pieces.items():
+        body = root.find(f'.//body[@name="{link}"]')
+        if body is None:
+            raise ValueError("CAD component fixture link is absent from the native model")
+        selected[link] = []
+        for i, mesh in enumerate(meshes):
+            name = f"cad_fixture_{link}_{i}"
+            if name in geometry or name + ".msh" in assets:
+                raise ValueError("CAD component fixture asset name is already in use")
+            assets[name + ".msh"] = mesh.msh_bytes()
+            ET.SubElement(root.find("asset"), "mesh", name=name, file=name + ".msh")
+            ET.SubElement(body, "geom", name=name, type="mesh", mesh=name, mass="0", group="4")
+            geometry[name] = {"kind": "collision", "link": link}
+            selected[link].append(name)
+    xml = ET.tostring(root, encoding="unicode")
+    return dict(
+        xml=xml,
+        assets=assets,
+        geometry=geometry,
+        manifest={
+            **robot.manifest,
+            "cad_component_fixture": metadata,
+            "cad_component_geoms": selected,
+        },
+    )
+
+
+def attach_component_fixture(robot, directory):
+    """Compile an isolated query fixture, retaining every original collider.
+
+    Same-body overlaps are intentional; this model cannot run following or
+    collection. Probe construction combines components and the sphere before
+    compiling, avoiding retention of an extra complete robot model.
+    """
+    inputs = _component_fixture_inputs(robot, directory)
+    return replace(robot, model=compile_xml(inputs["xml"], assets=inputs["assets"]), **inputs)
+
+
+def probe_cad_contacts(robot, mesh_bundle, configuration, *, component_bundle=None):
+    inputs = (
+        _component_fixture_inputs(robot, component_bundle)
+        if component_bundle is not None
+        else dict(
+            xml=robot.xml, assets=robot.assets, geometry=robot.geometry, manifest=robot.manifest
+        )
+    )
+    component_scope = "cad_component_fixture" in inputs["manifest"]
     directory, configuration = (
         Path(mesh_bundle).expanduser().resolve(),
         Path(configuration).expanduser().resolve(),
@@ -58,9 +110,12 @@ def probe_cad_contacts(robot, mesh_bundle, configuration):
         raise ValueError("Contact probes need explicit CAD identity, SI dimensions and named cases")
     if robot.scene is not None:
         raise ValueError("Use a robot-only model for the independent CAD contact fixture")
-    if not robot.manifest.get("collision_bundle"):
+    bundle = inputs["manifest"].get("cad_component_fixture") or inputs["manifest"].get(
+        "collision_bundle"
+    )
+    if not bundle:
         raise ValueError("Contact probes require an explicitly qualified CAD collision bundle")
-    root = ET.fromstring(robot.xml)
+    root = ET.fromstring(inputs["xml"])
     if root.find('.//geom[@name="cad_contact_probe"]') is not None:
         raise ValueError("CAD contact probe name is already in use")
     fixture = ET.SubElement(root.find("worldbody"), "body", name="cad_probe_body", mocap="true")
@@ -76,11 +131,13 @@ def probe_cad_contacts(robot, mesh_bundle, configuration):
         group="4",
     )
     xml = ET.tostring(root, encoding="unicode")
-    augmented = replace(robot, model=compile_xml(xml, assets=robot.assets), xml=xml)
+    inputs["xml"] = xml
+    augmented = replace(robot, model=compile_xml(xml, assets=inputs["assets"]), **inputs)
+    robot = augmented
     model = augmented.model
     probe = model.geom("cad_contact_probe").id
     mocap = model.body_mocapid[model.body("cad_probe_body").id]
-    records = robot.manifest["collision_bundle"]["definition"]["links"]
+    records = bundle["definition"]["links"]
     rows = []
     for case in config["cases"]:
         link = case["link"]
@@ -109,7 +166,9 @@ def probe_cad_contacts(robot, mesh_bundle, configuration):
         ids = {
             model.geom(name).id
             for name, geometry in robot.geometry.items()
-            if geometry["kind"] == "collision" and geometry["link"] == link
+            if geometry["kind"] == "collision"
+            and geometry["link"] == link
+            and (not component_scope or name in robot.manifest["cad_component_geoms"][link])
         }
         if not ids:
             raise ValueError("Named CAD contact link has no collision geometry")
@@ -194,9 +253,11 @@ def probe_cad_contacts(robot, mesh_bundle, configuration):
         "scope": (
             "specified spheres, surface points and joint configurations; no grasp/force calibration"
         ),
+        "coverage": "visual-component" if component_scope else "complete-link",
+        "original_collisions_retained": component_scope,
         "configuration_sha256": config_hash,
         "source_mesh_manifest_sha256": fingerprint,
-        "collision_bundle_sha256": robot.manifest["collision_bundle"]["manifest_sha256"],
+        "collision_bundle_sha256": bundle["manifest_sha256"],
         "sphere_radius_m": radius,
         "tolerance_m": tolerance,
         "maximum_distance_error_m": max(abs(r["distance_error_m"]) for r in rows),

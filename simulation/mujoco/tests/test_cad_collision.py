@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from alohamini_mujoco.cad import file_sha256
-from alohamini_mujoco.cad_collision import _parameters, build_cad_collision
+from alohamini_mujoco.cad_collision import _parameters, build_cad_collision, load_cad_components
 from alohamini_mujoco.collision import load_bundle, merge_bundles
 from alohamini_mujoco.registration import register_part
 
@@ -148,6 +148,58 @@ def test_wrong_cached_geometry_cannot_publish_a_collision_asset(assets, tmp_path
     assert not (output / "collision.json").exists()
 
 
+def test_component_assets_cannot_replace_a_link_or_silently_change_coverage(assets, tmp_path):
+    description, source, _, cache = assets
+    with np.load(cache / "hull.npz") as archive:
+        vertices = archive["vertices"] + [0.125, 0.25, 0.5]
+        faces = archive["faces"]
+    triangles = np.vstack((vertices[faces], (vertices + [0.25, 0, 0])[faces]))
+    data = b"\0" * 80 + struct.pack("<I", len(triangles))
+    for triangle in triangles:
+        data += struct.pack("<12fH", *([0, 0, 0] + triangle.ravel().tolist()), 0)
+    (tmp_path / "part.stl").write_bytes(data)
+    registration = tmp_path / "component-registration"
+    pose = np.eye(4)
+    pose[:3, 3] = [0.125, 0.25, 0.5]
+    assert register_part(
+        description,
+        source,
+        registration,
+        link="part",
+        component_index=0,
+        T_link_part=pose,
+        tolerance_m=1e-7,
+    )["passed"]
+    output = tmp_path / "component"
+    assert build_cad_collision(
+        description,
+        source,
+        [registration],
+        output,
+        tolerance_m=0.0005,
+        reuse_decomposition=cache,
+        component_only=True,
+    )["passed"]
+    assert not (output / "collision.json").exists()
+    parts, metadata = load_cad_components(description, output)
+    assert len(parts["part"]) == 1
+    assert metadata["definition"]["coverage"] == "visual-component"
+    manifest = (output / "component.json").read_text()
+    (output / "collision.json").write_text(manifest)
+    with pytest.raises(ValueError, match="coordinate contract"):
+        load_bundle(description, output)
+    renamed = json.loads(manifest)
+    renamed["coverage"] = "complete-link"
+    (output / "collision.json").write_text(json.dumps(renamed))
+    with pytest.raises(ValueError, match="certificate"):
+        load_bundle(description, output)
+    switched = json.loads(manifest)
+    switched["links"]["part"]["cad_geometry"]["registration"]["target"]["component_index"] = 1
+    (output / "component.json").write_text(json.dumps(switched))
+    with pytest.raises(ValueError, match="target selection"):
+        load_cad_components(description, output)
+
+
 def test_partial_link_registration_and_changed_cache_are_rejected(assets, tmp_path):
     path = assets[2] / "registration.json"
     report = json.loads(path.read_text())
@@ -171,7 +223,7 @@ def test_registration_cannot_move_a_link_by_editing_only_the_declared_transform(
         build(assets, tmp_path / "moved")
 
 
-@pytest.mark.parametrize("tamper", ["failed", "digest", "link"])
+@pytest.mark.parametrize("tamper", ["failed", "digest", "link", "component"])
 def test_loading_rejects_failed_or_detached_cad_certificates(assets, tmp_path, tamper):
     output = tmp_path / "candidate"
     assert build(assets, output)["passed"]
@@ -182,6 +234,8 @@ def test_loading_rejects_failed_or_detached_cad_certificates(assets, tmp_path, t
         qualification["certificate"]["checks"]["collision_inside_expanded_source"]["passed"] = False
     elif tamper == "digest":
         qualification["collision_piece_sha256"] = ["0" * 64]
+    elif tamper == "component":
+        qualification["registration"]["target"]["component_index"] = 1
     else:
         qualification["registration"]["link"] = "another_link"
     path.write_text(json.dumps(manifest))
