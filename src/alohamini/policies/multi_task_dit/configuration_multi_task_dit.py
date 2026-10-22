@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass, field
 
+from alohamini.paths import WorkspacePaths
 from alohamini.policies.configuration import NormalizationMode, PolicyConfig
 
 
@@ -68,7 +69,9 @@ class MultiTaskDiTConfig(PolicyConfig):
     rope_base: float = 10000.0  # RoPE base frequency
 
     # Vision Encoder (CLIP)
-    vision_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model
+    vision_encoder_name: str = field(
+        default_factory=lambda: str(WorkspacePaths().pretrained / "clip-vit-base-patch16")
+    )
     use_separate_rgb_encoder_per_camera: bool = False  # Separate encoder per camera view
     vision_encoder_lr_multiplier: float = 0.1  # LR multiplier for vision encoder
     image_resize_shape: tuple[int, int] | None = None  # Resize images before crop
@@ -76,7 +79,9 @@ class MultiTaskDiTConfig(PolicyConfig):
     image_crop_is_random: bool = True  # Random crop during training, center at inference
 
     # Text Encoder (CLIP)
-    text_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model
+    text_encoder_name: str = field(
+        default_factory=lambda: str(WorkspacePaths().pretrained / "clip-vit-base-patch16")
+    )
     tokenizer_max_length: int = 77  # Max length for tokenized text (CLIP default is 77)
     tokenizer_padding: str = "max_length"  # Padding strategy: "max_length" or "longest"
     tokenizer_padding_side: str = "right"  # Padding side: "left" or "right"
