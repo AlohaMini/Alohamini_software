@@ -206,7 +206,7 @@ alohamini record \
 | 按键 | 操作 |
 | --- | --- |
 | 右方向键 | 提前结束当前阶段 |
-| `R` / 左方向键 | 重录当前 episode |
+| `R` / 左方向键 | 删除当前 episode 的临时数据并重录 |
 | Esc、`q`、Ctrl+C | 结束数采 |
 
 复位阶段可继续遥操，但不记录数据。退出时尝试保存已采到的有效帧。
@@ -249,7 +249,8 @@ alohamini dataset recover ~/Alohamini_workspace/datasets/pickup_01 \
   --output ~/Alohamini_workspace/datasets/pickup_01_recovered
 ```
 
-仅恢复完整帧，不修改原数据。不要手动删除 `*.pending/`；重录前的数据保留在 `discarded/`。
+仅恢复完整帧，不修改原数据。异常中断留下的 `*.pending/` 用于恢复，不要手动删除。
+按 `R` 或左方向键重录会删除当前回合的临时图片和日志。
 
 AlohaMini 或 LeRobot v3 数据的索引、媒体引用异常时，修复到新目录：
 

@@ -742,13 +742,16 @@ class _EpisodeWriter:
             raise
 
     def discard_episode(self):
-        """Rerecord without deleting user data: retain this attempt under discarded/."""
+        """Delete only the current temporary episode after its writer has stopped."""
         if self._pending is None:
             return
-        self._finish_writer()
-        discarded = self.root / "discarded"
-        discarded.mkdir(exist_ok=True)
-        self._pending.rename(discarded / f"{self._pending.stem}_{time.time_ns()}")
+        try:
+            self._finish_writer()
+            shutil.rmtree(self._pending)
+        except BaseException:
+            # Never save a rejected or partially deleted episode during close.
+            self.save_failed = True
+            raise
         self._pending = None
 
     def close(self):
@@ -885,13 +888,11 @@ class LocalDataset:
             raise
 
     def discard_episode(self):
-        self._writer.discard_episode()
-        source = self._writer.root / "discarded"
-        if source.exists():
-            destination = self.root / "discarded"
-            destination.mkdir(exist_ok=True)
-            for path in source.iterdir():
-                path.rename(destination / path.name)
+        try:
+            self._writer.discard_episode()
+        except BaseException:
+            self._failed = self._writer.save_failed = True
+            raise
 
     def close(self):
         try:

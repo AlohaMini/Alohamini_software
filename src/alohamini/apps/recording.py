@@ -159,7 +159,7 @@ class RecordingKeyboard(KeyboardInput):
                     print("Right arrow key pressed. Exiting loop...")
                     self.events["exit_early"] = True
                 elif name in ("left", "r", "R"):
-                    print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                    print("Rerecord requested. Ending the current episode...")
                     self.events.update(rerecord_episode=True, exit_early=True)
                 elif name in ("esc", "q"):
                     print("Escape key pressed. Stopping data recording...")
@@ -677,7 +677,7 @@ def record(
             if events["rerecord_episode"]:
                 dataset.discard_episode()
                 print(
-                    f"Discarding episode {episode_number}; retained under {path / 'discarded'}.",
+                    f"Discarded episode {episode_number}; recording again.",
                     flush=True,
                 )
             else:
