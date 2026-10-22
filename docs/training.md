@@ -283,6 +283,8 @@ python -m alohamini.learning.train \
 
 自动预设 `openpi-pi05-alohamini-v1`：位置 state、任务文本、224×224 等比例补边、
 50 步动作块、q01/q99 归一化、AdamW 与 warmup/cosine。
+相机自动采用数据集声明的视角，可用 `--cameras` 选择子集；至少选择一路，名称沿用数据集。
+相机顺序自动保存到 checkpoint；推理须提供训练时选定的全部视角。
 state 保留完整 18 维原始位置、底盘速度和升降高度，包括数据集中声明的固定维度。
 双臂各 6 个关节预测相对当前 state 的增量，执行前还原为绝对目标；夹爪、底盘速度、升降高度保持原义。
 网络参数用 `--policy.network='{"action_horizon":30}'` 覆盖；checkpoint 自带 tokenizer。
@@ -330,7 +332,7 @@ KI 可通过 `--policy.vlm_data_path=/path/to/train.jsonl` 混入图文或规划
 {"images":{"forward":"images/001.jpg"},"prompt":"下一步做什么？","answer":"抓起红色方块。"}
 ```
 
-图像路径相对 JSONL，允许额外 `wrist_left/wrist_right`；只对 answer 计算语言损失，不计算动作损失。
+图像路径相对 JSONL，相机集合从清单自动读取，缺少的视角用 mask 屏蔽；只对 answer 计算语言损失，不计算动作损失。
 默认三项损失权重均为 1；`flow_loss_weight/fast_loss_weight/vlm_loss_weight` 可覆盖。token 损失先按每条样本有效 token 平均，再按样本平均。
 联合数据仅用于训练，保存清单 SHA256 并在续训时核验；无该数据时运行机器人数据 KI。官方通用预训练数据混合未复现。
 方法见 [KI 论文 §5](https://www.pi.website/download/pi05_KI.pdf)；训练默认值见 [OpenPI](https://github.com/Physical-Intelligence/openpi/tree/15a9616a00943ada6c20a0f158e3adb39df2ccac)。

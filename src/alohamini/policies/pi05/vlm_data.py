@@ -11,7 +11,7 @@ from PIL import Image
 
 from .fast_tokenizer import pad_targets
 from .image_tools import resize_with_pad
-from .processor_pi05 import CAMERAS
+from .processor_pi05 import validate_camera_names
 
 
 def manifest_digest(path):
@@ -36,6 +36,7 @@ class VLMCoTrainingData:
         if not config.vlm_data_sha256 or manifest_digest(self.path) != config.vlm_data_sha256:
             raise ValueError("VLM co-training manifest changed or has no saved SHA256")
         self.offsets = []
+        cameras = {}
         with self.path.open("rb") as stream:
             while True:
                 offset = stream.tell()
@@ -43,13 +44,22 @@ class VLMCoTrainingData:
                 if not line:
                     break
                 if line.strip():
+                    row = json.loads(line)
+                    images = row.get("images") if isinstance(row, dict) else None
+                    if not isinstance(images, dict):
+                        raise ValueError("VLM images must map camera names to image paths")
+                    for name in validate_camera_names(images):
+                        if not isinstance(images[name], str) or not images[name].strip():
+                            raise ValueError("VLM image paths must be nonempty strings")
+                        cameras.setdefault(name, None)
                     self.offsets.append(offset)
         if not self.offsets:
             raise ValueError("VLM co-training manifest is empty")
+        self.cameras = tuple(cameras)
 
     def sample(self, batch_size, *, device):
-        prompts, answers, images = [], [], {name: [] for name in CAMERAS}
-        image_masks = {name: [] for name in CAMERAS}
+        prompts, answers, images = [], [], {name: [] for name in self.cameras}
+        image_masks = {name: [] for name in self.cameras}
         indices = torch.randint(len(self.offsets), (batch_size,)).tolist()
         with self.path.open("rb") as stream:
             for index in indices:
@@ -60,25 +70,17 @@ class VLMCoTrainingData:
                     for key in ("prompt", "answer")
                 ):
                     raise ValueError("VLM rows require nonempty prompt and answer strings")
-                cameras = row.get("images", {})
-                if (
-                    not isinstance(cameras, dict)
-                    or "forward" not in cameras
-                    or set(cameras) - set(CAMERAS.values())
-                ):
-                    raise ValueError(
-                        "VLM images require forward and optional wrist_left/wrist_right paths"
-                    )
+                cameras = row["images"]
                 # No dummy robot state is added to general VLM examples.
                 prompts.append(
                     self.tokenizer._tokenizer.encode(row["prompt"], add_bos=True)
                     + self.tokenizer._tokenizer.encode("\n")
                 )
                 answers.append(self.tokenizer._tokenizer.encode(row["answer"], add_eos=True))
-                for target, source in CAMERAS.items():
-                    present = source in cameras
+                for camera in self.cameras:
+                    present = camera in cameras
                     if present:
-                        path = Path(cameras[source]).expanduser()
+                        path = Path(cameras[camera]).expanduser()
                         if not path.is_absolute():
                             path = self.path.parent / path
                         with Image.open(path) as image:
@@ -86,8 +88,8 @@ class VLMCoTrainingData:
                         tensor = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float() / 127.5 - 1
                     else:
                         tensor = torch.full((3, 224, 224), -1.0)
-                    images[target].append(tensor)
-                    image_masks[target].append(present)
+                    images[camera].append(tensor)
+                    image_masks[camera].append(present)
         prompt, prompt_mask = pad_targets(
             prompts, self.config.network["max_token_len"], device=device
         )

@@ -4,11 +4,6 @@
   "pretrained_path": "~/Alohamini_workspace/pretrained/pi05_base",
   "run_name": "pi05_b",
   "device": "cuda",
-  "cameras": [
-    "forward",
-    "wrist_left",
-    "wrist_right"
-  ],
   "steps": 30000,
   "batch_size": 1,
   "gradient_accumulation_steps": 32,
