@@ -16,12 +16,13 @@ from alohamini.policies.configuration import PolicyConfig
 
 from .configuration_pi05 import PI05Config
 from .finetuning import FINETUNING_MODES, configure_finetuning, load_base_weights
-from .processor_pi05 import ARM_DELTA_DIMS, PI05Processor, fit_statistics
+from .processor_pi05 import ARM_DELTA_DIMS, PI05Processor, fit_statistics, validate_camera_names
 
 
 @dataclass
 class PI05TrainingConfig(PolicyConfig):
     network: dict = field(default_factory=dict)
+    camera_order: tuple[str, ...] | None = None
     tokenizer_path: str = ""
     n_action_steps: int = 50
     num_inference_steps: int = 10
@@ -97,9 +98,16 @@ class PI05TrainingConfig(PolicyConfig):
             raise ValueError("PI0.5 AlohaMini requires the original 18-D position state")
         if self.action_feature.shape != (18,) or core.action_dim < 18:
             raise ValueError("PI0.5 requires 18 physical action coordinates")
-        cameras = {key.removeprefix("observation.images.") for key in self.image_features}
-        if "forward" not in cameras or cameras - {"forward", "wrist_left", "wrist_right"}:
-            raise ValueError("PI0.5 requires forward and optional wrist_left/wrist_right cameras")
+        if any(not key.startswith("observation.images.") for key in self.image_features):
+            raise ValueError("PI0.5 visual features must use observation.images.<camera>")
+        cameras = validate_camera_names(
+            key.removeprefix("observation.images.") for key in self.image_features
+        )
+        self.camera_order = validate_camera_names(
+            cameras if self.camera_order is None else self.camera_order
+        )
+        if set(self.camera_order) != set(cameras):
+            raise ValueError("PI0.5 camera_order must match the selected image features")
         if not 1 <= self.n_action_steps <= core.action_horizon or self.num_inference_steps < 1:
             raise ValueError("Invalid PI0.5 execution horizon or sampling steps")
 
@@ -126,6 +134,7 @@ class PI05BatchProcessor:
             action_dim=config.network["action_dim"],
             delta_dims=config.delta_dims,
             span_floors=config.span_floors,
+            cameras=config.camera_order,
         )
 
     def __call__(self, batch):
@@ -367,6 +376,7 @@ class PI05Algorithm:
                 },
                 "adaptations": [
                     "No Trossen signs/gripper geometry",
+                    "Dataset-selected camera names/order; no fixed ALOHA camera slots",
                     "Configured dataset image size is saved explicitly",
                     "Trainer EMA is optional and disabled by default, matching the PyTorch recipe",
                     "Explicit overrides saved in train_config.json",
@@ -450,6 +460,12 @@ class PI05Algorithm:
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)
+        if "camera_order" not in options:
+            # Older processors always used this order, regardless of feature order.
+            options["camera_order"] = tuple(
+                name for name in ("forward", "wrist_left", "wrist_right")
+                if f"observation.images.{name}" in options["input_features"]
+            )
         assets = (path / options["tokenizer_path"]).resolve()
         if not assets.is_relative_to(path) or not assets.is_file():
             raise ValueError("PI0.5 checkpoint is missing its local tokenizer")

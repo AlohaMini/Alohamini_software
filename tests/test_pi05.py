@@ -27,7 +27,7 @@ def test_float32_constant_has_no_artificial_variance():
     np.testing.assert_array_equal(stats.get_statistics()["std"], np.zeros(3))
 
 
-def processor():
+def processor(**kwargs):
     from alohamini.policies.pi05.processor_pi05 import PI05Processor
 
     class Tokenizer:
@@ -36,7 +36,7 @@ def processor():
             return np.array([2, 3]), np.array([True, True])
 
     stats = {key: {"q01": [-2.0] * 18, "q99": [3.0] * 18} for key in ("state", "actions")}
-    return PI05Processor(stats, Tokenizer())
+    return PI05Processor(stats, Tokenizer(), **kwargs)
 
 
 def test_quantile_formula_and_differentiable_inverse():
@@ -70,7 +70,7 @@ def test_explicit_physical_span_floor_is_reversible():
         PI05Processor(stats, original.tokenizer, span_floors={"state": [0.1]})
 
 
-def test_delta_targets_and_black_masked_camera():
+def test_delta_targets_and_selected_camera():
     from alohamini.policies.pi05.processor_pi05 import ARM_DELTA_DIMS, relative_actions
 
     p = processor()
@@ -84,11 +84,40 @@ def test_delta_targets_and_black_masked_camera():
     np.testing.assert_array_equal(
         delta[:, [6, 13, 14, 15, 16, 17]], actions[:, [6, 13, 14, 15, 16, 17]]
     )
-    assert obs.images["base_0_rgb"].shape == (1, 3, 224, 224)
-    assert not obs.image_masks["left_wrist_0_rgb"].any()
+    assert list(obs.images) == ["forward"]
+    assert obs.images["forward"].shape == (1, 3, 224, 224)
+    assert obs.image_masks["forward"].all()
     assert targets.shape == (1, 2, 32)
     assert not targets[..., 18:].any()
     np.testing.assert_allclose(p.restore_actions(targets, state)[0], actions, atol=1e-5)
+
+
+@pytest.mark.parametrize("cameras", [("chest",), ("wrist_right", "wrist_left"),
+                                     ("forward", "wrist_left", "wrist_right", "chest")])
+def test_processor_uses_selected_cameras_and_preserves_saved_order(cameras):
+    from alohamini.policies.pi05.preprocessing_pytorch import preprocess_observation_pytorch
+
+    p = processor(cameras=cameras)
+    images = {name: np.full((32, 32, 3), 20 + i * 50, np.uint8)
+              for i, name in enumerate(cameras)}
+    obs, _ = p.prepare(np.zeros(18), dict(reversed(list(images.items()))), "pick")
+    processed = preprocess_observation_pytorch(obs)
+    assert tuple(processed.images) == cameras
+    for i, name in enumerate(cameras):
+        torch.testing.assert_close(
+            processed.images[name], torch.full((1, 3, 224, 224), (20 + i * 50) / 127.5 - 1)
+        )
+        assert processed.image_masks[name].all()
+    with pytest.raises(ValueError, match="camera"):
+        p.prepare(np.zeros(18), {**images, "unexpected": images[cameras[0]]}, "pick")
+    with pytest.raises(ValueError, match="camera"):
+        p.prepare(np.zeros(18), {k: v for k, v in images.items() if k != cameras[-1]}, "pick")
+
+
+def test_processor_infers_all_camera_names_for_direct_api():
+    images = {name: np.zeros((24, 32, 3), np.uint8) for name in ("overhead", "side")}
+    obs, _ = processor().prepare(np.zeros(18), images, "pick")
+    assert tuple(obs.images) == tuple(images)
 
 
 def test_official_model_small_forward_and_sampling(monkeypatch):
@@ -181,7 +210,11 @@ def test_policy_queue_and_reset():
     assert model.calls == 3
 
 
-def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cameras", [("forward",),
+                                     ("wrist_right", "chest", "wrist_left", "forward")])
+def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(
+    tmp_path, monkeypatch, cameras
+):
     from contextlib import closing
 
     from test_dataset import frame, jpeg
@@ -199,7 +232,7 @@ def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(tm
     targets = {"x.vel": 0, "y.vel": 0, "theta.vel": 0, "lift_axis.height_mm": 292}
     with closing(
         LocalDataset(
-            root, fps=30, task="pick", robot_metadata=metadata(),
+            root, fps=30, task="pick", robot_metadata=metadata(cameras),
             fixed_dimensions={"version": 1, "source": "test", "targets": targets},
         )
     ) as writer:
@@ -210,7 +243,8 @@ def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(tm
             row["action"][:14] = index + 1
             for key in ("observation.state", "action"):
                 row[key][14:] = [0, 0, 0, 292]
-            writer.add_frame(row, {"forward": jpeg()}, {"safety": {"feedback_valid": True}})
+            writer.add_frame(row, dict.fromkeys(cameras, jpeg()),
+                             {"safety": {"feedback_valid": True}})
         writer.save_episode()
 
     # Other algorithms retain the existing fixed-state exclusion default.
@@ -224,6 +258,7 @@ def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(tm
     cfg = component.apply_preset({"dataset": str(root), "train_episodes": [0]})
     args, episodes, _ = sample_arguments(cfg, component, options)
     samples = AlohaMiniDataset(**args, episodes=episodes)
+    assert tuple(samples.cameras) == cameras
     names = state_names("alohamini2pro")
     assert samples.selection.feature["names"] == names
     assert samples[0]["observation.state"].shape == (18,)
@@ -251,16 +286,20 @@ def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(tm
     path = tmp_path / "checkpoint"
     save_checkpoint(path, model, stats, samples, training={})
     loaded = NativePolicy(path, offline=True)
+    assert tuple(loaded.manifest["config"]["camera_order"]) == cameras
+    assert loaded.config.camera_order == cameras
     assert loaded.manifest["fixed_state_excluded"] is False
     assert loaded.selection.feature["names"] == names
     assert loaded.fixed_state_references == {14: 0, 15: 0, 16: 0, 17: 292}
     raw = {
         "observation.state": samples[0]["observation.state"][None],
-        "observation.images.forward": samples[0]["observation.images.forward"][None],
+        **{f"observation.images.{c}": samples[0][f"observation.images.{c}"][None]
+           for c in reversed(cameras)},
         "task": ["pick"],
     }
     raw["observation.state"][0, 17] = 300
     prepared = loaded.processor(loaded.fixed_input(raw))
+    assert tuple(prepared["observation"].images) == cameras
     assert raw["observation.state"][0, 17] == 300
     assert prepared["_action_context"][0, 17] == 292
     assert prepared["observation"].state.shape == (1, 32)

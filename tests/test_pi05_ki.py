@@ -17,7 +17,7 @@ from alohamini.policies.pi05.knowledge_insulation import attention_masks, token_
 
 
 def options(**overrides):
-    return dict(
+    result = dict(
         input_features={
             "observation.state": {"type": "STATE", "shape": [18]},
             "observation.images.forward": {"type": "VISUAL", "shape": [3, 224, 224]},
@@ -34,8 +34,9 @@ def options(**overrides):
         lora_rank=2,
         expert_lora_rank=2,
         fast_tokenizer_path="/unused/fast",
-        **overrides,
     )
+    result.update(overrides)
+    return result
 
 
 @pytest.fixture
@@ -324,6 +325,33 @@ def test_recipe_and_mode_are_independent_cli_fields():
     assert preset["model"]["network"]["pytorch_compile_mode"] == "max-autotune"
 
 
+def test_camera_order_survives_sorted_json_and_legacy_checkpoint_loading(tmp_path):
+    names = ("wrist_right", "forward", "wrist_left")
+    features = {f"observation.images.{name}": {"type": "VISUAL", "shape": [3, 224, 224]}
+                for name in names}
+    features["observation.state"] = {"type": "STATE", "shape": [18]}
+    config = PI05TrainingConfig(**options(input_features=features, fast_tokenizer_path=""))
+    assert config.camera_order == names
+    restored = PI05TrainingConfig(**json.loads(json.dumps(asdict(config), sort_keys=True)))
+    assert restored.camera_order == names
+
+    (tmp_path / "tokenizer.model").write_bytes(b"test")
+    old = asdict(config)
+    old.pop("camera_order")
+    old["tokenizer_path"] = "tokenizer.model"
+    options_from_checkpoint = PI05Algorithm().checkpoint_options(
+        tmp_path, old, "cpu", None, "checkpoint"
+    )
+    legacy = PI05TrainingConfig(**options_from_checkpoint)
+    assert legacy.camera_order == ("forward", "wrist_left", "wrist_right")
+    with pytest.raises(ValueError, match="camera_order"):
+        PI05TrainingConfig(**options(input_features=features, camera_order=("chest",)))
+    with pytest.raises(ValueError, match="camera"):
+        PI05TrainingConfig(**options(input_features={
+            "observation.state": {"type": "STATE", "shape": [18]}
+        }))
+
+
 def test_language_only_cotraining_does_not_update_expert(tiny_model):
     model = tiny_model(training_recipe="ki", finetuning_mode="d")
     inputs = batch()
@@ -396,11 +424,76 @@ def test_vlm_dataset_sampling_is_reproducible_and_rejects_changed_manifest(tmp_p
     torch.testing.assert_close(
         first["observation"].tokenized_prompt, second["observation"].tokenized_prompt
     )
-    assert first["observation"].images["base_0_rgb"].shape == (3, 3, 224, 224)
-    assert not first["observation"].image_masks["left_wrist_0_rgb"].any()
+    assert list(first["observation"].images) == ["forward"]
+    assert first["observation"].images["forward"].shape == (3, 3, 224, 224)
     path.write_text(path.read_text() + "\n")
     with pytest.raises(ValueError, match="manifest changed"):
         VLMCoTrainingData(config, tokenizer)
+
+
+def test_vlm_dataset_infers_its_own_views_and_masks_missing_views(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from alohamini.policies.pi05.vlm_data import VLMCoTrainingData, manifest_digest
+
+    Image.new("RGB", (32, 24), (127, 128, 129)).save(tmp_path / "image.png")
+    path = tmp_path / "vlm.jsonl"
+    views = [("side",), ("overhead", "side", "chest", "wrist_left")]
+    path.write_text("\n".join(json.dumps({
+        "images": dict.fromkeys(names, "image.png"), "prompt": "pick", "answer": "move"
+    }) for names in views))
+    config = PI05TrainingConfig(**options(
+        training_recipe="ki", vlm_data_path=str(path), vlm_data_sha256=manifest_digest(path)
+    ))
+    tokenizer = SimpleNamespace(_tokenizer=SimpleNamespace(encode=lambda *a, **kw: [2, 3]))
+    data = VLMCoTrainingData(config, tokenizer)
+    monkeypatch.setattr(torch, "randint", lambda *a, **kw: torch.tensor([0, 1]))
+    observation = data.sample(2, device="cpu")["observation"]
+    assert tuple(observation.images) == ("side", "overhead", "chest", "wrist_left")
+    assert observation.image_masks["side"].tolist() == [True, True]
+    for name in ("overhead", "chest", "wrist_left"):
+        assert observation.image_masks[name].tolist() == [False, True]
+        assert torch.all(observation.images[name][0] == -1)
+
+
+@pytest.mark.parametrize("recipe", ["flow", "ki"])
+def test_four_camera_training_and_inference_use_every_view(tiny_model, monkeypatch, recipe):
+    from test_pi05 import processor
+
+    from alohamini.policies.pi05 import tokenizer
+    from alohamini.policies.pi05.adapter import PI05BatchProcessor
+
+    names = ("wrist_right", "overhead", "wrist_left", "chest")
+    features = {f"observation.images.{name}": {"type": "VISUAL", "shape": [3, 32, 32]}
+                for name in names}
+    features["observation.state"] = {"type": "STATE", "shape": [18]}
+    model = tiny_model(input_features=features, training_recipe=recipe)
+    reference = processor()
+    monkeypatch.setattr(tokenizer, "PaligemmaTokenizer", lambda *args: reference.tokenizer)
+    prepare = PI05BatchProcessor(model.config, reference.stats, "cpu")
+    raw = {f"observation.images.{name}": torch.randint(0, 256, (2, 3, 32, 32), dtype=torch.uint8)
+           for name in reversed(names)}
+    raw.update({"observation.state": torch.zeros(2, 18), "task": ["pick", "pick"]})
+    prepared = prepare(raw)
+    prepared.update({key: value for key, value in batch().items() if key != "observation"})
+    observation = prepared["observation"]
+    assert tuple(observation.images) == names
+    for image in observation.images.values():
+        image.requires_grad_()
+    loss, _ = model(prepared)
+    assert torch.isfinite(loss)
+    loss.backward()
+    for image in observation.images.values():
+        assert image.grad is not None and torch.isfinite(image.grad).all()
+        assert image.grad.abs().sum() > 0  # Includes the fourth view, through real transformers.
+    model.eval()
+    noise = torch.zeros(2, 2, 32)
+    expected = model.network.sample_actions("cpu", observation, noise=noise, num_steps=2)
+    changed = SimpleNamespace(**vars(observation))
+    changed.images = {**observation.images, "chest": -observation.images["chest"]}
+    actual = model.network.sample_actions("cpu", changed, noise=noise, num_steps=2)
+    assert torch.isfinite(expected).all() and expected.shape == (2, 2, 32)
+    assert (actual - expected).abs().max() > 1e-6
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
