@@ -1,7 +1,9 @@
 """Complete v3 recording: fork RGB boundary, media, extra feedback and recovery."""
 
 import contextlib
+import fcntl
 import json
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -111,6 +113,91 @@ def test_resume_and_state_projection_keep_media_and_action(tmp_path):
         for path, digest in before.items():
             if path.startswith("videos/"):
                 assert hashes(output)[path] == digest
+
+
+def test_discard_deletes_only_current_attempt_and_next_save_keeps_v3_sequence(tmp_path):
+    root = tmp_path / "record"
+    with contextlib.closing(
+        LocalDataset(root, fps=30, task="pick", robot_metadata=metadata())
+    ) as dataset:
+        add_episode(dataset, 3)
+        dataset.save_episode()
+        history = root / "discarded" / "historical-attempt"
+        history.mkdir(parents=True)
+        (history / "sentinel").write_bytes(b"previous recording retained by the user")
+        committed = hashes(root)
+        previous_discards = hashes(root / "discarded")
+
+        add_episode(dataset, 4)
+        pending = root / ".recording/episodes/episode_000001.pending"
+        assert pending.is_dir()
+        with patch(
+            "alohamini.datasets.video._encode_frames",
+            side_effect=AssertionError("Discarded frames must not be encoded"),
+        ) as encode:
+            dataset.discard_episode()
+        encode.assert_not_called()
+        assert not pending.exists()
+        assert (dataset.num_episodes, dataset.total_frames) == (1, 3)
+        assert hashes(root) == committed
+        assert set((root / "discarded").iterdir()) == {history}
+
+        add_episode(dataset, 2)
+        dataset.save_episode()
+        assert (dataset.num_episodes, dataset.total_frames) == (2, 5)
+
+    info = json.loads((root / "meta/info.json").read_text())
+    assert (info["total_episodes"], info["total_frames"]) == (2, 5)
+    values = rows(root)
+    assert [row["index"] for row in values] == list(range(5))
+    assert [row["episode_index"] for row in values] == [0, 0, 0, 1, 1]
+    assert [row["frame_index"] for row in values] == [0, 1, 2, 0, 1]
+    assert [row["action"][0] for row in values] == [0, 1, 2, 0, 1]
+    assert hashes(root / "discarded") == previous_discards
+    assert set((root / "discarded").iterdir()) == {history}
+    current = hashes(root)
+    for path, digest in committed.items():
+        if path.startswith(("data/", "videos/", "meta/episodes/", "meta/safety/")):
+            assert current[path] == digest
+    assert not (root / ".recording").exists()
+    report = check_dataset(root, decode_videos=True)
+    assert report["valid"], report
+
+
+def test_failed_v3_discard_close_retains_pending_without_saving_and_releases_locks(tmp_path):
+    root = tmp_path / "record"
+    with contextlib.closing(
+        LocalDataset(root, fps=30, task="pick", robot_metadata=metadata())
+    ) as dataset:
+        add_episode(dataset, 3)
+        dataset.save_episode()
+        committed = hashes(root)
+        add_episode(dataset, 2)
+        pending = root / ".recording/episodes/episode_000001.pending"
+        remove = shutil.rmtree
+
+        def fail_current_delete(path, *args, **kwargs):
+            if Path(path) == pending:
+                raise OSError("pending removal failed")
+            return remove(path, *args, **kwargs)
+
+        with (
+            patch("alohamini.datasets.record.shutil.rmtree", side_effect=fail_current_delete),
+            pytest.raises(OSError, match="pending removal failed"),
+        ):
+            dataset.discard_episode()
+        with patch.object(dataset, "save_episode") as save:
+            dataset.close()
+        save.assert_not_called()
+        assert pending.is_dir()
+        assert (dataset.num_episodes, dataset.total_frames) == (1, 3)
+        assert [row["index"] for row in rows(root)] == [0, 1, 2]
+        current = hashes(root)
+        for path, digest in committed.items():
+            assert current[path] == digest
+        for path in (root / "recording.lock", root / ".recording/recording.lock"):
+            with path.open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 @pytest.mark.parametrize("failure", ["encode", "publish", "after_commit"])
