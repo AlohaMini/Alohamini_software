@@ -155,6 +155,50 @@ def test_torchcodec_missing_and_bad_timestamp_frames_are_not_substituted(video, 
     reader.close()
 
 
+@pytest.mark.parametrize("failure", ["decoder", "metadata"])
+def test_torchcodec_initialization_failure_closes_file(video, monkeypatch, failure):
+    decoders = pytest.importorskip("torchcodec.decoders")
+    from types import SimpleNamespace
+
+    from alohamini.datasets.video_reader import _TorchCodecReader
+
+    handles = []
+
+    def failing_decoder(source, **kwargs):
+        handles.append(source)
+        assert source.readable() and source.seekable()
+        if failure == "decoder":
+            raise ValueError("decoder initialization failed")
+        return SimpleNamespace(metadata=SimpleNamespace(average_fps=0))
+
+    monkeypatch.setattr(decoders, "VideoDecoder", failing_decoder)
+    with pytest.raises(ValueError):
+        _TorchCodecReader(video)
+    assert len(handles) == 1 and handles[0].closed
+
+
+def test_torchcodec_eviction_error_and_close_release_files(video, tmp_path):
+    pytest.importorskip("torchcodec")
+    cache = VideoFrameCache(1, backend="torchcodec")
+    retained = cache.read_tensor(video, 4)
+    first = next(iter(cache.entries.values()))[1]
+    assert not first.file.closed
+    other = tmp_path / "other.mp4"
+    shutil.copyfile(video, other)
+    cache.read_tensor(other, 1)
+    assert first.file.closed
+    second = next(iter(cache.entries.values()))[1]
+    with pytest.raises(ValueError, match="Missing video frame"):
+        cache.read_tensor(other, 70)
+    assert second.file.closed
+    cache.read_tensor(video, 4)
+    third = next(iter(cache.entries.values()))[1]
+    cache.close()
+    cache.close()
+    assert third.file.closed
+    torch.testing.assert_close(retained, torch.from_numpy(video_rgb(video, 4)), rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("backend", ["pyav", "torchcodec"])
 @pytest.mark.parametrize("capacity", [0, 2])
 def test_tensor_frames_preserve_pixels_ownership_and_decoder_lifetime(
