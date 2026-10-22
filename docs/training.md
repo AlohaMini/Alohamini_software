@@ -265,8 +265,9 @@ python -m alohamini.learning.train \
 | 优化 | Adam `2e-5`，视觉学习率 ×0.1；cosine，无 warmup |
 | 生成目标 | diffusion，DDPM 100 步 |
 
-state 必须存在。CLIP 权重默认使用 `openai/clip-vit-base-patch16`；
-`--policy.vision_encoder_name`、`--policy.text_encoder_name` 可指定本地目录。
+state 必须存在。CLIP 权重与 tokenizer 默认读取工作区 `pretrained/clip-vit-base-patch16/`
+（默认 `~/Alohamini_workspace/`，支持 `ALOHAMINI_WORKSPACE`），须提前下载 `openai/clip-vit-base-patch16`。
+`--policy.vision_encoder_name`、`--policy.text_encoder_name` 可覆盖为其他本地目录或 Hugging Face 模型 ID。
 尾部排除数按同一时序公式计算；`--policy.do_mask_loss_for_padding=true` 可屏蔽补齐动作的损失。
 
 ```bash
