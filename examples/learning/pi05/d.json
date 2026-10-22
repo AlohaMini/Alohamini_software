@@ -1,0 +1,31 @@
+{
+  "policy": "pi05",
+  "dataset": "~/Alohamini_workspace/datasets/task_demo_ready",
+  "pretrained_path": "~/Alohamini_workspace/pretrained/pi05_base",
+  "run_name": "pi05_d",
+  "device": "cuda",
+  "cameras": [
+    "forward",
+    "wrist_left",
+    "wrist_right"
+  ],
+  "steps": 30000,
+  "batch_size": 1,
+  "gradient_accumulation_steps": 32,
+  "mixed_precision": "none",
+  "save_freq": 1000,
+  "log_freq": 100,
+  "ema": {
+    "enable": false
+  },
+  "model": {
+    "training_recipe": "flow",
+    "finetuning_mode": "d",
+    "tokenizer_path": "~/Alohamini_workspace/pretrained/pi05_tokenizers/paligemma_tokenizer.model",
+    "gradient_checkpointing": true,
+    "network": {
+      "dtype": "bfloat16",
+      "pytorch_compile_mode": "max-autotune"
+    }
+  }
+}

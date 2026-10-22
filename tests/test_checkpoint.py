@@ -69,6 +69,8 @@ def native(request, recording, tmp_path, monkeypatch, tiny_assets):
         from alohamini.policies.pi05 import adapter, modeling_pi05
 
         monkeypatch.setattr(modeling_pi05, "PI0Pytorch", lambda config: torch.nn.Linear(18, 18))
+        monkeypatch.setattr(adapter, "configure_finetuning", lambda *args: {})
+        monkeypatch.setattr(torch.nn.Linear, "gradient_checkpointing_enable", lambda self: None, raising=False)
         monkeypatch.setattr(adapter, "PI05BatchProcessor", lambda *args: SimpleNamespace())
         tokenizer = tmp_path / "original.model"
         tokenizer.write_bytes(b"test tokenizer resource")

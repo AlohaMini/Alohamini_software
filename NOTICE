@@ -51,6 +51,11 @@ Changes: local imports instead of replacing installed Transformers files;
 Transformers 5.0 type, configuration, tied-weight and cache APIs, retaining
 the 4.53.2 default RoPE formula; no JAX imports in the PyTorch model path;
 explicit local tokenizer/weights; AlohaMini 18-D input/output adaptation.
+PI0.5 KI attention and gradient isolation implement equations (4)-(6) of
+https://www.pi.website/download/pi05_KI.pdf. FAST DCT/BPE encoding follows
+physical-intelligence/fast at ec4d7aa71691cac0b8bed6942be45684db2110f4;
+the local loader executes no remote Python. LoRA and optional VLM co-training
+are platform extensions; OpenPI's published PyTorch recipe is flow-only.
 Platform quantile transforms preserve OpenPI's additive 1e-6 epsilon and
 use float64 arithmetic before conversion to model float32 inputs. The shared
 statistics accumulator uses centered float64 moments instead of E[x²]-E[x]².

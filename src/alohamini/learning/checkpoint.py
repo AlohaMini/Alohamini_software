@@ -11,7 +11,7 @@ from pathlib import Path
 ASSET_FIELDS = {
     "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
     "smolvla": ("vlm_model_name",),
-    "pi05": ("tokenizer_path",),
+    "pi05": ("tokenizer_path", "fast_tokenizer_path"),
     "fastwam": ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id"),
 }
 
@@ -76,6 +76,7 @@ def write_checkpoint_metadata(path, manifest):
             "storage": "external" if Path(manifest["config"][key]).is_absolute() else "bundled",
         }
         for key in ASSET_FIELDS.get(manifest["kind"], ())
+        if manifest["config"].get(key)
     }
     for filename, content in {"policy.json": manifest, **checkpoint_sidecars(manifest)}.items():
         (path / filename).write_text(
@@ -122,6 +123,8 @@ def resolve_pretrained(settings, *, expected_kind=None):
         # caller explicitly opts into camera identities for fine-tuning.
         options.setdefault("use_camera_embeddings", False)
     for key in ASSET_FIELDS.get(manifest["kind"], ()):
+        if not options.get(key):
+            continue
         asset = Path(options[key]).expanduser()
         if not asset.is_absolute():
             asset = (
@@ -195,6 +198,10 @@ def initialize_policy(component, model, settings):
         path, manifest = read_checkpoint(path)
         if manifest["kind"] != model.name:
             raise ValueError("Pretrained checkpoint policy type differs")
-        component.load(path, model)
+        initialize = getattr(component, "initialize_checkpoint", None)
+        if initialize is not None:
+            initialize(path, model, manifest)
+        else:
+            component.load(path, model)
     else:
         component.initialize(model, settings)

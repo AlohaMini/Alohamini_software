@@ -22,6 +22,7 @@ learning = [
     "diffusers==0.39.0",
     "transformers==5.0.0",
     "sentencepiece==0.2.0",
+    "scipy>=1.14,<2",
     "num2words==0.5.14",
     "typing-extensions>=4.10",
     "accelerate==1.15.0",

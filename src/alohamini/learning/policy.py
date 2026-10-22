@@ -56,7 +56,7 @@ def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
     }
     from alohamini.learning.fixed import action_summary
 
-    manifest["fixed_state_excluded"] = True
+    manifest["fixed_state_excluded"] = getattr(samples, "fixed_state_excluded", True)
     summary = action_summary(samples)
     if summary is not None:
         manifest["physical_action_summary"] = summary

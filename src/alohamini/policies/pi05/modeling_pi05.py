@@ -118,18 +118,22 @@ class PI0Pytorch(nn.Module):
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = True
-        self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
+        # HF5 checkpointing lives on individual GradientCheckpointingLayer
+        # modules as well as the parent; setting a parent attribute is insufficient.
+        kwargs = {"use_reentrant": False, "preserve_rng_state": False}
+        self.paligemma_with_expert.paligemma.gradient_checkpointing_enable(kwargs)
+        # Non-reentrant checkpointing supports frozen inputs. HF's text-model
+        # hook would otherwise build an unnecessary VLM backward graph in mode B.
+        self.paligemma_with_expert.paligemma.disable_input_require_grads()
+        self.paligemma_with_expert.gemma_expert.gradient_checkpointing_enable(kwargs)
 
         logging.info("Enabled gradient checkpointing for PI0Pytorch model")
 
     def gradient_checkpointing_disable(self):
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = False
-        self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
+        self.paligemma_with_expert.paligemma.gradient_checkpointing_disable()
+        self.paligemma_with_expert.gemma_expert.gradient_checkpointing_disable()
 
         logging.info("Disabled gradient checkpointing for PI0Pytorch model")
 
@@ -191,7 +195,9 @@ class PI0Pytorch(nn.Module):
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+            # SigLIP checkpoints its encoder layers. An additional checkpoint
+            # around the whole encoder would repeat that recomputation.
+            img_emb = image_embed_func(img)
 
             bsize, num_img_embs = img_emb.shape[:2]
 
@@ -305,9 +311,10 @@ class PI0Pytorch(nn.Module):
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, observation, actions, noise=None, time=None) -> Tensor:
+    def forward(self, observation, actions, noise=None, time=None, *,
+                fast_tokens=None, fast_mask=None, knowledge_insulation=False, ce_chunk_size=32):
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
+        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=self.training)
 
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -320,6 +327,13 @@ class PI0Pytorch(nn.Module):
         u_t = noise - actions
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        context_mask = prefix_pad_masks
+        if fast_tokens is not None:
+            if not knowledge_insulation or fast_mask is None:
+                raise ValueError("FAST targets require the KI training recipe and a target mask")
+            fast_embs = self.paligemma_with_expert.embed_language_tokens(fast_tokens)
+            fast_embs = fast_embs * math.sqrt(fast_embs.shape[-1])
+            prefix_embs = torch.cat((prefix_embs, fast_embs), dim=1)
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -328,29 +342,36 @@ class PI0Pytorch(nn.Module):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        if fast_tokens is None:
+            pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+            att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+            att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+            position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        else:
+            from .knowledge_insulation import attention_masks
 
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+            att_2d_masks, position_ids = attention_masks(context_mask, fast_mask, suffix_pad_masks)
 
         # Prepare attention masks
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
         # Apply gradient checkpointing if enabled
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
-            (_, suffix_out), _ = self.paligemma_with_expert.forward(
+            outputs, _ = self.paligemma_with_expert.forward(
                 attention_mask=att_2d_masks_4d,
                 position_ids=position_ids,
                 past_key_values=None,
                 inputs_embeds=[prefix_embs, suffix_embs],
                 use_cache=False,
                 adarms_cond=[None, adarms_cond],
+                detach_vlm=knowledge_insulation,
             )
-            return suffix_out
+            return outputs
 
-        suffix_out = self._apply_checkpoint(
-            forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
+        # Layers checkpoint themselves. Avoid recomputing the whole stack on top
+        # of per-layer recomputation (especially expensive with FAST supervision).
+        prefix_out, suffix_out = forward_func(
+            prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
         )
 
         suffix_out = suffix_out[:, -self.config.action_horizon :]
@@ -362,7 +383,38 @@ class PI0Pytorch(nn.Module):
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        return F.mse_loss(u_t, v_t, reduction="none")
+        flow = F.mse_loss(u_t, v_t, reduction="none")
+        if fast_tokens is None:
+            return flow
+        from .knowledge_insulation import token_cross_entropy
+
+        ce = token_cross_entropy(
+            prefix_out, context_mask, fast_tokens, fast_mask,
+            self.paligemma_with_expert.paligemma.lm_head,
+            self._apply_checkpoint, ce_chunk_size,
+        )
+        return flow, ce
+
+    def forward_language(self, observation, targets, target_mask, *, ce_chunk_size=32):
+        """VQA/caption/planning co-training; no action loss or expert invocation."""
+        from .knowledge_insulation import attention_masks, token_cross_entropy
+
+        images, img_masks, tokens, masks, _ = self._preprocess_observation(observation, train=self.training)
+        context, context_mask, _ = self.embed_prefix(images, img_masks, tokens, masks)
+        embedded = self.paligemma_with_expert.embed_language_tokens(targets)
+        embedded = embedded * math.sqrt(embedded.shape[-1])
+        mask, positions = attention_masks(context_mask, target_mask, target_mask[:, :0])
+        vlm = self.paligemma_with_expert.paligemma
+        vlm.language_model.config._attn_implementation = "eager"
+        (hidden, _), _ = self.paligemma_with_expert(
+            inputs_embeds=[torch.cat((context, embedded), dim=1), None],
+            attention_mask=self._prepare_attention_masks_4d(mask),
+            position_ids=positions, use_cache=False,
+        )
+        return token_cross_entropy(
+            hidden, context_mask, targets, target_mask, vlm.lm_head,
+            self._apply_checkpoint, ce_chunk_size,
+        )
 
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
