@@ -1,5 +1,7 @@
 """Training/checkpoint adapter around the OpenPI model and transforms."""
 
+import logging
+import math
 import shutil
 from collections import deque
 from copy import deepcopy
@@ -13,6 +15,7 @@ from safetensors.torch import load_model, save_model
 from alohamini.policies.configuration import PolicyConfig
 
 from .configuration_pi05 import PI05Config
+from .finetuning import FINETUNING_MODES, configure_finetuning, load_base_weights
 from .processor_pi05 import ARM_DELTA_DIMS, PI05Processor, fit_statistics
 
 
@@ -24,6 +27,23 @@ class PI05TrainingConfig(PolicyConfig):
     num_inference_steps: int = 10
     delta_dims: tuple = ARM_DELTA_DIMS
     span_floors: dict | None = None
+    training_recipe: str = "flow"
+    finetuning_mode: str = "full"
+    a_vision_mode: str = "frozen"
+    gradient_checkpointing: bool = True
+    lora_rank: int = 16
+    lora_alpha: float = 16.0
+    expert_lora_rank: int = 32
+    expert_lora_alpha: float = 32.0
+    fast_tokenizer_path: str = ""
+    fast_max_tokens: int = 256
+    ce_chunk_size: int = 32
+    flow_loss_weight: float = 1.0
+    fast_loss_weight: float = 1.0
+    vlm_data_path: str = ""
+    vlm_data_sha256: str = ""
+    vlm_max_tokens: int = 256
+    vlm_loss_weight: float = 1.0
     optimizer_lr: float = 2.5e-5
     optimizer_weight_decay: float = 1e-10
     optimizer_betas: tuple = (0.9, 0.95)
@@ -38,6 +58,41 @@ class PI05TrainingConfig(PolicyConfig):
         super().__post_init__()
         core = PI05Config(**self.network)
         self.network = asdict(core)
+        if self.training_recipe not in ("flow", "ki"):
+            raise ValueError("training_recipe must be flow or ki")
+        if self.finetuning_mode not in FINETUNING_MODES:
+            raise ValueError(f"finetuning_mode must be one of {tuple(FINETUNING_MODES)}")
+        if self.a_vision_mode not in ("frozen", "full"):
+            raise ValueError("a_vision_mode must be frozen or full")
+        if type(self.gradient_checkpointing) is not bool:
+            raise ValueError("gradient_checkpointing must be a boolean")
+        for key in (
+            "lora_rank",
+            "expert_lora_rank",
+            "fast_max_tokens",
+            "ce_chunk_size",
+            "vlm_max_tokens",
+        ):
+            if type(getattr(self, key)) is not int or getattr(self, key) < 1:
+                raise ValueError(f"{key} must be a positive integer")
+        for key in (
+            "lora_alpha",
+            "expert_lora_alpha",
+            "flow_loss_weight",
+            "fast_loss_weight",
+            "vlm_loss_weight",
+        ):
+            if not math.isfinite(getattr(self, key)) or getattr(self, key) <= 0:
+                raise ValueError(f"{key} must be finite and positive")
+        if self.training_recipe == "ki":
+            if self.finetuning_mode == "b":
+                raise ValueError(
+                    "Mode b freezes the VLM; use training_recipe=flow for this baseline"
+                )
+            if not self.fast_tokenizer_path:
+                raise ValueError("KI requires a local fast_tokenizer_path")
+        elif self.vlm_data_path:
+            raise ValueError("VLM co-training requires training_recipe=ki")
         if self.robot_state_feature is None or self.robot_state_feature.shape != (18,):
             raise ValueError("PI0.5 AlohaMini requires the original 18-D position state")
         if self.action_feature.shape != (18,) or core.action_dim < 18:
@@ -58,9 +113,16 @@ class PI05BatchProcessor:
         from .tokenizer import PaligemmaTokenizer
 
         self.config, self.device = config, device
+        self.is_training = lambda: False
+        self._fast = None
+        self._vlm_data = None
         self.transform = PI05Processor(
             stats,
-            PaligemmaTokenizer(config.tokenizer_path, config.network["max_token_len"]),
+            PaligemmaTokenizer(
+                config.tokenizer_path,
+                config.network["max_token_len"],
+                config.training_recipe == "ki",
+            ),
             action_dim=config.network["action_dim"],
             delta_dims=config.delta_dims,
             span_floors=config.span_floors,
@@ -110,6 +172,25 @@ class PI05BatchProcessor:
         }
         if targets:
             result["action"] = torch.cat(targets)
+            if self.config.training_recipe == "ki":
+                from .fast_tokenizer import FASTTokenizer
+
+                if self._fast is None:
+                    self._fast = FASTTokenizer(
+                        self.config.fast_tokenizer_path,
+                        self.transform.tokenizer._tokenizer,
+                        self.config.fast_max_tokens,
+                    )
+                result["fast_tokens"], result["fast_mask"] = self._fast.targets(
+                    result["action"][..., :18].detach().cpu().numpy(),
+                    device=self.device,
+                )
+                if self.config.vlm_data_path and self.is_training():
+                    from .vlm_data import VLMCoTrainingData
+
+                    if self._vlm_data is None:
+                        self._vlm_data = VLMCoTrainingData(self.config, self.transform.tokenizer)
+                    result["vlm_batch"] = self._vlm_data.sample(len(states), device=self.device)
         return result
 
     def action(self, tensor, *, context=None):
@@ -129,15 +210,51 @@ class PI05TrainModel(torch.nn.Module):
 
         self.config = config
         self.network = PI0Pytorch(PI05Config(**config.network))
+        self.trainable_parameters = configure_finetuning(self.network, config)
+        logging.getLogger(__name__).info(
+            "PI0.5 recipe=%s finetuning=%s parameters=%s",
+            config.training_recipe,
+            config.finetuning_mode,
+            self.trainable_parameters,
+        )
+        if config.gradient_checkpointing:
+            self.network.gradient_checkpointing_enable()
+        else:
+            self.network.gradient_checkpointing_disable()
         self.reset()
 
     def get_optim_params(self):
-        return self.parameters()
+        return (param for param in self.parameters() if param.requires_grad)
 
     def forward(self, batch):
         # Author's mean includes padded coordinates and repeated tail targets.
-        loss = self.network(batch["observation"], batch["action"]).mean()
-        return loss * batch.get("_loss_weight", 1.0), {"flow_loss": loss.detach().item()}
+        if self.config.training_recipe == "flow":
+            flow = self.network(batch["observation"], batch["action"]).mean()
+            loss, outputs = self.config.flow_loss_weight * flow, {"flow_loss": flow.detach()}
+        else:
+            flow, fast = self.network(
+                batch["observation"],
+                batch["action"],
+                fast_tokens=batch["fast_tokens"],
+                fast_mask=batch["fast_mask"],
+                knowledge_insulation=True,
+                ce_chunk_size=self.config.ce_chunk_size,
+            )
+            flow, fast = flow.mean(), fast.mean()
+            loss = self.config.flow_loss_weight * flow + self.config.fast_loss_weight * fast
+            outputs = {
+                "flow_loss": flow.detach(),
+                "fast_loss": fast.detach(),
+                "vlm_loss": flow.detach() * 0,
+            }
+            if self.training and "vlm_batch" in batch:
+                vlm = self.network.forward_language(
+                    **batch["vlm_batch"],
+                    ce_chunk_size=self.config.ce_chunk_size,
+                ).mean()
+                loss = loss + self.config.vlm_loss_weight * vlm
+                outputs["vlm_loss"] = vlm.detach()
+        return loss * batch.get("_loss_weight", 1.0), outputs
 
     def reset(self):
         self._actions = deque()
@@ -162,6 +279,7 @@ class PI05TrainModel(torch.nn.Module):
 
 class PI05Algorithm:
     config_class = PI05TrainingConfig
+    state_stats_key = "state"
     include_task = True
     fsdp_classes = ()
 
@@ -170,7 +288,7 @@ class PI05Algorithm:
         from alohamini.learning.metrics import MetricSpec, loss_count
 
         # Each sample mean retains the network's padded action width and tails.
-        return [
+        specs = [
             MetricSpec(
                 "loss_flow",
                 "flow_loss",
@@ -179,15 +297,47 @@ class PI05Algorithm:
                 console="flow",
             )
         ]
+        if config is not None and config.training_recipe == "ki":
+            specs.append(
+                MetricSpec(
+                    "loss_fast",
+                    "fast_loss",
+                    "samples_with_token_mean",
+                    loss_count("_loss_weight"),
+                    console="fast",
+                )
+            )
+            if config.vlm_data_path:
+                specs.append(
+                    MetricSpec(
+                        "loss_vlm",
+                        "vlm_loss",
+                        "samples_with_token_mean",
+                        loss_count("_loss_weight"),
+                        phases=("train",),
+                    )
+                )
+        return specs
 
     @staticmethod
     def apply_preset(settings):
         result = deepcopy(settings)
         defaults = dict(
-            steps=30000, batch_size=32, state="joint_position,base_velocity,lift_height"
+            steps=30000,
+            batch_size=32,
+            save_freq=1000,
+            log_freq=100,
+            state="joint_position,base_velocity,lift_height",
+            # OpenPI casts selected model weights to BF16 and retains FP32
+            # projections/norms; its trainer does not wrap forward in autocast.
+            mixed_precision="none",
         )
         for key, value in defaults.items():
             result.setdefault(key, value)
+        model = result.setdefault("model", {})
+        model.setdefault("gradient_checkpointing", True)
+        model.setdefault("network", {}).setdefault("pytorch_compile_mode", "max-autotune")
+        result.setdefault("ema", {"enable": False})
         result.setdefault(
             "paper_preset",
             {
@@ -218,21 +368,60 @@ class PI05Algorithm:
                 "adaptations": [
                     "No Trossen signs/gripper geometry",
                     "Configured dataset image size is saved explicitly",
-                    "No JAX/EMA implementation; explicit overrides saved in train_config.json",
+                    "Trainer EMA is optional and disabled by default, matching the PyTorch recipe",
+                    "Explicit overrides saved in train_config.json",
                 ],
             },
         )
+        if model.get("training_recipe", "flow") == "ki":
+            result["paper_preset"]["ki"] = {
+                "source": "https://www.pi.website/download/pi05_KI.pdf",
+                "method": (
+                    "FAST CE + flow MSE; per-layer stop-gradient K/V; "
+                    "mutually masked action branches"
+                ),
+                "weights": "flow=1, FAST=1, optional VLM=1; mean tokens per sample",
+                "fast": (
+                    "physical-intelligence/fast@ec4d7aa71691cac0b8bed6942be45684db2110f4; "
+                    "physical 18-D normalized delta actions"
+                ),
+                "adaptations": (
+                    "Retain released Pi05 prompt; optional local VQA/planning JSONL, "
+                    "one VLM example per robot sample; not the unreleased generalist data mixture"
+                ),
+            }
         return result
 
     def options(self, settings, device):
         options = dict(settings.get("model", {}))
+        if options.get("training_recipe") == "ki" and options.get("finetuning_mode") == "b":
+            raise ValueError("Mode b freezes the VLM; use training_recipe=flow for this baseline")
+        if options.get("training_recipe") == "ki" and not options.get("fast_tokenizer_path"):
+            from alohamini.paths import WorkspacePaths
+
+            options["fast_tokenizer_path"] = str(
+                WorkspacePaths().pretrained / "pi05_tokenizers" / "fast"
+            )
+        for key in ("tokenizer_path", "fast_tokenizer_path"):
+            if options.get(key):
+                options[key] = str(Path(options[key]).expanduser().resolve())
         options.setdefault("n_action_steps", options.get("network", {}).get("action_horizon", 50))
+        if options.get("vlm_data_path"):
+            from .vlm_data import manifest_digest
+
+            options["vlm_data_path"] = str(Path(options["vlm_data_path"]).expanduser().resolve())
+            digest = manifest_digest(options["vlm_data_path"])
+            if options.get("vlm_data_sha256") and options["vlm_data_sha256"] != digest:
+                raise ValueError("VLM co-training manifest changed")
+            options["vlm_data_sha256"] = digest
         if not settings.get("resume") and not settings.get("pretrained_path"):
             raise ValueError("PI0.5 requires --policy.path to local converted PyTorch base weights")
         return options
 
     def sample_spec(self, options, *, cameras=()):
         return dict(
+            # State tokens retain all named coordinates, including fixed axes.
+            exclude_fixed_state=False,
             delta_indices={
                 "action": list(range(options.get("network", {}).get("action_horizon", 50)))
             },
@@ -246,7 +435,9 @@ class PI05Algorithm:
         return PI05TrainModel(self.config_class(**options))
 
     def processor(self, model, stats, device):
-        return PI05BatchProcessor(model.config, stats, device)
+        processor = PI05BatchProcessor(model.config, stats, device)
+        processor.is_training = lambda: model.training
+        return processor
 
     @staticmethod
     def loss_counts(batch):
@@ -255,7 +446,7 @@ class PI05Algorithm:
     def initialize(self, model, settings):
         path = Path(settings["pretrained_path"]).expanduser()
         weights = path / "model.safetensors" if path.is_dir() else path
-        load_model(model.network, weights, strict=True, device="cpu")
+        load_base_weights(model.network, weights)
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)
@@ -263,6 +454,11 @@ class PI05Algorithm:
         if not assets.is_relative_to(path) or not assets.is_file():
             raise ValueError("PI0.5 checkpoint is missing its local tokenizer")
         options["tokenizer_path"] = str(assets)
+        if options.get("fast_tokenizer_path"):
+            fast_assets = (path / options["fast_tokenizer_path"]).resolve()
+            if not fast_assets.is_relative_to(path) or not fast_assets.is_dir():
+                raise ValueError("PI0.5 checkpoint is missing its local FAST tokenizer")
+            options["fast_tokenizer_path"] = str(fast_assets)
         if temporal_ensemble_coeff not in (None, "checkpoint"):
             raise ValueError("ACT temporal ensembling does not apply to PI0.5")
         if n_action_steps is not None:
@@ -272,12 +468,30 @@ class PI05Algorithm:
     def save(self, path, model, manifest, model_state=None):
         if model_state is not None:
             raise ValueError("PI0.5 sharded export is not adapted yet")
-        shutil.copyfile(model.config.tokenizer_path, path / "tokenizer.model")
+        shutil.copyfile(Path(model.config.tokenizer_path).expanduser(), path / "tokenizer.model")
         manifest["config"]["tokenizer_path"] = "tokenizer.model"
+        if model.config.fast_tokenizer_path:
+            from .fast_tokenizer import FAST_FILES
+
+            (path / "fast_tokenizer").mkdir()
+            for filename in FAST_FILES:
+                shutil.copyfile(
+                    Path(model.config.fast_tokenizer_path).expanduser() / filename,
+                    path / "fast_tokenizer" / filename,
+                )
+            manifest["config"]["fast_tokenizer_path"] = "fast_tokenizer"
         save_model(model.network, path / "model.safetensors")
 
     def load(self, path, model):
         load_model(model.network, path / "model.safetensors", strict=True)
+
+    def initialize_checkpoint(self, path, model, manifest):
+        # A full native checkpoint can seed fresh adapters. Resuming and loading
+        # existing adapter checkpoints always retain strict tensor matching.
+        if manifest["config"].get("finetuning_mode", "full") in ("full", "b"):
+            load_base_weights(model.network, path / "model.safetensors")
+        else:
+            self.load(path, model)
 
     def validate_statistics(self, stats, expected, names, *, manifest=None):
         if manifest is not None and (manifest.get("state_feature") or {}).get("names") != names:

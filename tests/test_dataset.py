@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import threading
 import unittest
@@ -115,18 +116,43 @@ class LocalDatasetTests(unittest.TestCase):
         row = pq.read_table(self.root / "episodes/episode_000001/frames.parquet").to_pylist()[0]
         self.assertEqual((row["index"], row["episode_index"], row["frame_index"]), (3, 1, 0))
 
-    def test_discard_is_recoverable_and_does_not_increment_episode(self):
+    def test_discard_deletes_temporary_data_without_incrementing_episode(self):
         self.dataset.begin_episode()
         self.dataset.add_frame(frame(self.dataset), {"forward": jpeg()}, {})
+        pending = self.dataset._pending
         self.dataset.discard_episode()
-        self.assertEqual(self.dataset.num_episodes, 0)
-        saved = list((self.root / "discarded").iterdir())
-        self.assertEqual(len(saved), 1)
-        self.assertTrue((saved[0] / "journal.jsonl").is_file())
+        self.assertFalse(self.dataset._thread.is_alive())
+        self.assertFalse(pending.exists())
+        self.assertIsNone(self.dataset._pending)
+        self.assertFalse((self.root / "discarded").exists())
+        self.assertEqual((self.dataset.num_episodes, self.dataset.total_frames), (0, 0))
         self.dataset.begin_episode()
         self.dataset.add_frame(frame(self.dataset), {"forward": jpeg()}, {})
         self.dataset.save_episode()
         self.assertEqual(self.dataset.num_episodes, 1)
+
+    def test_failed_discard_is_not_saved_on_close(self):
+        self.dataset.begin_episode()
+        self.dataset.add_frame(frame(self.dataset), {"forward": jpeg()}, {})
+        pending = self.dataset._pending
+        remove = shutil.rmtree
+
+        def partial_delete(path):
+            self.assertFalse(self.dataset._thread.is_alive())
+            remove(path / "images")
+            raise OSError("test deletion failed")
+
+        with patch("alohamini.datasets.record.shutil.rmtree", side_effect=partial_delete):
+            with self.assertRaisesRegex(OSError, "test deletion failed"):
+                self.dataset.discard_episode()
+        self.assertTrue(self.dataset.save_failed)
+        self.assertEqual(self.dataset._pending, pending)
+        self.assertTrue((pending / "journal.jsonl").is_file())
+        self.dataset.close()
+        self.assertTrue(self.dataset._file_lock.closed)
+        self.assertTrue(pending.exists())
+        self.assertFalse((self.root / "episodes/episode_000000").exists())
+        self.assertEqual(self.dataset.num_episodes, 0)
 
     def test_bad_camera_is_not_fabricated_and_later_valid_frames_survive(self):
         self.dataset.begin_episode()

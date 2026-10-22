@@ -203,6 +203,7 @@ class AlohaMiniDataset(Dataset):
         chunk_size=None,
         delta_indices=None,
         state=StateSelection.DEFAULT,
+        exclude_fixed_state=True,
         cameras=None,
         image_size=DEFAULT_IMAGE_SIZE,
         drop_n_last_frames=0,
@@ -220,6 +221,9 @@ class AlohaMiniDataset(Dataset):
             raise ValueError("camera_workers must be a nonnegative integer")
         if type(return_uint8) is not bool:
             raise ValueError("return_uint8 must be a boolean")
+        if type(exclude_fixed_state) is not bool:
+            raise ValueError("exclude_fixed_state must be a boolean")
+        self.fixed_state_excluded = exclude_fixed_state
         self.camera_workers = camera_workers
         self.return_uint8 = return_uint8
         self.video_cache = VideoFrameCache(video_cache_size, backend=video_backend)
@@ -298,7 +302,7 @@ class AlohaMiniDataset(Dataset):
             )
         from alohamini.learning.state import select_state
 
-        self.selection = select_state(self.info, state, exclude_fixed=True)
+        self.selection = select_state(self.info, state, exclude_fixed=self.fixed_state_excluded)
         available_cameras = self.info.get("cameras")
         if available_cameras is None:
             available_cameras = self.info["robot_metadata"]["cameras"]

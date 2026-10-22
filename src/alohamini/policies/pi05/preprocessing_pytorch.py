@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 import logging
+from dataclasses import dataclass
 
 import torch
 
@@ -15,6 +16,17 @@ IMAGE_KEYS = (
 )
 
 IMAGE_RESOLUTION = (224, 224)
+
+
+@dataclass
+class ProcessedObservation:
+    images: dict
+    image_masks: dict
+    state: torch.Tensor
+    tokenized_prompt: torch.Tensor
+    tokenized_prompt_mask: torch.Tensor
+    token_ar_mask: torch.Tensor | None
+    token_loss_mask: torch.Tensor | None
 
 
 def preprocess_observation_pytorch(
@@ -156,13 +168,8 @@ def preprocess_observation_pytorch(
         else:
             out_masks[key] = observation.image_masks[key]
 
-    # Create a simple object with the required attributes instead of using the complex Observation class
-    class SimpleProcessedObservation:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-
-    return SimpleProcessedObservation(
+    # Defining a class inside this function introduces a torch.compile graph break.
+    return ProcessedObservation(
         images=out_images,
         image_masks=out_masks,
         state=observation.state,

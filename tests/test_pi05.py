@@ -134,6 +134,7 @@ def test_official_model_small_forward_and_sampling(monkeypatch):
     wrapper = PI05TrainModel.__new__(PI05TrainModel)
     torch.nn.Module.__init__(wrapper)
     wrapper.network = model
+    wrapper.config = SimpleNamespace(training_recipe="flow", flow_loss_weight=1.0)
     torch.manual_seed(71)
     expected = model(obs, actions).mean()
     torch.manual_seed(71)
@@ -178,3 +179,90 @@ def test_policy_queue_and_reset():
     policy.reset()
     policy.select_action(*args)
     assert model.calls == 3
+
+
+def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(tmp_path, monkeypatch):
+    from contextlib import closing
+
+    from test_dataset import frame, jpeg
+    from test_recording_storage import metadata
+
+    from alohamini.datasets.record import LocalDataset, state_names
+    from alohamini.learning.data import AlohaMiniDataset
+    from alohamini.learning.evaluate import evaluate_checkpoint
+    from alohamini.learning.policy import NativePolicy, save_checkpoint
+    from alohamini.learning.statistics import sample_arguments, training_statistics
+    from alohamini.policies.pi05 import adapter, modeling_pi05, tokenizer
+    from alohamini.policies.pi05.adapter import PI05Algorithm
+
+    root = tmp_path / "recording"
+    targets = {"x.vel": 0, "y.vel": 0, "theta.vel": 0, "lift_axis.height_mm": 292}
+    with closing(
+        LocalDataset(
+            root, fps=30, task="pick", robot_metadata=metadata(),
+            fixed_dimensions={"version": 1, "source": "test", "targets": targets},
+        )
+    ) as writer:
+        writer.begin_episode()
+        for index in range(3):
+            row = frame(writer)
+            row["observation.state"][:14] = index
+            row["action"][:14] = index + 1
+            for key in ("observation.state", "action"):
+                row[key][14:] = [0, 0, 0, 292]
+            writer.add_frame(row, {"forward": jpeg()}, {"safety": {"feedback_valid": True}})
+        writer.save_episode()
+
+    # Other algorithms retain the existing fixed-state exclusion default.
+    ordinary = AlohaMiniDataset(root, episodes=[0], cameras=["forward"])
+    assert ordinary.selection.feature["shape"] == [14]
+
+    component = PI05Algorithm()
+    asset = tmp_path / "tokenizer.model"
+    asset.write_bytes(b"test tokenizer")
+    options = {"network": {"action_horizon": 2}, "n_action_steps": 1, "tokenizer_path": str(asset)}
+    cfg = component.apply_preset({"dataset": str(root), "train_episodes": [0]})
+    args, episodes, _ = sample_arguments(cfg, component, options)
+    samples = AlohaMiniDataset(**args, episodes=episodes)
+    names = state_names("alohamini2pro")
+    assert samples.selection.feature["names"] == names
+    assert samples[0]["observation.state"].shape == (18,)
+    assert samples[0]["observation.state"][17] == 292
+    options.update(input_features=samples.input_features, output_features=samples.output_features)
+    stats = training_statistics(component, samples, options, "pi05")["stats"]
+    assert stats["state"]["q01"][17] == 292
+
+    # Exercise the real processor/checkpoint path without a full VLM or downloads.
+    class TinyNetwork(torch.nn.Linear):
+        def __init__(self, config):
+            super().__init__(18, 32)
+            self.config = config
+
+        def gradient_checkpointing_enable(self):
+            pass
+
+        def sample_actions(self, device, observation, num_steps):
+            return torch.zeros(len(observation.state), self.config.action_horizon, 32, device=device)
+
+    monkeypatch.setattr(modeling_pi05, "PI0Pytorch", TinyNetwork)
+    monkeypatch.setattr(adapter, "configure_finetuning", lambda *args: {})
+    monkeypatch.setattr(tokenizer, "PaligemmaTokenizer", lambda *args: processor().tokenizer)
+    model = component.build(options, stats)
+    path = tmp_path / "checkpoint"
+    save_checkpoint(path, model, stats, samples, training={})
+    loaded = NativePolicy(path, offline=True)
+    assert loaded.manifest["fixed_state_excluded"] is False
+    assert loaded.selection.feature["names"] == names
+    assert loaded.fixed_state_references == {14: 0, 15: 0, 16: 0, 17: 292}
+    raw = {
+        "observation.state": samples[0]["observation.state"][None],
+        "observation.images.forward": samples[0]["observation.images.forward"][None],
+        "task": ["pick"],
+    }
+    raw["observation.state"][0, 17] = 300
+    prepared = loaded.processor(loaded.fixed_input(raw))
+    assert raw["observation.state"][0, 17] == 300
+    assert prepared["_action_context"][0, 17] == 292
+    assert prepared["observation"].state.shape == (1, 32)
+    report = evaluate_checkpoint(path, root, episodes=[0], batch_size=2)
+    assert report["samples"] == 3
