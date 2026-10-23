@@ -45,6 +45,7 @@ OBS_LANGUAGE_ATTENTION_MASK = "observation.language.attention_mask"
 
 
 class ActionSelectKwargs(TypedDict, total=False):
+    rtc_processor: object | None
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
@@ -142,7 +143,7 @@ class SmolVLAPolicy(nn.Module):
         self.rtc_processor = None
 
         if self.config.rtc_config is not None:
-            raise ValueError("RTC is not supported by the SmolVLA executor")
+            raise ValueError("Configure RTC at deployment with --rtc, not policy.rtc_config")
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -185,7 +186,10 @@ class SmolVLAPolicy(nn.Module):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
-        actions = self.model.sample_actions(
+        sample = self.model.sample_actions
+        if kwargs.get("rtc_processor") is not None:
+            sample = type(self.model).sample_actions.__get__(self.model)
+        actions = sample(
             images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
         )
 
@@ -719,8 +723,8 @@ class VLAFlowMatching(nn.Module):
             ),
             noise,
             num_steps,
-            rtc_processor=self.rtc_processor,
-            rtc_enabled=self._rtc_enabled(),
+            rtc_processor=kwargs.get("rtc_processor", self.rtc_processor),
+            rtc_enabled=kwargs.get("rtc_processor") is not None or self._rtc_enabled(),
             inference_delay=kwargs.get("inference_delay"),
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),

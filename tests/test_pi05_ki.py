@@ -101,6 +101,77 @@ def nonzero_grad(module):
     return any(p.grad is not None and p.grad.abs().sum() > 0 for p in module.parameters())
 
 
+@pytest.mark.parametrize("recipe", ["flow", "ki"])
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_rtc_real_pi05_vjp_changes_actions_without_updating_weights(tiny_model, recipe, device):
+    from alohamini.policies.rtc import RTCGuidance
+    from alohamini.rtc import RTCConfig
+
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable")
+    model = tiny_model(training_recipe=recipe).eval().to(device)
+    inputs = batch()
+    obs = inputs["observation"]
+    for name, value in vars(obs).items():
+        if isinstance(value, dict):
+            setattr(obs, name, {key: item.to(device) for key, item in value.items()})
+        elif isinstance(value, torch.Tensor):
+            setattr(obs, name, value.to(device))
+    noise = torch.randn(2, 2, 32, device=device)
+    with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16, enabled=device == "cuda"):
+        baseline = model.network.sample_actions(device, obs, noise=noise, num_steps=3)
+        guided = model.network.sample_actions(
+            device, obs, noise=noise, num_steps=3,
+            rtc_processor=RTCGuidance(RTCConfig(enabled=True)),
+            prev_chunk_left_over=baseline[..., :18] + 0.1, inference_delay=1,
+        )
+    assert guided.shape == baseline.shape and guided.isfinite().all()
+    assert not torch.allclose(baseline, guided)
+    assert all(p.grad is None for p in model.parameters())
+    assert not guided.requires_grad
+
+
+def test_rtc_native_pi05_overrides_outer_inference_mode_and_compilation(tiny_model):
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+
+    from test_pi05 import processor
+
+    from alohamini.learning.policy import NativePolicy
+    from alohamini.policies.pi05.adapter import PI05BatchProcessor
+    from alohamini.rtc import RTCConfig
+
+    native = NativePolicy.__new__(NativePolicy)
+    native.model = tiny_model().eval()
+    native.config = native.model.config
+    native.manifest = {"kind": "pi05"}
+    native.names = [f"joint_{i}" for i in range(18)]
+    native.fixed_current, native.fixed_dimensions = [], None
+    native.processor = PI05BatchProcessor.__new__(PI05BatchProcessor)
+    native.processor.transform = processor()
+    native.inference_context = nullcontext
+
+    def prepare(_):
+        obs = batch()["observation"]
+        for name, value in vars(obs).items():
+            if isinstance(value, dict):
+                setattr(obs, name, {key: item[:1] for key, item in value.items()})
+            elif isinstance(value, torch.Tensor):
+                setattr(obs, name, value[:1])
+        return {"observation": obs, "_action_context": torch.ones(1, 18)}
+
+    native._observation_batch = prepare
+    native.model.network.sample_actions = Mock(side_effect=AssertionError("compiled sampler"))
+    with torch.inference_mode():
+        result = native.predict_action_chunk(
+            None, rtc=RTCConfig(enabled=True, replan_steps=1, inference_delay_steps=0),
+            previous_actions=torch.ones(1, 18), inference_delay=1,
+        )
+    assert result.shape == (2, 18) and result.isfinite().all()
+    native.model.network.sample_actions.assert_not_called()
+    assert all(p.grad is None for p in native.model.parameters())
+
+
 @pytest.mark.parametrize("checkpointing", [False, True])
 def test_ki_detaches_keys_and_values_without_freezing_vlm(tiny_model, checkpointing):
     model = tiny_model(training_recipe="ki", gradient_checkpointing=checkpointing)

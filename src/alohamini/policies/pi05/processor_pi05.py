@@ -159,6 +159,20 @@ class PI05Processor:
         offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
         return (values + offset.unsqueeze(-2)).float()
 
+    def encode_actions(self, actions, state):
+        """Encode absolute targets relative to a new observation for RTC guidance.
+
+        Return only physical coordinates; padded latent dimensions are unconstrained.
+        """
+        if actions.shape[-1] != 18:
+            raise ValueError("RTC requires 18-D absolute PI0.5 targets")
+        state = torch.as_tensor(state, device=actions.device, dtype=torch.float64)
+        offset = torch.zeros_like(state)
+        offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
+        low = torch.as_tensor(self.stats["actions"]["q01"], device=actions.device)
+        span = torch.as_tensor(self.spans["actions"], device=actions.device)
+        return ((actions.double() - offset.unsqueeze(-2) - low) / span * 2 - 1).float()
+
     def prepare(self, state, images, prompt, actions=None, *, device="cpu"):
         """One physical sample: HWC uint8 RGB, original state and target chunk."""
         state = np.asarray(state, np.float64)

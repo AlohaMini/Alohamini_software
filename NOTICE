@@ -342,9 +342,9 @@ src/alohamini/apps/evaluation.py adapts the synchronous episode flow from
 examples/alohamini/evaluate_bi.py and the protection/event checks from
 evaluation_safety.py. It uses the native Host client, shared replay calibration
 and safety checks, developer-supplied Python policies and optional local datasets.
-There is no implicit Hub upload, automatic protection recovery or background
-inference worker. The exact policy input is retained when recording; feedback
-is refreshed after inference before validating and sending an absolute target.
+There is no implicit Hub upload or automatic protection recovery. Synchronous
+evaluation records the policy input; optional RTC records execution observations
+and the originating prediction timestamps while a worker samples future chunks.
 
 
 src/alohamini/policies/act and policies/am_act copy configuration and model files
@@ -373,3 +373,32 @@ body velocities absolute and exclude invalid feedback. RGB encoding defaults
 to H.264; depth encoding and cross-episode shard packing are not native features.
 datasets/statistics.py holds the previously migrated RunningQuantileStats from
 LeRobot datasets/compute_stats.py, shared by native editing and LeRobot export.
+
+src/alohamini/policies/rtc.py implements the inference-time guidance equations
+and prefix schedule from Physical-Intelligence/real-time-chunking-kinetix,
+revision 9296f31d62d5bfeb5779dcb2f9bcf71ca37f448b, src/model.py.
+The native PyTorch implementation uses the noise-at-t=1 flow convention and
+guides physical action coordinates with the complete denoiser VJP.
+policies/flow_matching.py extracts the Apache-2.0 Euler loop from the platform's
+previously vendored LeRobot SmolVLA helpers.
+
+MIT License
+Copyright (c) 2025 Physical Intelligence
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

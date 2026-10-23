@@ -330,12 +330,63 @@ class NativePolicy:
             batch["task"] = [self.task]
         return self.processor(self.fixed_input(batch))
 
-    @torch.inference_mode()
-    def predict_action_chunk(self, snapshot):
+    def validate_rtc(self, config):
+        if self.manifest["kind"] not in ("pi05", "smolvla"):
+            raise ValueError("RTC currently supports pi05 and smolvla checkpoints")
+        horizon = (
+            self.config.network["action_horizon"]
+            if self.manifest["kind"] == "pi05" else self.config.chunk_size
+        )
+        config.validate_horizon(horizon)
+        if getattr(self.config, "inference_action_scale", 1.0) <= 0:
+            raise ValueError("RTC requires positive inference_action_scale")
+        return horizon
+
+    def predict_action_chunk(
+        self, snapshot, *, rtc=None, previous_actions=None, inference_delay=0
+    ):
         """Return one absolute CPU action chunk without using the model's action queue."""
+        guided = rtc is not None and rtc.enabled
+        if guided:
+            self.validate_rtc(rtc)
+        # Prefix caches must be ordinary tensors for the later denoiser VJP.
+        with torch.inference_mode(not guided), torch.no_grad():
+            return self._predict_action_chunk(
+                snapshot, rtc=rtc if guided else None,
+                previous_actions=previous_actions, inference_delay=inference_delay,
+            )
+
+    def _predict_action_chunk(self, snapshot, *, rtc, previous_actions, inference_delay):
         batch = self._observation_batch(snapshot)
+        kwargs = {}
+        if rtc is not None:
+            from alohamini.policies.rtc import RTCGuidance
+
+            prefix = None
+            if previous_actions is not None:
+                previous = torch.as_tensor(
+                    previous_actions, dtype=torch.float32,
+                    device=next(self.model.parameters()).device,
+                )
+                if (
+                    previous.ndim != 2 or previous.shape[1] != len(self.names)
+                    or not torch.isfinite(previous).all()
+                ):
+                    raise ValueError("RTC requires finite absolute targets")
+                previous = scale_action(
+                    previous,
+                    getattr(self.config, "inference_action_scale_dims", ()),
+                    1 / getattr(self.config, "inference_action_scale", 1.0),
+                )
+                prefix = self.processor.action_prefix(
+                    previous[None], context=batch.get("_action_context")
+                )
+            kwargs = dict(
+                rtc_processor=RTCGuidance(rtc), prev_chunk_left_over=prefix,
+                inference_delay=inference_delay,
+            )
         with self.inference_context():
-            action = self.model.predict_action_chunk(batch)
+            action = self.model.predict_action_chunk(batch, **kwargs)
             if (
                 not isinstance(action, torch.Tensor)
                 or action.ndim != 3

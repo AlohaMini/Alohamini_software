@@ -209,6 +209,9 @@ class PI05BatchProcessor:
         result = self.transform.restore_actions(tensor[:, None] if single else tensor, context)
         return result[:, 0] if single else result
 
+    def action_prefix(self, actions, *, context):
+        return self.transform.encode_actions(actions, context)
+
 
 class PI05TrainModel(torch.nn.Module):
     name = "pi05"
@@ -270,11 +273,16 @@ class PI05TrainModel(torch.nn.Module):
         self.action_context = None
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch):
-        return self.network.sample_actions(
+    def predict_action_chunk(self, batch, **kwargs):
+        sample = self.network.sample_actions
+        if kwargs.get("rtc_processor") is not None:
+            # RTC differentiates the denoiser; keep the synchronous compiled path intact.
+            sample = type(self.network).sample_actions.__get__(self.network)
+        return sample(
             next(self.parameters()).device,
             batch["observation"],
             num_steps=self.config.num_inference_steps,
+            **kwargs,
         )
 
     @torch.no_grad()

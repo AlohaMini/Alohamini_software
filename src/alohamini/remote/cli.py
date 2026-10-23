@@ -24,6 +24,9 @@ def main(argv=None):
     )
     cloud.add_argument("--fixed-current", nargs="+")
     cloud.add_argument("--request-timeout-s", type=float, default=15.0, help="Idle session lease")
+    from alohamini.rtc import add_rtc_arguments, pop_rtc_options
+
+    add_rtc_arguments(cloud)
     pi = commands.add_parser("run", help="Execute cloud action chunks beside the Pi Host")
     pi.add_argument("--server", required=True, help="tcp://HOST:PORT on a VPN or SSH tunnel")
     pi.add_argument("--host", default="127.0.0.1")
@@ -44,12 +47,14 @@ def main(argv=None):
                 overrides["task"] = args.task
             if args.robot_model is not None:
                 overrides["robot_model"] = args.robot_model
+            rtc = pop_rtc_options(vars(args).copy())
             backend = NativeChunkPolicy(
                 args.checkpoint,
                 device=args.device,
                 chunk_size=args.chunk_size,
                 overrides=overrides,
                 fixed_current=tuple(args.fixed_current) if args.fixed_current else None,
+                **({"rtc": rtc} if rtc.enabled else {}),
             )
             serve(args.bind, backend, threading.Event(), request_timeout_s=args.request_timeout_s)
         else:
