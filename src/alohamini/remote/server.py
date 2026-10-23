@@ -1,4 +1,4 @@
-"""Cloud-only PI0.5 inference over bounded JSON and unchanged Host JPEGs."""
+"""Cloud flow-policy inference over bounded JSON and unchanged Host JPEGs."""
 
 from __future__ import annotations
 
@@ -25,13 +25,16 @@ class NativeChunkPolicy:
     """Load only the cloud model; never connect to a Host or open hardware."""
 
     def __init__(
-        self, checkpoint, *, device="cuda", chunk_size=None, overrides=None, fixed_current=None
+        self, checkpoint, *, device="cuda", chunk_size=None, overrides=None, fixed_current=None,
+        rtc=None,
     ):
         from alohamini.learning.checkpoint import read_checkpoint
 
         _, manifest = read_checkpoint(checkpoint)
-        if manifest["kind"] != "pi05":
-            raise ValueError("Remote inference currently supports only pi05 checkpoints")
+        if manifest["kind"] not in ("pi05", "smolvla"):
+            raise ValueError(
+                "Remote inference currently supports only pi05 and smolvla checkpoints"
+            )
         if chunk_size is not None and (type(chunk_size) is not int or not 1 <= chunk_size <= 512):
             raise ValueError("chunk_size must be an integer in [1, 512]")
         options = dict(overrides or {})
@@ -42,13 +45,23 @@ class NativeChunkPolicy:
         self.policy = NativePolicy(
             checkpoint, device=device, fixed_current=fixed_current, **options
         )
-        horizon = self.policy.config.network["action_horizon"]
-        available = min(horizon, self.policy.config.n_action_steps)
+        from alohamini.rtc import RTCConfig
+
+        self.rtc_config = rtc or RTCConfig()
+        self.rtc = self.rtc_config.to_dict() if self.rtc_config.enabled else None
+        horizon = (
+            self.policy.config.network["action_horizon"] if manifest["kind"] == "pi05"
+            else self.policy.config.chunk_size
+        )
+        available = horizon if self.rtc else min(horizon, self.policy.config.n_action_steps)
         self.chunk_size = available if chunk_size is None else chunk_size
         if not 1 <= self.chunk_size <= 512:
             raise ValueError("Remote chunk_size must be an integer in [1, 512]")
         if self.chunk_size > available:
             raise ValueError("Remote chunk_size exceeds the policy execution horizon")
+        if self.rtc:
+            self.policy.validate_rtc(self.rtc_config)
+            self.rtc_config.validate_horizon(self.chunk_size)
         self.names = tuple(self.policy.names)
         self.cameras = tuple(self.policy.manifest["cameras"])
         self.fps = self.policy.fps
@@ -108,6 +121,15 @@ class NativeChunkPolicy:
         chunk = self.policy.predict_action_chunk(snapshot)
         if chunk.shape[0] < self.chunk_size:
             raise ValueError("Policy returned fewer actions than the configured remote chunk")
+        return chunk[: self.chunk_size]
+
+    def predict_rtc(self, snapshot, previous_actions, inference_delay):
+        if not self._initialized or not self.rtc:
+            raise RuntimeError("Remote RTC policy has not been initialized")
+        chunk = self.policy.predict_action_chunk(
+            snapshot, rtc=self.rtc_config, previous_actions=previous_actions,
+            inference_delay=inference_delay,
+        )
         return chunk[: self.chunk_size]
 
     def reset(self):
@@ -181,8 +203,10 @@ class _Service:
         self.backend, self.timeout_s = backend, timeout_s
         self.session = None
         self.closed = None
+        self.plans = {}
 
     def end(self):
+        self.plans.clear()
         if self.session is not None:
             current, self.session = self.session, None
             self.closed = (current.route, current.token, current.request_id)
@@ -224,6 +248,7 @@ class _Service:
                 "names": list(self.backend.names), "cameras": list(self.backend.cameras),
                 "chunk_size": self.backend.chunk_size,
                 "fixed_current": list(getattr(self.backend, "fixed_current", ())),
+                **({"rtc": self.backend.rtc} if getattr(self.backend, "rtc", None) else {}),
             }
         if current is None or (route, token) != (current.route, current.token):
             raise ProtocolError("No matching active remote session")
@@ -255,7 +280,29 @@ class _Service:
         current.received_s, current.last_seen_s = snapshot.received_s, time.monotonic()
         started = time.monotonic()
         try:
-            actions = self.backend.predict(snapshot)
+            if getattr(self.backend, "rtc", None):
+                rtc = body.get("rtc")
+                if not isinstance(rtc, dict) or set(rtc) != {"plan_id", "inference_delay"}:
+                    raise ProtocolError("RTC observations require plan_id and inference_delay")
+                plan_id, delay = rtc["plan_id"], rtc["inference_delay"]
+                if type(delay) is not int or not 0 <= delay < self.backend.chunk_size:
+                    raise ProtocolError("Invalid RTC inference delay")
+                previous = None
+                if plan_id is not None:
+                    if type(plan_id) is not int or plan_id not in self.plans:
+                        raise ProtocolError("RTC prefix refers to an unknown action plan")
+                    previous_tick, plan = self.plans[plan_id]
+                    offset = tick - previous_tick
+                    if not 0 < offset < len(plan) or delay >= len(plan) - offset:
+                        raise ProtocolError("RTC delay exceeds the remaining action overlap")
+                    previous = plan[offset:]
+                elif self.plans:
+                    raise ProtocolError("RTC must identify the accepted previous action plan")
+                actions = self.backend.predict_rtc(snapshot, previous, delay)
+            else:
+                if "rtc" in body:
+                    raise ProtocolError("RTC was not enabled by the server")
+                actions = self.backend.predict(snapshot)
             inference_s = time.monotonic() - started
             if inference_s > self.timeout_s:
                 raise TimeoutError("Remote inference exceeded the request time budget")
@@ -273,6 +320,10 @@ class _Service:
         except (ProtocolError, ValueError, TypeError, RuntimeError, TimeoutError):
             self.end()
             raise
+        if getattr(self.backend, "rtc", None):
+            self.plans[request_id] = (tick, actions)
+            while len(self.plans) > 16:
+                del self.plans[next(iter(self.plans))]
         return "actions", {
             "session": token, "id": request_id, "tick": tick, "fps": fps,
             "context": context, "names": list(self.backend.names),

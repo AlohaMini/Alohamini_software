@@ -87,7 +87,8 @@ def write_evaluation(root, policy, captured, *, fps, task, num_episodes):
         **captured,
         "effective_policy_config": runtime,
         "deployment": {
-            name: value(name) for name in ("fixed_dimensions", "fixed_current", "calibration_mode")
+            name: value(name)
+            for name in ("fixed_dimensions", "fixed_current", "calibration_mode", "rtc")
         },
         "fps": fps,
         "task": task,

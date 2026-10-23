@@ -343,7 +343,7 @@ python -m alohamini.learning.train \
 自动预设 `smolvla-realworld-alohamini-v1`：位置 state、任务文本、512×512 等比例补边、
 50 步动作块、10 步流匹配采样、冻结 VLM、BF16、AdamW 与 warmup/cosine。
 训练步数默认 200000；来源及覆盖参数保存在 `paper_preset` 和训练配置中。
-checkpoint 自带 tokenizer 和骨干配置。此入口不支持纯视觉、RTC、PEFT 或 ACT 时间融合。
+checkpoint 自带 tokenizer 和骨干配置。不支持纯视觉、PEFT 或 ACT 时间融合。
 
 ### π0.5
 
@@ -671,6 +671,46 @@ SmolVLA／π0.5／FastWAM 评估须增加 `--task "拿起物体"`。Diffusion／
 跨机器使用时复制完整 checkpoint 目录，勿只复制符号链接。
 自定义策略接口见 [客户端接口](host-protocol.md#python-策略评估)，示例为 `examples/learning/custom_policy.py`。
 Notebook 入口见 [Notebook](notebook.md)，LeRobot 权重使用见 [LeRobot](lerobot.md)。
+
+### RTC 异步推理
+
+π0.5（flow／KI）和 SmolVLA 支持推理期引导 RTC，无需重新训练；默认关闭。
+在评估命令中增加：
+
+```bash
+--rtc --rtc.replan_steps 10 --rtc.inference_delay_steps 3
+```
+
+RTC 使用完整预测块，重规划间隔由 `rtc.replan_steps` 控制，覆盖 `n_action_steps` 的执行节奏。
+旧块在后台生成新块时继续执行；π0.5 的旧绝对目标会按新 state 重编码。
+动作按观测时间对齐，跳过过期前缀；队列耗尽或预测过期时停止，复位清空旧计划。
+
+| 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `rtc.replan_steps` | 10 | 两次预测起点的最小间隔，单位为控制步 |
+| `rtc.inference_delay_steps` | 3 | 延迟估计下限；运行中结合实测延迟加一控制步更新 |
+| `rtc.max_guidance_weight` | 10 | 引导强度上限 |
+| `rtc.prefix_attention_schedule` | `linear` | 重叠区权重，可选 `linear/exp/ones/zeros` |
+| `rtc.max_prediction_age_s` | 1.0 | 动作源观测的最大允许年龄，单位秒 |
+
+预测块长度须大于重规划间隔加延迟，实测延迟也须小于剩余重叠区。
+RTC 需要对动作输入求梯度，使用 eager 采样，会增加计算和显存开销；不与 ACT 时间融合组合。
+评估数据的 `meta/evaluation.json` 保存 RTC 参数，帧元数据保存预测来源时间。
+
+远程推理在 GPU 服务端开启，Pi 根据握手配置执行：
+
+```bash
+# GPU 服务端
+alohamini inference serve --bind tcp://127.0.0.1:5560 \
+  --policy.path <checkpoint> --task "拿起物体" --rtc
+# Pi，经 VPN 或 SSH 隧道连接服务端
+alohamini inference run --server tcp://127.0.0.1:5560 \
+  --host 127.0.0.1 --robot_model alohamini2pro --fps 30
+```
+
+远程 `--chunk-size` 默认使用完整预测块；有效预测年龄上限取服务端 RTC 设置与 Pi 的
+`--max-prediction-age-s`（默认 1 秒）的较小值。两端须使用支持 RTC 协议的版本。
+算法参考 [Physical Intelligence RTC](https://github.com/Physical-Intelligence/real-time-chunking-kinetix/tree/9296f31d62d5bfeb5779dcb2f9bcf71ca37f448b)，仅提供推理期引导模式。
 
 ### 固定维度的训练与推理
 

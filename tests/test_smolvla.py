@@ -120,6 +120,28 @@ def batch():
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_rtc_real_smolvla_cache_and_vjp(tiny_assets, device):
+    from alohamini.policies.rtc import RTCGuidance
+    from alohamini.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+    from alohamini.rtc import RTCConfig
+
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable")
+    model = SmolVLAPolicy(SmolVLAConfig(**options(tiny_assets))).eval().to(device)
+    inputs = {key: value.to(device) for key, value in batch().items()}
+    noise = torch.randn(1, 3, 8, device=device)
+    with torch.autocast(device, dtype=torch.bfloat16, enabled=device == "cuda"):
+        baseline = model.predict_action_chunk(inputs, noise=noise)
+        guided = model.predict_action_chunk(
+            inputs, noise=noise, rtc_processor=RTCGuidance(RTCConfig(enabled=True)),
+            prev_chunk_left_over=baseline[:, :2] + 0.1, inference_delay=1,
+        )
+    assert guided.shape == baseline.shape and guided.isfinite().all()
+    assert not torch.allclose(baseline, guided)
+    assert all(p.grad is None for p in model.parameters())
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_real_transformer_forward_backward_queue_and_official_parity(tiny_assets, device):
     from alohamini.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 

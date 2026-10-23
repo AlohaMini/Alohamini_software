@@ -152,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
         "--policy.path", dest="checkpoint", help="本地 AlohaMini 策略 checkpoint"
     )
     evaluator.add_argument("--device", help="checkpoint 推理设备，默认 cuda")
+    from alohamini.rtc import add_rtc_arguments
+
+    add_rtc_arguments(evaluator)
     evaluator.add_argument(
         "--policy.n_action_steps",
         dest="n_action_steps",
@@ -437,6 +440,9 @@ def main(argv: list[str] | None = None) -> int:
             options.pop("command")
             checkpoint = options.pop("checkpoint")
             device = options.pop("device")
+            from alohamini.rtc import pop_rtc_options
+
+            rtc = pop_rtc_options(options)
             overrides = {
                 key: options.pop(key)
                 for key in (
@@ -474,10 +480,14 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     if policy.fps != options["fps"]:
                         raise ValueError("Evaluation FPS must match the checkpoint")
+                    if rtc.enabled:
+                        from alohamini.learning.rtc import RTCPolicy
+
+                        return RTCPolicy(policy, rtc)
                     return policy
 
                 options["policy_factory"] = load_checkpoint
-            elif device is not None or overrides:
+            elif device is not None or overrides or rtc.enabled:
                 raise ValueError("Checkpoint options require --policy.path, not --policy")
             evaluate(**options)
             return 0

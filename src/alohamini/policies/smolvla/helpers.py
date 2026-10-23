@@ -16,11 +16,12 @@
 
 import math
 from collections import deque
-from collections.abc import Callable
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+
+from alohamini.policies.flow_matching import euler_integrate as euler_integrate
 
 
 def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding` (exact copy)
@@ -151,70 +152,6 @@ def sample_time_beta(bsize: int, device, *, alpha: float, beta: float, scale: fl
     time_beta = sample_beta(alpha, beta, bsize, device)
     time = time_beta * scale + offset
     return time.to(dtype=torch.float32, device=device)
-
-
-def euler_integrate(
-    denoise_fn: Callable[[Tensor, Tensor], Tensor],
-    noise: Tensor,
-    num_steps: int,
-    *,
-    rtc_processor: object | None = None,
-    rtc_enabled: bool = False,
-    inference_delay: int | None = None,
-    prev_chunk_left_over: Tensor | None = None,
-    execution_horizon: int | None = None,
-) -> Tensor:
-    """Forward-Euler integration of a velocity field from t=1 (noise) to t=0 (actions).
-
-    This is the openpi sampling loop: ``dt = -1/num_steps``, ``time = 1.0 + step*dt``,
-    ``x_t <- x_t + dt * v_t``, with the optional real-time-chunking (RTC) guidance hook
-    wrapping the velocity computation and debug tracking after each step.
-
-    Args:
-        denoise_fn: Computes the velocity ``v_t`` from ``(x_t, time_tensor)`` where
-            ``time_tensor`` is a float32 tensor of shape ``(batch_size,)``. The returned
-            velocity must have the same shape and dtype as ``x_t``.
-        noise: Initial sample ``x_1`` of shape ``(batch_size, ...)``.
-        num_steps: Number of Euler steps.
-        rtc_processor: Optional RTC processor. Debug tracking fires whenever it is set and
-            has debugging enabled, even if RTC guidance itself is disabled (this mirrors
-            the historical per-policy loops).
-        rtc_enabled: Whether to route the velocity computation through
-            ``rtc_processor.denoise_step`` (requires ``rtc_processor``).
-        inference_delay: RTC guidance parameter, forwarded verbatim.
-        prev_chunk_left_over: RTC guidance parameter, forwarded verbatim.
-        execution_horizon: RTC guidance parameter, forwarded verbatim.
-    """
-    bsize = noise.shape[0]
-    device = noise.device
-
-    dt = -1.0 / num_steps
-    x_t = noise
-    for step in range(num_steps):
-        time = 1.0 + step * dt
-        time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
-
-        def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-            return denoise_fn(input_x_t, current_timestep)
-
-        if rtc_enabled:
-            v_t = rtc_processor.denoise_step(
-                x_t=x_t,
-                prev_chunk_left_over=prev_chunk_left_over,
-                inference_delay=inference_delay,
-                time=time,
-                original_denoise_step_partial=denoise_step_partial_call,
-                execution_horizon=execution_horizon,
-            )
-        else:
-            v_t = denoise_step_partial_call(x_t)
-
-        x_t = x_t + dt * v_t
-
-        if rtc_processor is not None and rtc_processor.is_debug_enabled():
-            rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
-
-    return x_t
 
 
 def populate_queues(

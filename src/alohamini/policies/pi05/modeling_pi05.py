@@ -417,7 +417,10 @@ class PI0Pytorch(nn.Module):
         )
 
     @torch.no_grad()
-    def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
+    def sample_actions(
+        self, device, observation, noise=None, num_steps=10, *, rtc_processor=None,
+        prev_chunk_left_over=None, inference_delay=None,
+    ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
         if noise is None:
@@ -441,6 +444,17 @@ class PI0Pytorch(nn.Module):
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
         )
+
+        if rtc_processor is not None:
+            from alohamini.policies.flow_matching import euler_integrate
+
+            return euler_integrate(
+                lambda latent, t: self.denoise_step(
+                    state, prefix_pad_masks, past_key_values, latent, t
+                ),
+                noise, num_steps, rtc_processor=rtc_processor, rtc_enabled=True,
+                prev_chunk_left_over=prev_chunk_left_over, inference_delay=inference_delay,
+            )
 
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)

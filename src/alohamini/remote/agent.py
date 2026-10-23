@@ -41,6 +41,7 @@ class ActionBuffer:
         self.skipped = 0
         self.expired = 0
         self.last_round_trip_s = None
+        self.accepted_plan_id = None
 
     def remember(self, request_id, tick, sampled_s):
         self.requests[request_id] = ObservationRequest(tick, sampled_s)
@@ -83,6 +84,7 @@ class ActionBuffer:
                 del self.requests[old_id]
         # Never retain an older plan's tail after accepting a newer plan.
         self.targets.clear()
+        self.accepted_plan_id = None
         age = now - record.sampled_s
         if not 0 <= age < self.max_age_s:
             self.expired += 1
@@ -96,6 +98,8 @@ class ActionBuffer:
             )
         if prefix >= len(actions):
             self.expired += 1
+        else:
+            self.accepted_plan_id = request_id
         return max(0, len(actions) - prefix)
 
     def pop(self, tick, now):
@@ -227,7 +231,21 @@ def run_session(
         names, cameras, chunk_size = _check_ready(
             ready, session, request_id, context, fps, robot_model, initial.images, fixed_names
         )
+        from alohamini.rtc import RTCConfig
+
+        rtc = None
+        if "rtc" in ready:
+            try:
+                rtc = RTCConfig(**ready["rtc"])
+                rtc.validate_horizon(chunk_size)
+                if not rtc.enabled:
+                    raise ValueError("RTC server configuration must be enabled")
+            except (TypeError, ValueError) as exc:
+                raise ProtocolError(f"Invalid RTC server settings: {exc}") from exc
+            max_prediction_age_s = min(max_prediction_age_s, rtc.max_prediction_age_s)
         buffer = ActionBuffer(session, context, names, fps, max_prediction_age_s, chunk_size)
+        pending_rtc = False
+        last_request_tick = -1
         origin = clock()
         first_action_deadline = origin + rpc_timeout_s
         last_tick = -1
@@ -264,14 +282,17 @@ def run_session(
                 if result[0] != "actions":
                     raise ProtocolError("Expected a remote action chunk")
                 buffer.accept(result[1], now=now, tick=tick)
+                pending_rtc = False
             if not set(cameras) <= set(snapshot.images):
                 raise RuntimeError("Host is missing a policy camera")
-            request_id += 1
             source_tick = max(0, math.floor((snapshot.request_started_s - origin) * fps))
-            buffer.remember(request_id, source_tick, snapshot.request_started_s)
-            link.submit(
-                "observation",
-                dict(
+            if rtc is None or (
+                not pending_rtc and (
+                    last_request_tick < 0 or source_tick >= last_request_tick + rtc.replan_steps
+                )
+            ):
+                request_id += 1
+                body = dict(
                     session=session,
                     id=request_id,
                     tick=source_tick,
@@ -279,10 +300,23 @@ def run_session(
                     client_id=client.client_id,
                     context=context,
                     snapshot=snapshot_body(snapshot),
-                ),
-                {camera: snapshot.images[camera] for camera in cameras},
-            )
-            stats["observations"] += 1
+                )
+                if rtc is not None:
+                    measured_delay = math.ceil((buffer.last_round_trip_s or 0) * fps) + 1
+                    body["rtc"] = dict(
+                        plan_id=buffer.accepted_plan_id,
+                        inference_delay=max(
+                            rtc.inference_delay_steps, measured_delay, tick - source_tick + 1
+                        ),
+                    )
+                    pending_rtc = True
+                    last_request_tick = source_tick
+                buffer.remember(request_id, source_tick, snapshot.request_started_s)
+                link.submit(
+                    "observation", body,
+                    {camera: snapshot.images[camera] for camera in cameras},
+                )
+                stats["observations"] += 1
             if tick <= last_tick:
                 continue
             targets = buffer.pop(tick, now)
