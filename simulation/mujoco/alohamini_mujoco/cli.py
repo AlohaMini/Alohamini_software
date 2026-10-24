@@ -106,6 +106,12 @@ def main(argv=None):
     view.add_argument("--collisions", action="store_true", help="start with physical convex hulls")
     view.add_argument("--paused", action="store_true", help="start paused; Space plays dynamics")
     view.add_argument("--links", nargs="+", help="inspect only these named robot links")
+    component_view = commands.add_parser(
+        "component-view", help="inspect registered components with kinematic joint sliders"
+    )
+    component_view.add_argument("--component-bundles", type=Path, nargs="+", required=True)
+    component_view.add_argument("--initial-positions", type=json.loads, default={})
+    component_view.add_argument("--links", nargs="+", help="show selected component-covered links")
     decompose = commands.add_parser("decompose", help="generate explicit CAD collision candidates")
     decompose.add_argument("--links", nargs="+", required=True, help="named URDF links")
     decompose.add_argument("--tolerance-m", type=float, default=0.0005)
@@ -147,9 +153,16 @@ def main(argv=None):
     datums.add_argument("--cad-bundle", type=Path, required=True)
     datums.add_argument("--binding", type=Path, required=True)
     datums.add_argument("--output", type=Path, required=True)
+    mesh_source = commands.add_parser(
+        "mesh-source", help="extract a closed visual component within float32 encoding bounds"
+    )
+    mesh_source.add_argument("--link", required=True)
+    mesh_source.add_argument("--visual-index", type=int, default=0)
+    mesh_source.add_argument("--component-index", type=int, required=True)
+    mesh_source.add_argument("--output", type=Path, required=True)
     cad_collision = commands.add_parser(
         "cad-collision",
-        help="verify closed CAD convex colliders against complete-link registrations",
+        help="verify closed reference convex colliders against complete-link registrations",
     )
     cad_collision.add_argument("--mesh-bundle", type=Path, required=True)
     cad_collision.add_argument("--registrations", type=Path, nargs="+", required=True)
@@ -255,6 +268,29 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation == "component-view":
+            from .viewer import run_component_viewer
+
+            if not isinstance(args.initial_positions, dict):
+                raise ValueError("Initial positions must use named URDF joints")
+            robot = build_model(
+                profile=ModelProfile(initial_positions=args.initial_positions),
+                component_bundles=args.component_bundles,
+            )
+            run_component_viewer(robot, links=args.links)
+            return 0
+        if args.operation == "mesh-source":
+            from .mesh_source import extract_mesh_source
+
+            report = extract_mesh_source(
+                Description(get_robot_model("alohamini2pro")),
+                args.output,
+                link=args.link,
+                visual_index=args.visual_index,
+                component_index=args.component_index,
+            )
+            print(json.dumps({"output": str(args.output), "seam_repair": report["seam_repair"]}))
+            return 0
         if args.operation == "collision-probe":
             from .contact_probe import probe_cad_contacts
 

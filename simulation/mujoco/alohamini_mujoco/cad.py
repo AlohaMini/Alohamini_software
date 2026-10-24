@@ -13,6 +13,11 @@ from pathlib import Path
 
 import numpy as np
 
+MESH_REFERENCE_FRAMES = (
+    "CAD part definition frame, float64",
+    "scaled URDF visual frame, float64",
+)
+
 
 def file_sha256(path):
     with Path(path).open("rb") as stream:

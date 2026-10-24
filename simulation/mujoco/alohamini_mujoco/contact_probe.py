@@ -32,7 +32,7 @@ def _winding(mesh, point):
     return float(np.arctan2(numerator, denominator).sum() / (2 * math.pi))
 
 
-def _component_fixture_inputs(robot, directory):
+def _component_fixture_inputs(robot, directory, *, name_prefix="cad_fixture"):
     if robot.scene is not None:
         raise ValueError("Use a robot-only model for isolated CAD component fixtures")
     pieces, metadata = load_cad_components(robot.description, directory)
@@ -44,7 +44,7 @@ def _component_fixture_inputs(robot, directory):
             raise ValueError("CAD component fixture link is absent from the native model")
         selected[link] = []
         for i, mesh in enumerate(meshes):
-            name = f"cad_fixture_{link}_{i}"
+            name = f"{name_prefix}_{link}_{i}"
             if name in geometry or name + ".msh" in assets:
                 raise ValueError("CAD component fixture asset name is already in use")
             assets[name + ".msh"] = mesh.msh_bytes()
@@ -73,6 +73,46 @@ def attach_component_fixture(robot, directory):
     compiling, avoiding retention of an extra complete robot model.
     """
     inputs = _component_fixture_inputs(robot, directory)
+    return replace(robot, model=compile_xml(inputs["xml"], assets=inputs["assets"]), **inputs)
+
+
+def _component_fixtures_inputs(robot, directories):
+    """Assemble registered components before native compilation.
+
+    This retains all original geometry and never promotes partial coverage to
+    a link replacement. The same source component cannot be added twice.
+    """
+    if not directories:
+        raise ValueError("Select at least one registered component bundle")
+    current, bundles, selected, covered = robot, [], {}, set()
+    for index, directory in enumerate(directories):
+        inputs = _component_fixture_inputs(current, directory, name_prefix=f"cad_fixture{index}")
+        bundle = inputs["manifest"]["cad_component_fixture"]
+        for link, record in bundle["definition"]["links"].items():
+            target = record["cad_geometry"]["registration"]["target"]
+            identity = (link, target["visual_index"], target["component_index"])
+            if identity in covered:
+                raise ValueError("A visual component is already present in the inspection assembly")
+            covered.add(identity)
+            selected.setdefault(link, []).extend(inputs["manifest"]["cad_component_geoms"][link])
+        bundles.append(bundle)
+        current = replace(current, **inputs)
+    manifest = {
+        **robot.manifest,
+        "cad_component_fixture": {
+            "coverage": "multiple visual components; complete-link coverage unverified",
+            "components": bundles,
+        },
+        "cad_component_geoms": selected,
+    }
+    return dict(
+        xml=current.xml, assets=current.assets, geometry=current.geometry, manifest=manifest
+    )
+
+
+def attach_component_fixtures(robot, directories):
+    """Attach a scoped inspection assembly to an existing robot, compiling once."""
+    inputs = _component_fixtures_inputs(robot, directories)
     return replace(robot, model=compile_xml(inputs["xml"], assets=inputs["assets"]), **inputs)
 
 
@@ -115,6 +155,8 @@ def probe_cad_contacts(robot, mesh_bundle, configuration, *, component_bundle=No
     )
     if not bundle:
         raise ValueError("Contact probes require an explicitly qualified CAD collision bundle")
+    if "components" in bundle:
+        raise ValueError("Probe one source component bundle at a time")
     root = ET.fromstring(inputs["xml"])
     if root.find('.//geom[@name="cad_contact_probe"]') is not None:
         raise ValueError("CAD contact probe name is already in use")
@@ -157,7 +199,10 @@ def probe_cad_contacts(robot, mesh_bundle, configuration, *, component_bundle=No
             raise ValueError("Provide a nonzero outward normal and named joint configurations")
         normal /= length
         distance, nearest = index.closest(point[None])
-        if distance[0] > metadata["linear_deflection_m"]:
+        reference_error = metadata.get("surface_reference_error_m", metadata["linear_deflection_m"])
+        if reference_error is None or not np.isfinite(reference_error) or reference_error < 0:
+            raise ValueError("Contact source requires an explicit finite reference error bound")
+        if distance[0] > reference_error:
             raise ValueError("Declared contact point is not on the supplied CAD mesh")
         triangle = reference.triangles[nearest[0]]
         outward = np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])

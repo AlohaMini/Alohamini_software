@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .cad import file_sha256
+from .cad import MESH_REFERENCE_FRAMES, file_sha256
 from .collision import (
     collision_sources,
     components,
@@ -47,7 +47,7 @@ def _source(directory):
     if (
         metadata.get("schema_version") != 1
         or metadata.get("units") != "m"
-        or metadata.get("coordinates") != "CAD part definition frame, float64"
+        or metadata.get("coordinates") not in MESH_REFERENCE_FRAMES
         or len(metadata.get("solids", [])) != 1
     ):
         raise ValueError("CAD collision requires one explicitly framed closed source solid")
@@ -94,7 +94,7 @@ def _decomposition(source, metadata, fingerprint, output, parameters, reuse):
         if (
             cache.get("schema_version") != 1
             or cache.get("units") != "m"
-            or cache.get("coordinates") != "CAD part definition frame, float64"
+            or cache.get("coordinates") != metadata["coordinates"]
             or cache.get("source_manifest_sha256") != fingerprint
             or cache.get("source_mesh_sha256") != metadata["solids"][0]["sha256"]
             or cache.get("coacd_version") != version("coacd")
@@ -122,7 +122,7 @@ def _decomposition(source, metadata, fingerprint, output, parameters, reuse):
         cache = {
             "schema_version": 1,
             "units": "m",
-            "coordinates": "CAD part definition frame, float64",
+            "coordinates": metadata["coordinates"],
             "source_manifest_sha256": fingerprint,
             "source_mesh_sha256": metadata["solids"][0]["sha256"],
             "coacd_version": version("coacd"),
@@ -398,9 +398,9 @@ def build_cad_collision(
                 "schema_version": 2,
                 "units": "m",
                 "robot_model": description.robot_model.model_id,
-                "algorithm": "registered closed CAD convex collision",
+                "algorithm": "registered closed reference convex collision",
                 "status": (
-                    "CAD material-distance verified candidate; "
+                    "reference material-distance verified candidate; "
                     "contact and dynamics qualification required"
                 ),
                 "source_mesh_manifest_sha256": fingerprint,

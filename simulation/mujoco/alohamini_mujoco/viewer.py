@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import copy
 import queue
+import sys
+import threading
 import time
+from contextlib import contextmanager
 
 import mujoco
 import numpy as np
@@ -44,6 +47,143 @@ def check_display():
         glfw.destroy_window(window)
     finally:
         glfw.default_window_hints()
+
+
+@contextmanager
+def component_window(model, data, **kwargs):
+    """Join the native render thread before Python tears down GLFW.
+
+    MuJoCo 3.8.1 launch_passive creates a daemon and close only requests exit.
+    Own the same pinned native entry point so window closure waits for resource
+    destruction. macOS retains the mjpython main-thread launcher requirement.
+    """
+    from mujoco import viewer
+
+    if sys.platform == "darwin":
+        with viewer.launch_passive(model, data, **kwargs) as window:
+            yield window
+        return
+    handles, errors = queue.Queue(1), []
+
+    def render():
+        try:
+            viewer._launch_internal(
+                model, data, run_physics_thread=False, handle_return=handles, **kwargs
+            )
+        except Exception as exc:
+            errors.append(exc)
+            try:
+                handles.put_nowait(exc)
+            except queue.Full:
+                pass
+
+    thread = threading.Thread(target=render, name="AlohaMini component viewer", daemon=False)
+    thread.start()
+    try:
+        window = handles.get()
+        if isinstance(window, Exception):
+            raise RuntimeError("Cannot launch the native component viewer") from window
+        try:
+            yield window
+        finally:
+            window.close()
+    finally:
+        thread.join()
+    if errors:
+        raise RuntimeError("Native component viewer failed") from errors[0]
+
+
+def run_component_viewer(robot, *, links=None):
+    """Inspect partial collision assemblies with native kinematic joint sliders.
+
+    No mj_step or controller runs. Source colliders stay in the fixture but are
+    hidden, so only explicitly selected new components appear in collision view.
+    This fixture is disposable; native UI edits never change the source robot.
+    """
+    if "cad_component_fixture" not in robot.manifest:
+        raise ValueError("Component inspection requires a scoped component fixture")
+    selected_links = set(links or robot.manifest["cad_component_geoms"])
+    if not selected_links or selected_links - robot.manifest["cad_component_geoms"].keys():
+        raise ValueError("Select links covered by the component inspection assembly")
+    model, data = robot.model, robot.data()
+    initial = mujoco.MjData(model)
+    mujoco.mj_copyData(initial, model, data)
+    component_names = {
+        name for link in selected_links for name in robot.manifest["cad_component_geoms"][link]
+    }
+    component_ids = [model.geom(name).id for name in sorted(component_names)]
+    for name, record in robot.geometry.items():
+        geom = model.geom(name).id
+        model.geom_group[geom] = (
+            4
+            if name in component_names
+            else 2
+            if record["kind"] == "visual" and record["link"] in selected_links
+            else 0
+        )
+        if name in component_names:
+            model.geom_rgba[geom] = [0.08, 0.55, 0.88, 0.8]
+    check_display()
+    events = queue.SimpleQueue()
+    collisions, overlay = True, False
+
+    def geometry(options):
+        options.geomgroup[:] = 0
+        options.geomgroup[2] = int(overlay or not collisions)
+        options.geomgroup[4] = int(overlay or collisions)
+        # Component assets already contain the transported convex boundaries.
+        # Keep source visuals intact when both groups are visible.
+        options.flags[mujoco.mjtVisFlag.mjVIS_CONVEXHULL] = 0
+
+    with component_window(
+        model, data, key_callback=events.put, show_left_ui=False, show_right_ui=True
+    ) as window:
+        with window.lock():
+            geometry(window.opt)
+            centers, radii = data.geom_xpos[component_ids], model.geom_rbound[component_ids, None]
+            lower, upper = (centers - radii).min(0), (centers + radii).max(0)
+            window.cam.lookat[:] = (lower + upper) / 2
+            window.cam.distance = max(0.1, float(np.linalg.norm(upper - lower)) * 1.2)
+            window.cam.azimuth, window.cam.elevation = 45, -20
+        print(
+            "Component inspection: joint sliders change pose only; "
+            "F8 source/collision; F7 overlay; F9 reset; F6 frames. No dynamics.",
+            flush=True,
+        )
+        while window.is_running():
+            with window.lock():
+                while not events.empty():
+                    key = events.get()
+                    if key == 297:  # F8
+                        collisions, overlay = not collisions, False
+                    elif key == 296:  # F7
+                        overlay = not overlay
+                    elif key == 298:  # F9
+                        mujoco.mj_copyData(data, model, initial)
+                geometry(window.opt)
+                data.qvel[:] = 0
+                data.time = 0
+                mujoco.mj_forward(model, data)
+                mode = (
+                    "Overlay"
+                    if overlay
+                    else "Collision components"
+                    if collisions
+                    else "Source link visuals"
+                )
+                window.set_texts(
+                    (
+                        mujoco.mjtFont.mjFONT_NORMAL,
+                        mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
+                        "Component inspection\nGeometry\nControls",
+                        "Kinematic pose only; partial link coverage\n"
+                        f"{mode}\n"
+                        "Joint sliders: pose  F8: geometry  F7: overlay  F9: reset  F6: frames",
+                    )
+                )
+            window.sync()
+            time.sleep(1 / 30)
+    return data
 
 
 class DynamicPlayback:

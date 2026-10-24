@@ -113,7 +113,7 @@ class RobotModel:
         return data
 
 
-def build_model(robot_model=None, profile=None, *, scene=None):
+def build_model(robot_model=None, profile=None, *, scene=None, component_bundles=None):
     description = Description(robot_model or get_robot_model("alohamini2pro"))
     profile = profile or ModelProfile()
     T_world_root = rigid_transform(profile.T_world_root)
@@ -383,13 +383,6 @@ def build_model(robot_model=None, profile=None, *, scene=None):
     if scene is not None:
         scene.augment(root, assets)
     xml = ET.tostring(root, encoding="unicode")
-    compiled = compile_xml(xml, assets=assets)
-    for relative, expected in files.items():
-        if (
-            hashlib.sha256((description.robot_model.directory / relative).read_bytes()).hexdigest()
-            != expected
-        ):
-            raise ValueError(f"Robot source changed during model construction: {relative}")
     initial = {**description.home, **profile.initial_positions, **profile.locked_positions}
     manifest = {
         "schema_version": 1,
@@ -436,6 +429,20 @@ def build_model(robot_model=None, profile=None, *, scene=None):
     }
     if scene is not None:
         manifest["scene"] = scene.manifest
-    return RobotModel(
-        description, compiled, profile, xml, assets, meshes, geometry, manifest, initial, scene
+    robot = RobotModel(
+        description, None, profile, xml, assets, meshes, geometry, manifest, initial, scene
     )
+    if component_bundles is not None:
+        from .contact_probe import _component_fixtures_inputs
+
+        inputs = _component_fixtures_inputs(robot, component_bundles)
+        robot.xml, robot.assets = inputs["xml"], inputs["assets"]
+        robot.geometry, robot.manifest = inputs["geometry"], inputs["manifest"]
+    robot.model = compile_xml(robot.xml, assets=robot.assets)
+    for relative, expected in files.items():
+        if (
+            hashlib.sha256((description.robot_model.directory / relative).read_bytes()).hexdigest()
+            != expected
+        ):
+            raise ValueError(f"Robot source changed during model construction: {relative}")
+    return robot

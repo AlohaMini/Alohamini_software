@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .cad import file_sha256
+from .cad import MESH_REFERENCE_FRAMES, file_sha256
 from .collision import components, manifold_parts, signed_volume, visual_sources
 from .frames import points_in_frame, rigid_transform
 from .geometry import SurfaceIndex, directed_surface_bounds, measure_surface_distance
@@ -87,8 +87,8 @@ def register_part(
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("schema_version") != 1 or manifest.get("units") != "m":
         raise ValueError("Use a metre-scale CAD tessellation bundle")
-    if manifest.get("coordinates") != "CAD part definition frame, float64":
-        raise ValueError("CAD mesh coordinates must be the explicit part definition frame")
+    if manifest.get("coordinates") not in MESH_REFERENCE_FRAMES:
+        raise ValueError("Mesh coordinates must use an explicit metric reference frame")
     records, vertices, faces = [], [], []
     for solid in manifest["solids"]:
         path = (directory / solid["file"]).resolve()
@@ -160,6 +160,7 @@ def register_part(
         "coordinates": "URDF link-local metres",
         "T_link_part": transform.tolist(),
         "source_cad_sha256": manifest["source_cad_sha256"],
+        "source_format": manifest.get("source_format", "step-brep"),
         "mesh_manifest_sha256": fingerprint,
         "cad_definition": manifest["definition"],
         "cad_name": manifest["name"],

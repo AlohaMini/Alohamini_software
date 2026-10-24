@@ -158,6 +158,17 @@ python -m mujoco.viewer \
 
 ### 零件坐标校验
 
+缺少实体 CAD 时，可从现有二进制 STL 提取闭合参考网格；需要 `[geometry]` 依赖：
+
+```bash
+alohamini-mujoco mesh-source \
+  --link "${URDF_LINK:?请选择 URDF 连杆}" \
+  --component-index "${VISUAL_COMPONENT_INDEX:?请选择视觉网格分量}" \
+  --output ~/Alohamini_workspace/simulation/cad/mesh-reference
+```
+
+输出 `mesh.json` 与闭合网格，坐标为应用 URDF scale 后的视觉局部坐标；`T_link_part_hint` 给出其到连杆的变换。接缝位移须落在每个原坐标的 float32 舍入区间内；非流形连接仅允许分离顶点索引，逐面保持原三角形坐标和朝向。重复面、无法闭合的边界及需要删面、补面的情况均拒绝。`source_format: urdf-binary-stl` 不包含 BRep，原始 CAD 离散误差未知。后续使用相同的配准、碰撞生成和探针命令。
+
 ```bash
 alohamini-mujoco cad-register \
   --mesh-bundle ~/Alohamini_workspace/simulation/cad/part-mesh \
@@ -203,6 +214,16 @@ OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 alohamini-mujoco cad-collision \
 默认仅接受单个闭合 CAD 实体及覆盖整条连杆全部视觉三角形的已通过配准；不推断刚体归属、镜像或缩放。多个连杆须分别提供配准目录。CoACD 关闭重网格、减面和膨胀；`--concavity-m` 是分解目标，`--tolerance-m` 是独立的实体距离验收预算。
 
 多零件连杆可加 `--component-only`，针对所选完整视觉分量导出 `component.json`。此模式不接受 `--surface-index` 分区，也不生成 `collision.json`；零件包不能直接用于整机替换、跟随或数采。加载时同时校验分量选择、当前源资产与碰撞体文件，不把零件验收解释为整条连杆验收。
+
+直接检查一个或多个已验收零件包：
+
+```bash
+alohamini-mujoco component-view \
+  --component-bundles "${COMPONENT_BUNDLE:?请选择包含 component.json 的目录}" \
+  --initial-positions '{"vertical_move":0.2}' --links left_Fixed_Jaw
+```
+
+`--component-bundles` 可接多个目录。右侧关节滑块只改变运动学姿态；F8 切换所选连杆的原视觉网格与新增碰撞组件，F7 叠加，F9 复位，F6 显示坐标系。同一视觉分量不能重复加入。原碰撞体保留但不显示；窗口不运行动力学，也不代表完整连杆覆盖、抓取或整机验收。
 
 验收检查 CAD 与 float32 碰撞凸体并集的双向实体包容关系，使用内接于误差球的凸多面体作 Minkowski 膨胀核，并记录布尔核容差。此项验证材料覆盖，不能替代接触法向、功能间隙或实物标定。`--refine` 仅裁剪超过包络的凸体，在六个误差区域边界平面中选择保留体积最大的合格裁剪，再检查整个结果。验收失败只保存 `qualification.json`，不生成可加载的 `collision.json`。
 
