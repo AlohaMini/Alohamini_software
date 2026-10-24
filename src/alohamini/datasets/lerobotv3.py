@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import shutil
 import tempfile
 import time
@@ -24,6 +25,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from PIL import Image
 
+from alohamini.datasets.exact_distribution import ExactDistributionStats
 from alohamini.datasets.image_statistics import ImageStatistics, sample_indices, sample_video_images
 from alohamini.datasets.images import (
     VIDEO_FORMAT,
@@ -52,11 +54,12 @@ class _Stats:
     def __init__(self, features, *, recording=False):
         self.features = features
         self.image_statistics = ImageStatistics() if recording else None
+        numeric_tracker = ExactDistributionStats if recording else ExactQuantileStats
         self.trackers = {
             key: (
                 (None if recording else RunningQuantileStats())
                 if f["dtype"] in ("image", "video")
-                else ExactQuantileStats()
+                else numeric_tracker()
             )
             for key, f in features.items()
         }
@@ -496,7 +499,18 @@ def _write_dataset(
 
 
 def recording_statistics(root):
-    """Restore image histograms; rebuild exact numeric accumulators from tables."""
+    """Restore exact committed state, rebuilding legacy or changed datasets once."""
+    from alohamini.datasets.recording_stats_cache import (
+        load_recording_statistics,
+        recording_statistics_binding,
+    )
+
+    root = Path(root)
+    cached = load_recording_statistics(root)
+    if cached is not None:
+        return cached
+    logging.info("Rebuilding recording statistics from historical data; no valid saved state")
+    binding = recording_statistics_binding(root)
     info = json.loads((root / "meta/info.json").read_text())
     stats = _Stats(info["features"], recording=True)
     cameras = [k for k, f in info["features"].items() if f["dtype"] == "video"]
@@ -528,6 +542,11 @@ def recording_statistics(root):
                             container, sample_indices(meta["length"]), offset=offset
                         ):
                             stats.image_statistics.update(key, rgb, source="legacy_decoded_video")
+    if stats.frames != info["total_frames"]:
+        raise ValueError("Rebuilt recording statistics do not cover every committed frame")
+    if recording_statistics_binding(root) != binding:
+        raise RuntimeError("Dataset changed while rebuilding recording statistics")
+    stats._recording_source_binding = binding
     return stats
 
 
@@ -609,6 +628,21 @@ def publish_recorded_episode(dataset):
         (stage / relative).replace(target)
     if timings is not None:
         timings["v3_publish"] = time.perf_counter() - started
+    # The dataset commit is complete. This optional state only avoids future
+    # reconstruction; a stale or missing copy never replaces authoritative data.
+    cache_started = time.perf_counter()
+    try:
+        from alohamini.datasets.recording_stats_cache import save_recording_statistics
+
+        save_recording_statistics(root, dataset._v3_stats)
+    except Exception as exc:
+        logging.warning(
+            "Episode saved, but recording statistics state could not be saved; "
+            "the next resume will rebuild it: %s",
+            exc,
+        )
+    if timings is not None:
+        timings["statistics_cache"] = time.perf_counter() - cache_started
 
 
 def recover_recording(source, output):

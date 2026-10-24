@@ -213,6 +213,8 @@ alohamini record \
 
 数据默认保存到 `~/Alohamini_workspace/datasets/pickup_01/`。自定义位置用 `--root`；继续已有数据集用 `--resume`，型号、标定、相机、任务和帧率须一致。
 
+续录启动读取已提交索引，不解码历史视频。保存时复用 `meta/recording_stats.npz` 中的精确累计统计状态，合并新 episode；缺失或失效时需重建一次，旧回合缺少图像直方图时还会读取对应视频。状态更新仍随数值分布规模增长。完整内容检查使用 `dataset check --decode-videos`。
+
 任务需要固定部分关节时，先遥操摆好位置，退出遥操，再在上述采集命令后追加：
 
 ```bash
