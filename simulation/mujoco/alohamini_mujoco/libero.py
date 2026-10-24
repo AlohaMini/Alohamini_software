@@ -21,6 +21,7 @@ from .model import pose_attributes, text
 from .native_distance import InvalidNativeDistance, checked_geom_distance
 
 LIBERO_COMMIT = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+LIBERO_EXPORT_MUJOCO_VERSION = "3.8.1"
 SPATIAL_TASKS = tuple(range(10))
 
 
@@ -68,13 +69,14 @@ def import_libero(source, python, output, *, tasks=SPATIAL_TASKS):
             check=True,
         )
         packages = json.loads((stage / "upstream.json").read_text())["upstream_packages"]
-        if packages["mujoco"] != mujoco.__version__ or packages["robosuite"] != "1.4.0":
+        if packages["mujoco"] != LIBERO_EXPORT_MUJOCO_VERSION or packages["robosuite"] != "1.4.0":
             raise ValueError("Upstream export requires MuJoCo 3.8.1 and robosuite 1.4.0")
         _source_revision(source)
         manifest = {
             "schema_version": 2,
             "upstream": "https://github.com/Lifelong-Robot-Learning/LIBERO",
             "source_commit": LIBERO_COMMIT,
+            "upstream_packages": packages,
             "suite": "libero_spatial",
             "tasks": list(tasks),
             "files": {
@@ -124,10 +126,23 @@ class LiberoScene:
             raise ValueError("LIBERO adaptation must preserve the vertical axis")
         self.fingerprint = sha256(manifest_path)
         self.configuration = copy.deepcopy(self.configuration)
+        upstream_packages = None
+        if "upstream.json" in self.bundle["files"]:
+            upstream_packages = json.loads((self.directory / "upstream.json").read_text())[
+                "upstream_packages"
+            ]
+            if (
+                not isinstance(upstream_packages, dict)
+                or upstream_packages.get("mujoco") != LIBERO_EXPORT_MUJOCO_VERSION
+                or upstream_packages.get("robosuite") != "1.4.0"
+                or self.bundle.get("upstream_packages", upstream_packages) != upstream_packages
+            ):
+                raise ValueError("LIBERO snapshot has an incompatible export environment")
         self.manifest = {
             "benchmark": "alohamini-libero-spatial-v1",
             "protocol": "robot adaptation; scores are not original Panda LIBERO scores",
             "source_commit": LIBERO_COMMIT,
+            "upstream_packages": upstream_packages,
             "bundle_sha256": self.fingerprint,
             "suite": self.task["suite"],
             "task_index": self.task_index,

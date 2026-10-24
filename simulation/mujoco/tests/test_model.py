@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from alohamini_mujoco.audit import contacts, validate_model
 from alohamini_mujoco.cli import export_robot
+from alohamini_mujoco.compilation import compile_xml, load_xml
 from alohamini_mujoco.frames import points_in_frame, rigid_transform, rotation_rpy, transform
 from alohamini_mujoco.meshes import binary_stl, ray_x_intersections
 from alohamini_mujoco.model import ModelProfile, build_model
@@ -107,7 +108,7 @@ def test_external_obstacle_still_contacts_the_finger(robot):
         size="0.003",
         pos=" ".join(map(str, position)),
     )
-    model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"), robot.assets)
+    model = compile_xml(ET.tostring(root, encoding="unicode"), assets=robot.assets)
     augmented = replace(robot, model=model)
     touching = contacts(augmented, augmented.data())
     assert any("external_probe" in (c["geom1"], c["geom2"]) for c in touching)
@@ -116,7 +117,7 @@ def test_external_obstacle_still_contacts_the_finger(robot):
 def test_export_is_relocatable_and_does_not_overwrite(robot, tmp_path):
     destination = export_robot(robot, {"checked": True}, tmp_path / "before")
     destination.rename(tmp_path / "after")
-    model = mujoco.MjModel.from_xml_path(str(tmp_path / "after/model.xml"))
+    model = load_xml(tmp_path / "after/model.xml")
     np.testing.assert_allclose(model.body_mass, robot.model.body_mass, atol=1e-12)
     np.testing.assert_allclose(model.jnt_range, robot.model.jnt_range, atol=1e-12)
     manifest = json.loads((tmp_path / "after/manifest.json").read_text())

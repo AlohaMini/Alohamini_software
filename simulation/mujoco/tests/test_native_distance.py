@@ -80,6 +80,46 @@ def test_censored_distance_has_no_required_witnesses():
     np.testing.assert_array_equal(witness, np.zeros(6))
 
 
+def test_separated_thin_boxes_do_not_become_a_false_gjk_contact():
+    """Geometry from upstream 35342f4: an early-exit regression in GJK."""
+    # https://github.com/google-deepmind/mujoco/commit/35342f4
+    model = mujoco.MjModel.from_xml_string("""<mujoco><worldbody>
+      <geom type="box" size=".015108062742470629 .00020768330936692047 .00033708479398415232"/>
+      <geom type="box" size=".0022889234034685867 .00039019141130537644 .00066943745945985227"/>
+      </worldbody></mujoco>""")
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    # Set native query poses directly to preserve the numerical reproduction.
+    rotations = np.array(
+        [
+            [
+                [0.41747699392674587, 0.7445704580736479, -0.5208913442416622],
+                [0.735898261710082, -0.6133129289446175, -0.28688150794614425],
+                [-0.5330728917830726, -0.263556605216739, -0.8039721437292835],
+            ],
+            [
+                [-0.11330328891322261, 0.6014637637569688, -0.7908246996703808],
+                [0.9557435215667675, 0.2834865022971088, 0.07867479900517776],
+                [0.2715081687621951, -0.7469114699230777, -0.6069650487406557],
+            ],
+        ]
+    )
+    data.geom_xmat[:] = rotations.reshape(2, 9)
+    data.geom_xpos[1] = [-0.004522410871927232, -0.009955852699440446, 0.00749543399075938]
+    axes = np.vstack([rotations[0].T, rotations[1].T])
+    axes = np.vstack([axes, np.cross(rotations[0].T[:, None], rotations[1].T).reshape(-1, 3)])
+    lengths = np.linalg.norm(axes, axis=1)
+    axes = axes[lengths > 1e-15] / lengths[lengths > 1e-15, None]
+    centers = data.geom_xpos @ axes.T
+    radii = np.array(
+        [abs(axes @ R) @ size for R, size in zip(rotations, model.geom_size, strict=True)]
+    )
+    gap = float((abs(centers[1] - centers[0]) - radii.sum(0)).max())
+    assert gap > 0  # Independent SAT projection proves these boxes are separated.
+    distance, _ = checked_geom_distance(model, data, 0, 1, 1.0)
+    assert gap - 1e-10 <= distance <= model.opt.ccd_tolerance
+
+
 @pytest.mark.parametrize("cutoff", [0, -1, True, float("nan"), float("inf")])
 def test_requires_positive_finite_cutoff(cutoff):
     model, data = fixture_model("sphere")

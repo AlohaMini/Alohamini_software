@@ -1,6 +1,7 @@
 import json
 import xml.etree.ElementTree as ET
 from dataclasses import replace
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -10,6 +11,41 @@ from alohamini_mujoco.collection import collect_episode, replay_episode, restore
 from alohamini_mujoco.control import JointTrajectory, solve_ik
 from alohamini_mujoco.libero import LIBERO_COMMIT, LiberoScene, sha256
 from alohamini_mujoco.model import ModelProfile, build_model
+
+
+@pytest.mark.parametrize(
+    "packages,accepted",
+    [
+        ({"mujoco": "3.8.1", "robosuite": "1.4.0"}, True),
+        ({"mujoco": "3.12.0", "robosuite": "1.4.0"}, False),
+        ({"mujoco": "3.8.1", "robosuite": "1.5.0"}, False),
+    ],
+)
+def test_import_pins_exporter_independently_of_runtime(tmp_path, monkeypatch, packages, accepted):
+    import sys
+
+    from alohamini_mujoco import libero
+
+    monkeypatch.setattr(libero, "_source_revision", lambda source: None)
+    monkeypatch.setattr(mujoco, "__version__", "3.12.0")
+
+    def export(command, **kwargs):
+        # The exporter receives a staging directory, not the final destination.
+        directory = Path(command[command.index("--output") + 1])
+        (directory / "upstream.json").write_text(json.dumps({"upstream_packages": packages}))
+
+    monkeypatch.setattr(libero.subprocess, "run", export)
+    if accepted:
+        directory = libero.import_libero(tmp_path / "source", sys.executable, tmp_path / "result")
+        bundle = json.loads((directory / "bundle.json").read_text())
+        assert bundle["upstream_packages"] == packages
+        assert bundle["files"]["upstream.json"] == sha256(directory / "upstream.json")
+        exported = json.loads((directory / "upstream.json").read_text())
+        assert exported["upstream_packages"] == packages
+    else:
+        with pytest.raises(ValueError, match="Upstream export"):
+            libero.import_libero(tmp_path / "source", sys.executable, tmp_path / "result")
+        assert not (tmp_path / "result").exists()
 
 
 @pytest.fixture(scope="module")
@@ -149,6 +185,31 @@ def test_scene_bundle_detects_mesh_or_metadata_changes_before_loading(scene_robo
     (directory / "task_000/scene.xml").write_text("<mujoco/>")
     with pytest.raises(ValueError, match="checksum"):
         LiberoScene(directory, 0, scene_robot.scene.configuration)
+
+
+@pytest.mark.parametrize("damage", [None, "version", "manifest"])
+def test_scene_retains_verified_export_versions(scene_robot, tmp_path, damage):
+    import shutil
+
+    directory = tmp_path / "snapshot"
+    shutil.copytree(scene_robot.scene.directory, directory)
+    packages = {"mujoco": "3.8.1", "robosuite": "1.4.0"}
+    bundle = json.loads((directory / "bundle.json").read_text())
+    bundle["upstream_packages"] = dict(packages)
+    if damage == "version":
+        packages["mujoco"] = "3.12.0"
+        bundle["upstream_packages"] = dict(packages)
+    elif damage == "manifest":
+        bundle["upstream_packages"]["robosuite"] = "1.5.0"
+    (directory / "upstream.json").write_text(json.dumps({"upstream_packages": packages}))
+    bundle["files"]["upstream.json"] = sha256(directory / "upstream.json")
+    (directory / "bundle.json").write_text(json.dumps(bundle))
+    if damage is None:
+        scene = LiberoScene(directory, 0, scene_robot.scene.configuration)
+        assert scene.manifest["upstream_packages"] == packages
+    else:
+        with pytest.raises(ValueError, match="export environment"):
+            LiberoScene(directory, 0, scene_robot.scene.configuration)
 
 
 def test_static_geometry_intersections_are_not_hidden_by_mujoco_weld_filter(scene_robot):

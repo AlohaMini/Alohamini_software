@@ -53,7 +53,7 @@ def check_display():
 def component_window(model, data, **kwargs):
     """Join the native render thread before Python tears down GLFW.
 
-    MuJoCo 3.8.1 launch_passive creates a daemon and close only requests exit.
+    MuJoCo 3.12.0 launch_passive creates a daemon and close only requests exit.
     Own the same pinned native entry point so window closure waits for resource
     destruction. macOS retains the mjpython main-thread launcher requirement.
     """

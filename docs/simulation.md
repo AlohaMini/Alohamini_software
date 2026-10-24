@@ -11,6 +11,8 @@ conda activate alohamini
 python -m pip install -e ./simulation/mujoco
 ```
 
+运行时固定 MuJoCo 3.12.0；LIBERO 原始导出环境独立固定 3.8.1。已有数据须使用记录的 MuJoCo 版本回放，不做静默跨版本迁移。
+
 ## 交互查看
 
 在桌面会话中从仓库根目录执行，无需输出目录：
@@ -54,7 +56,7 @@ MUJOCO_GL=glfw alohamini-mujoco view \
   --task-index 0 --reset-index 0
 ```
 
-支持 10 条 Spatial 任务，各保留 50 个具名物体初态；不迁移 Panda 关节或 7 维动作。快照包含原物体网格、纹理、分块碰撞体、惯量、接触参数、BDDL 和文件校验值。`--task-index` 为 0–9，`--reset-index` 为 0–49。其他 LIBERO 套件和谓词尚不支持。
+支持 10 条 Spatial 任务，各保留 50 个具名物体初态；不迁移 Panda 关节或 7 维动作。快照包含原物体网格、纹理、分块碰撞体、惯量、接触参数、BDDL、导出环境版本和文件校验值；导出版本与运行版本分别记录。`--task-index` 为 0–9，`--reset-index` 为 0–49。其他 LIBERO 套件和谓词尚不支持。
 
 场景配置明确 `T_world_root`、`T_world_libero`、机器人初态、支撑台和相机。LIBERO 变换须保持竖直轴，不缩放任务物体。示例中桌面高 0.5 m，机器人固定在支撑台上；相机是未完成真机标定的仿真配置。该布局须结合碰撞资产验证固定体间隙和任务可达性。场景检查的 `passed` 表示导入等价；`static_robot_scene.passed` 单独检查 MuJoCo 接触列表会跳过的固定体重叠。
 

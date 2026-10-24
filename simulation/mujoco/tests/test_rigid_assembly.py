@@ -136,7 +136,7 @@ def test_native_ownership_conserves_all_triangles_reference_pose_and_physical_mo
     np.testing.assert_array_equal(candidate.model.body_inertia, robot.model.body_inertia)
     np.testing.assert_array_equal(candidate.model.body_ipos, robot.model.body_ipos)
     for q in [-1.3, 0.4, 0.7]:
-        np.testing.assert_array_equal(candidate.data({"bend": q}).qM, robot.data({"bend": q}).qM)
+        np.testing.assert_array_equal(candidate.data({"bend": q}).M, robot.data({"bend": q}).M)
     assert (
         candidate.model.geom_bodyid[candidate.model.geom("legacy").id]
         == robot.model.body("source").id
@@ -422,7 +422,7 @@ def test_primitive_envelope_preserves_owner_frame_inertia_and_native_contacts(
     mocap = candidate.model.body_mocapid[candidate.model.body("probe_body").id]
     for q in [-1.3, 0.4, 0.7]:
         data = candidate.data({"bend": q})
-        np.testing.assert_array_equal(data.qM, robot.data({"bend": q}).qM)
+        np.testing.assert_array_equal(data.M, robot.data({"bend": q}).M)
         poses = candidate.description.forward(
             {**candidate.initial_positions, "bend": q}, candidate.profile.T_world_root
         )

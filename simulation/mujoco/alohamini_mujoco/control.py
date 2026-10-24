@@ -114,7 +114,13 @@ class DynamicFollower:
         self.target_velocity = np.zeros(len(self.names))
         mujoco.mj_forward(self.model, self.data)
         matrix = np.empty((self.model.nv, self.model.nv))
-        mujoco.mj_fullM(self.model, matrix, self.data.qM)
+        mujoco.mju_sym2dense(
+            matrix,
+            self.data.M,
+            self.model.M_rownnz,
+            self.model.M_rowadr,
+            self.model.M_colind,
+        )
         # A declared bandwidth and damping ratio determine gains from each
         # joint's effective inertia at initialization. These are simulation
         # controller settings, not fitted hardware servo parameters.

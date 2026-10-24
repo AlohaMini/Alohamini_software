@@ -124,7 +124,7 @@ def validate_model(robot, *, samples=16, seed=0):
         inertia = rotation @ np.diag(model.body_inertia[body_id]) @ rotation.T
         assembled += body_mass * linear.T @ linear + angular.T @ inertia @ angular
     matrix = np.empty((model.nv, model.nv))
-    mujoco.mj_fullM(model, matrix, initial.qM)
+    mujoco.mju_sym2dense(matrix, initial.M, model.M_rownnz, model.M_rowadr, model.M_colind)
     robot_dofs = [model.jnt_dofadr[model.joint(j.name).id] for j in active]
     robot_block = np.ix_(robot_dofs, robot_dofs)
     mass_matrix_error = float(np.max(np.abs((matrix - assembled)[robot_block])))

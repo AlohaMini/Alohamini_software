@@ -7,7 +7,7 @@ name = "alohamini-mujoco"
 version = "0.1.0.dev0"
 description = "MuJoCo asset validation and trajectory execution for AlohaMini"
 requires-python = ">=3.10"
-dependencies = ["alohamini-platform", "mujoco==3.8.1", "numpy>=2,<3", "scipy>=1.14,<2", "pillow>=11"]
+dependencies = ["alohamini-platform", "mujoco==3.12.0", "numpy>=2,<3", "scipy>=1.14,<2", "pillow>=11"]
 
 [project.optional-dependencies]
 cad = ["cadquery-ocp-novtk==7.9.3.1.1"]
