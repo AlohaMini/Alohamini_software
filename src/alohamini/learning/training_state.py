@@ -345,6 +345,7 @@ def load_training_checkpoint(path, cfg, samples, validation):
         "prefetch_factor",
         "persistent_workers",
         "dataloader_multiprocessing_context",
+        "dataset_preparation_timeout_s",
         "cpu_threads",
         "resume",
         "_checkpoint",

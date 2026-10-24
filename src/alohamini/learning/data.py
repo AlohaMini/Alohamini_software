@@ -24,10 +24,11 @@ from alohamini.policies.configuration import PolicyFeature
 
 
 class DatasetInspection:
-    """Reuse one integrity check for unchanged train/validation views in a run.
+    """Reuse an integrity check for unchanged views and ranks within one run.
 
-    Never persisted or shared globally. File identity, size, modification/change
-    times and directory membership must still match before reusing a result.
+    May be broadcast to peer ranks, but never persisted or reused across runs.
+    File identity, size, modification/change times and directory membership must
+    still match before reusing a result.
     """
 
     def __init__(self):

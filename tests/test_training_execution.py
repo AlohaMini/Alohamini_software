@@ -348,6 +348,18 @@ def test_explicit_loss_weights_ignore_accelerate_accumulation_env(monkeypatch):
     runtime.close()
 
 
+def test_single_process_preparation_without_collectives(monkeypatch):
+    import torch.distributed as dist
+
+    runtime = Execution("cpu")
+    monkeypatch.setattr(dist, "new_group", lambda **kw: pytest.fail("Unexpected group"))
+    assert runtime.main_process_call(lambda: {"value": 1}, label="Test") == {"value": 1}
+    for invalid in (0, -1, True, 0.5):
+        with pytest.raises(ValueError, match="positive integer"):
+            runtime.main_process_call(lambda: None, label="Test", timeout_s=invalid)
+    runtime.close()
+
+
 def test_nonfinite_gradients_do_not_update_without_scaler():
     runtime = Execution("cpu")
     model = TinyPolicy()

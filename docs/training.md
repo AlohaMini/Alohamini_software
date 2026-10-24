@@ -402,6 +402,8 @@ Diffusion／FastWAM 使用 `diffusers_cosine`；
 多进程尾批默认重复样本补齐，`--drop_last=true` 改为丢弃。
 `num_workers`、`prefetch_factor` 和视频缓存按进程生效，多卡时需合计 CPU 内存与解码负载。
 DataLoader 默认使用 `spawn`；可用 `--dataloader_multiprocessing_context=forkserver` 切换。
+多卡启动时，rank 0 检查数据并计算或加载归一化统计，其他 rank 校验后复用；文件变化时重新检查。
+`--stats` 可跨训练复用统计；启动结果同步默认最多等待 3600 秒，可用 `--dataset_preparation_timeout_s` 调整。
 多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
 
 FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出分片训练状态和完整推理权重。

@@ -106,12 +106,16 @@ def write_statistics(path, artifact):
     return path
 
 
-def training_statistics(components, samples, options, kind, source=None, *, checkpoint=None):
+def training_statistics(
+    components, samples, options, kind, source=None, *, checkpoint=None, artifact=None
+):
+    """Fit statistics or validate a file/checkpoint/run-local broadcast artifact."""
     contract = _contract(components, samples, options, kind)
-    if source and checkpoint is not None:
-        raise ValueError("Choose a statistics file or checkpoint statistics")
+    if sum((source is not None, checkpoint is not None, artifact is not None)) > 1:
+        raise ValueError("Choose a statistics file, checkpoint statistics or shared artifact")
     if source:
         artifact = json.loads(Path(source).expanduser().read_text())
+    if artifact is not None:
         if (artifact.get("format"), artifact.get("version")) != (
             "alohamini-training-statistics",
             1,

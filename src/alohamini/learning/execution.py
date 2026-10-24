@@ -138,12 +138,16 @@ class Execution:
                 "Accelerate runtime differs from this run; start a fresh training process"
             )
         self.scaler = self.accelerator.scaler
+        self._preparation_group = None
 
     @property
     def main(self):
         return self.accelerator.is_main_process
 
     def close(self):
+        if self._preparation_group is not None:
+            dist.destroy_process_group(self._preparation_group)
+            self._preparation_group = None
         if self.owns_group:
             self.accelerator.end_training()
         self.accelerator.free_memory()
@@ -158,6 +162,38 @@ class Execution:
 
     def gather(self, value):
         return gather_object([value])
+
+    def main_process_call(self, function, *, label, timeout_s=3600):
+        """Run startup work once; share its CPU result or failure with every rank.
+
+        Use a separate Gloo group: dataset scans can exceed the training group's
+        five-minute timeout, and inspection reports/statistics need no GPU memory.
+        Every rank must call this in the same order. Results are run-local only.
+        The first call sets the preparation group's timeout for this run.
+        """
+        if type(timeout_s) is not int or timeout_s < 1:
+            raise ValueError("dataset_preparation_timeout_s must be a positive integer")
+        if self.world_size == 1:
+            return function()
+        if self._preparation_group is None:
+            self._preparation_group = dist.new_group(
+                backend="gloo", timeout=timedelta(seconds=timeout_s)
+            )
+        payload = [None]
+        error = None
+        if self.main:
+            try:
+                payload[0] = (True, function())
+            except Exception as exc:
+                error = exc
+                payload[0] = (False, f"{type(exc).__name__}: {exc}")
+        dist.broadcast_object_list(payload, src=0, group=self._preparation_group)
+        success, value = payload[0]
+        if not success:
+            if error is not None:
+                raise error
+            raise RuntimeError(f"{label} failed on rank 0: {value}")
+        return value
 
     def prepare(self, model, optimizer):
         if self.sharded:
