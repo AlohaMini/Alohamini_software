@@ -803,6 +803,7 @@ class LocalDataset:
         self._lock = (self.root / "recording.lock").open("a")
         self._failed = False
         self._v3_stats = None
+        self._resume_statistics = False
         try:
             fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             staging = self.root / ".recording"
@@ -821,25 +822,18 @@ class LocalDataset:
             )
             self._recording_info = json.loads((staging / "meta/info.json").read_text())
             if resume:
-                from alohamini.datasets.lerobot_tools import IntegrityChecker
-                from alohamini.datasets.lerobotv3 import recording_statistics
+                from alohamini.datasets.recording_index import read_recording_index
 
                 source = json.loads((self.root / "meta/alohamini.json").read_text())
                 if source["source_info"] != self._recording_info:
                     raise ValueError(
                         "Dataset schema, task, fps or robot calibration changed; use a new dataset"
                     )
-                checker = IntegrityChecker(self.root, decode_videos=True)
-                report = checker.run()
-                if not report["valid"]:
-                    raise ValueError(f"Recording requires repair before resume: {report['issues']}")
-                self._writer.num_episodes = checker.info["total_episodes"]
-                self._writer.total_frames = checker.info["total_frames"]
-                self._writer._image_shapes = {
-                    camera: checker.info["features"][f"observation.images.{camera}"]["shape"]
-                    for camera in self.cameras
-                }
-                self._v3_stats = recording_statistics(self.root)
+                info, shapes = read_recording_index(self.root, self._recording_info)
+                self._writer.num_episodes = info["total_episodes"]
+                self._writer.total_frames = info["total_frames"]
+                self._writer._image_shapes = shapes
+                self._resume_statistics = True
         except BaseException:
             writer = self.__dict__.get("_writer")
             if writer is not None:
@@ -864,6 +858,15 @@ class LocalDataset:
             if self._writer.num_episodes == previous:
                 self.discard_episode()
                 return
+            if self._resume_statistics:
+                from alohamini.datasets.lerobotv3 import recording_statistics
+
+                statistics_started = time.perf_counter()
+                self._v3_stats = recording_statistics(self.root)
+                self._writer.last_save_timings["resume_statistics"] = (
+                    time.perf_counter() - statistics_started
+                )
+                self._resume_statistics = False
             episode = self._writer.root / "episodes" / f"episode_{previous:06d}"
             transaction = SimpleNamespace(
                 root=self.root,
