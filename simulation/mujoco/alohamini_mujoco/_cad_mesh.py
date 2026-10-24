@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._cad_conform import conform_face_mesh, split_index_fans
 from .meshes import Mesh
 
-TESSELLATION_METHOD = "occt-topological-boundaries-v1"
+TESSELLATION_METHOD = "occt-topological-boundaries-v2"
 
 
 def mesh_solid(solid, linear_deflection_m, angular_deflection_rad):
@@ -34,6 +35,7 @@ def mesh_solid(solid, linear_deflection_m, angular_deflection_rad):
     TopExp.MapShapes_s(solid, TopAbs_EDGE, edges)
     TopExp.MapShapes_s(solid, TopAbs_VERTEX, vertices)
     points, triangles, boundaries, offset = [], [], {}, 0
+    triangle_faces, face_tolerances = [], []
     faces = TopExp_Explorer(solid, TopAbs_FACE)
     while faces.More():
         face = TopoDS.Face_s(faces.Current())
@@ -60,6 +62,8 @@ def mesh_solid(solid, linear_deflection_m, angular_deflection_rad):
         )
         if face.Orientation() == TopAbs_REVERSED:
             indices = indices[:, ::-1]
+        triangle_faces.extend([len(face_tolerances)] * len(indices))
+        face_tolerances.append(BRep_Tool.Tolerance_s(face) * 0.001)
         face_edges = TopExp_Explorer(face, TopAbs_EDGE)
         while face_edges.More():
             edge = TopoDS.Edge_s(face_edges.Current())
@@ -190,7 +194,22 @@ def mesh_solid(solid, linear_deflection_m, angular_deflection_rad):
                 len(unique) == 2 and tuple(unique) not in retained_edges
             ):
                 raise ValueError("Collapsed CAD triangle is not covered by the remaining boundary")
+    conformity = None
+    if topology(result)["boundary_edges"]:
+        protected = np.zeros(len(canonical), dtype=bool)
+        np.logical_or.at(protected, inverse, np.isfinite(budgets))
+        result, conformity = conform_face_mesh(
+            result, np.asarray(triangle_faces)[keep], protected, face_tolerances, guard
+        )
+    fan_separation = None
     shape_topology = topology(result)
+    if (
+        shape_topology["nonmanifold_edges"]
+        and not shape_topology["boundary_edges"]
+        and not shape_topology["zero_area_faces"]
+    ):
+        result, fan_separation = split_index_fans(result)
+        shape_topology = topology(result)
     if any(shape_topology.values()) or signed_volume(result) <= 0:
         raise ValueError(
             "CAD tessellation is not a closed outward surface after topological binding: "
@@ -210,6 +229,8 @@ def mesh_solid(solid, linear_deflection_m, angular_deflection_rad):
         "maximum_original_local_budget_m": float(budgets[finite].max()) if finite.any() else 0.0,
         "rounding_guard_m": guard,
         "collapsed_triangles": int((~keep).sum()),
+        "face_interior_conformity": conformity,
+        "vertex_fan_separation": fan_separation,
         "geometry_policy": (
             "original BRep vertices and edge curves; no proximity weld or hole filling"
         ),

@@ -116,6 +116,8 @@ alohamini-mujoco cad-tessellate \
 
 `cad-tessellate` 仅接受有效实体，每个原始实体及其空腔整体离散，输出零件定义坐标系中的 float64 米制 NPZ 网格。相邻曲面通过原始 CAD 共享边的参数和顶点身份拼接，不按距离合并独立边；边界点取自原始顶点或三维边曲线，逐点验证局部原生容差。记录 `tessellation_method`、`boundary_binding`、闭合性、朝向及校验值。退化三角形仅在其塌缩结果已被保留边界覆盖时移除，不补面或封洞。弦高参数不是经独立验证的表面误差上界。CAD 输出尚未映射到机器人连杆，不能直接作为 `--collision-bundle`。
 
+`occt-topological-boundaries-v2` 可细分同一 CAD 面内部的粗边，使其与已有节点一致；须保留原 CAD 边界，表面变化不得超过该面的原生容差及浮点误差。修复不新增顶点或封口，记录于 `face_interior_conformity`。非流形顶点仅可分离连接索引，保持每个有向三角形不变，记录于 `vertex_fan_separation`；重复面、真实孔洞或无法证明的连接继续拒绝。
+
 整机逐件检查：
 
 ```bash

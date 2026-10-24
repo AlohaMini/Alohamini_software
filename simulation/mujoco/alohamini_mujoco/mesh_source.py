@@ -10,62 +10,11 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 
+from ._cad_conform import split_index_fans as _split_index_fans
 from .cad import file_sha256
 from .collision import components, topology, visual_sources, weld_precision_seams
 from .meshes import Mesh, binary_stl
 from .solid_geometry import _solid
-
-
-def _split_index_fans(mesh):
-    """Separate corner fans while keeping every oriented triangle unchanged.
-
-    Coincident or oppositely duplicated faces are ambiguous material input and
-    are rejected. This changes connectivity only; no faces, vertices, normals,
-    thickness or solid interiors are invented. Native solid checks follow.
-    """
-    _, coordinate_ids = np.unique(mesh.vertices, axis=0, return_inverse=True)
-    triangles = np.sort(coordinate_ids[mesh.faces], axis=1)
-    if len(np.unique(triangles, axis=0)) != len(triangles):
-        raise ValueError("Duplicated triangle surfaces require explicit source ownership")
-    edges = {}
-    for face_id, face in enumerate(mesh.faces):
-        for corner in range(3):
-            a, b = int(face[corner]), int(face[(corner + 1) % 3])
-            edges.setdefault(tuple(sorted((a, b))), []).append((face_id, a < b))
-    parent = np.arange(mesh.faces.size)
-
-    def find(index):
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
-
-    branched = 0
-    for vertices, uses in edges.items():
-        forward = [f for f, direction in uses if direction]
-        reverse = [f for f, direction in uses if not direction]
-        if not forward or len(forward) != len(reverse):
-            raise ValueError("Index splitting cannot repair open or inconsistently oriented edges")
-        branched += len(uses) > 2
-        for first, last in zip(forward, reverse, strict=True):
-            for vertex in vertices:
-                a = first * 3 + int(np.flatnonzero(mesh.faces[first] == vertex)[0])
-                b = last * 3 + int(np.flatnonzero(mesh.faces[last] == vertex)[0])
-                parent[find(a)] = find(b)
-    roots, inverse = np.unique([find(i) for i in range(len(parent))], return_inverse=True)
-    result = Mesh(mesh.vertices[mesh.faces.ravel()[roots]], inverse.reshape(-1, 3))
-    if not np.array_equal(result.triangles, mesh.triangles) or any(topology(result).values()):
-        raise ValueError("Corner connectivity remains ambiguous without changing source surfaces")
-    return result, {
-        "algorithm": "oriented edge pairing and separate vertex corner fans",
-        "pairing": "stable original face-index order",
-        "branched_edges": int(branched),
-        "input_vertices": len(mesh.vertices),
-        "output_vertices": len(result.vertices),
-        "source_oriented_triangles_identical": True,
-        "vertex_coordinate_displacement_m": 0.0,
-        "solid_interiors_inferred": False,
-    }
 
 
 def extract_mesh_source(description, output, *, link, component_index, visual_index=0):
