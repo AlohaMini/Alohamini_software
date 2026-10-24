@@ -17,6 +17,7 @@ from .compilation import compile_xml
 from .frames import points_in_frame, vector
 from .geometry import SurfaceIndex
 from .meshes import Mesh
+from .native_distance import checked_geom_distance
 
 
 def _winding(mesh, point):
@@ -255,8 +256,7 @@ def probe_cad_contacts(robot, mesh_bundle, configuration, *, component_bundle=No
                 maximum = radius + abs(clearance) + tolerance * 2
                 best, best_witness = maximum, None
                 for geom in ids:
-                    witness = np.zeros(6)
-                    measured = mujoco.mj_geomDistance(model, data, geom, probe, maximum, witness)
+                    measured, witness = checked_geom_distance(model, data, geom, probe, maximum)
                     if measured < best:
                         best, best_witness = float(measured), witness.copy()
                 if best_witness is None:

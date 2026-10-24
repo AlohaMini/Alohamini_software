@@ -12,6 +12,7 @@ import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import mujoco
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -20,6 +21,7 @@ from .frames import points_in_frame
 from .meshes import binary_msh, binary_stl
 from .model import pose_attributes
 from .organization import description_hashes
+from .shapes import Primitive
 
 
 def bridge_joints(description, source, owner):
@@ -76,7 +78,7 @@ def assembly_inputs(robot, assembly):
     assets, meshes = dict(robot.assets), dict(robot.meshes)
     geometry, manifest = copy.deepcopy(robot.geometry), copy.deepcopy(robot.manifest)
     prepared, records, selected_sources, old_meshes = {}, [], set(), set()
-    ownership = {}
+    ownership, envelopes = {}, []
     for row in definition["sources"]:
         if not isinstance(row, dict):
             raise ValueError("Rigid assembly sources must be objects")
@@ -184,6 +186,24 @@ def assembly_inputs(robot, assembly):
                 }
             )
             ownership[(link, index, component)] = (owner, reference, T_owner_source)
+            if "collision_envelope" in assignment:
+                envelope = assignment["collision_envelope"]
+                if (
+                    not isinstance(envelope, dict)
+                    or set(envelope) != {"primitives", "limitations"}
+                    or not isinstance(envelope["primitives"], list)
+                    or not envelope["primitives"]
+                    or not isinstance(envelope["limitations"], list)
+                    or not envelope["limitations"]
+                    or any(
+                        not isinstance(item, str) or not item.strip()
+                        for item in envelope["limitations"]
+                    )
+                ):
+                    raise ValueError(
+                        "Inspection envelopes require primitives and explicit limitations"
+                    )
+                envelopes.append((link, index, component, envelope))
         records.append(
             {
                 "link": link,
@@ -194,9 +214,14 @@ def assembly_inputs(robot, assembly):
             }
         )
     collision_records, collision_geoms = [], {}
+    envelope_identities = {(link, index, component) for link, index, component, _ in envelopes}
     for name, binding in robot.manifest.get("cad_component_bindings", {}).items():
         source_link = binding["source_link"]
         identity = (source_link, binding["visual_index"], binding["component_index"])
+        if identity in envelope_identities:
+            raise ValueError(
+                "A component cannot use both reference hulls and an inspection envelope"
+            )
         owner, reference, pose = ownership.get(identity, (source_link, {}, np.eye(4)))
         body = root.find(f".//body[@name='{source_link}']")
         node = body.find(f"geom[@name='{name}']") if body is not None else None
@@ -239,8 +264,56 @@ def assembly_inputs(robot, assembly):
                 "T_owner_geometry": pose.tolist(),
                 "triangles": len(meshes[relative].faces),
                 "vertices": len(meshes[relative].vertices),
+                "shape": "mesh",
             }
         )
+    envelope_bindings, envelope_geoms = {}, {}
+    for source_link, index, component, envelope in envelopes:
+        owner, reference, T_owner_source = ownership[(source_link, index, component)]
+        for number, record in enumerate(envelope["primitives"]):
+            primitive = Primitive.from_record(record)
+            pose = T_owner_source @ primitive.T_link_geometry
+            name = f"assembly_envelope_{source_link}_{index}_{component}_{number}"
+            if name in geometry or root.find(f".//geom[@name='{name}']") is not None:
+                raise ValueError("Assembly envelope geometry name is already in use")
+            size = _primitive_size(primitive)
+            ET.SubElement(
+                root.find(f".//body[@name='{owner}']"),
+                "geom",
+                name=name,
+                type=primitive.kind,
+                size=" ".join(format(float(x), ".17g") for x in size if x > 0),
+                mass="0",
+                group="4",
+                **pose_attributes(pose),
+            )
+            geometry[name] = {
+                "link": owner,
+                "kind": "collision",
+                "shape": primitive.kind,
+                "parameters": primitive.parameters,
+                "T_link_geometry": pose,
+            }
+            binding = {
+                "source_link": source_link,
+                "visual_index": index,
+                "component_index": component,
+            }
+            envelope_bindings[name] = binding
+            envelope_geoms.setdefault(owner, []).append(name)
+            collision_records.append(
+                {
+                    **binding,
+                    "owner": owner,
+                    "geom": name,
+                    "reference_positions": reference,
+                    "T_owner_geometry": pose.tolist(),
+                    "shape": primitive.kind,
+                    "primitive": primitive.record(),
+                    "qualification": "inspection only; material and contact equivalence unverified",
+                    "limitations": envelope["limitations"],
+                }
+            )
     # Unreferenced source visual assets can otherwise dominate native compile
     # memory. Remove only the replaced assets no longer used by any XML node.
     used_meshes = {node.get("mesh") for node in root.iter() if node.get("mesh")}
@@ -267,15 +340,18 @@ def assembly_inputs(robot, assembly):
             "transform": "T_owner_geometry maps scaled geometry coordinates into the owner link",
             "translation_unit": "m",
             "visual": "original source mesh vertices followed by the original URDF scale",
-            "collision": "registered convex vertices in the source link; metres; scale one",
+            "collision": "convex vertices or explicit primitive poses in the source link; metres",
         },
         "scope": "kinematic rigid ownership; complete selected visual triangle coverage",
         "collision_policy": "original collisions retained with original owners; unqualified",
         "inertia_policy": "original URDF inertias retained; component mass distribution unknown",
         "dynamics_allowed": False,
     }
-    if collision_records:
+    if collision_geoms:
         manifest["cad_component_geoms"] = collision_geoms
+    if envelope_bindings:
+        manifest["assembly_envelope_bindings"] = envelope_bindings
+        manifest["assembly_envelope_geoms"] = envelope_geoms
     return dict(
         xml=ET.tostring(root, encoding="unicode"),
         assets=assets,
@@ -283,6 +359,25 @@ def assembly_inputs(robot, assembly):
         geometry=geometry,
         manifest=manifest,
     )
+
+
+def _primitive_size(primitive):
+    """MuJoCo half dimensions, padded to its native three-element size array."""
+    parameters = primitive.parameters
+    if primitive.kind == "box":
+        return np.asarray(parameters["size"]) / 2
+    if primitive.kind == "cylinder":
+        return np.array([parameters["radius"], parameters["length"] / 2, 0.0])
+    return np.array([parameters["radius"], 0.0, 0.0])
+
+
+def _primitive_anchors(primitive):
+    size = _primitive_size(primitive)
+    if primitive.kind == "cylinder":
+        size = size[[0, 0, 1]]
+    elif primitive.kind == "sphere":
+        size = np.repeat(size[0], 3)
+    return np.vstack([np.zeros(3), np.diag(size), -np.diag(size)])
 
 
 def audit_assembly(robot, *, samples=9):
@@ -309,19 +404,37 @@ def audit_assembly(robot, *, samples=9):
             for component in source["components"]
         )
     work.extend(
-        {**component, "kind": "collision", "T_source_geometry": np.eye(4)}
+        {
+            **component,
+            "kind": "collision",
+            "T_source_geometry": component.get("primitive", {}).get("T_link_geometry", np.eye(4)),
+        }
         for component in fixture["collision_components"]
     )
     items = []
     for component in work:
         name, owner = component["geom"], component["owner"]
         geom_id = model.geom(name).id
-        mesh_id = model.geom_dataid[geom_id]
-        start, count = model.mesh_vertadr[mesh_id], model.mesh_vertnum[mesh_id]
-        native = model.mesh_vert[start : start + count].astype(float)
-        entry = robot.geometry[name]
-        mesh = robot.meshes[entry["path"]]
-        points = mesh.vertices * entry["scale"]
+        primitive = (
+            Primitive.from_record(component["primitive"]) if "primitive" in component else None
+        )
+        if primitive is None:
+            mesh_id = model.geom_dataid[geom_id]
+            start, count = model.mesh_vertadr[mesh_id], model.mesh_vertnum[mesh_id]
+            native = model.mesh_vert[start : start + count].astype(float)
+            entry = robot.geometry[name]
+            mesh = robot.meshes[entry["path"]]
+            points = mesh.vertices * entry["scale"]
+            preserved = int(model.mesh_facenum[mesh_id]) == len(mesh.faces)
+        else:
+            points = native = _primitive_anchors(primitive)
+            preserved = bool(
+                model.geom_type[geom_id]
+                == getattr(mujoco.mjtGeom, f"mjGEOM_{primitive.kind.upper()}")
+                and np.allclose(
+                    model.geom_size[geom_id], _primitive_size(primitive), rtol=0, atol=1e-14
+                )
+            )
         local = points_in_frame(component["T_owner_geometry"], points)
         reference = {**robot.initial_positions, **component["reference_positions"]}
         poses = description.forward(reference, robot.profile.T_world_root)
@@ -350,11 +463,13 @@ def audit_assembly(robot, *, samples=9):
             native_owner_matches=bool(
                 model.geom_bodyid[geom_id] == model.body(owner).id,
             ),
-            native_triangles_preserved=int(model.mesh_facenum[mesh_id]) == len(mesh.faces),
+            native_geometry_preserved=preserved,
             reference_preservation_error_m=float(np.linalg.norm(initial - original, axis=1).max()),
             max_native_vertex_error_m=0.0,
             max_reference_displacement_m=0.0,
         )
+        if primitive is None:
+            row["native_triangles_preserved"] = preserved
         item = dict(row=row, geom_id=geom_id, native=native, local=local, initial=initial)
         items.append(item)
         for positions in configs:
@@ -384,7 +499,7 @@ def audit_assembly(robot, *, samples=9):
     for row in rows:
         row["passed"] = bool(
             row["native_owner_matches"]
-            and row["native_triangles_preserved"]
+            and row["native_geometry_preserved"]
             and row["reference_preservation_error_m"] <= 1e-10
             and row["max_native_vertex_error_m"] <= 1e-6
         )

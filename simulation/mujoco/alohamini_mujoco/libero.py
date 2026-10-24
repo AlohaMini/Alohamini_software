@@ -18,6 +18,7 @@ import numpy as np
 from .compilation import compile_xml
 from .frames import rigid_transform
 from .model import pose_attributes, text
+from .native_distance import InvalidNativeDistance, checked_geom_distance
 
 LIBERO_COMMIT = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 SPATIAL_TASKS = tuple(range(10))
@@ -372,10 +373,20 @@ class LiberoScene:
         ]
         if self.configuration.get("robot_support") is not None:
             scene_ids.append(model.geom("alohamini_support_collision").id)
-        intersections = []
+        intersections, invalid_queries = [], []
         for a in robot_ids:
             for b in scene_ids:
-                distance = mujoco.mj_geomDistance(model, data, a, b, tolerance_m, None)
+                try:
+                    distance, _ = checked_geom_distance(model, data, a, b, tolerance_m)
+                except InvalidNativeDistance as exc:
+                    invalid_queries.append(
+                        {
+                            "robot_geom": model.geom(a).name,
+                            "scene_geom": model.geom(b).name,
+                            "error": str(exc),
+                        }
+                    )
+                    continue
                 if distance < -tolerance_m:
                     intersections.append(
                         {
@@ -385,7 +396,8 @@ class LiberoScene:
                         }
                     )
         return {
-            "passed": not intersections,
+            "passed": not intersections and not invalid_queries,
             "tolerance_m": tolerance_m,
             "intersections": intersections,
+            "invalid_distance_queries": invalid_queries,
         }

@@ -167,6 +167,24 @@ def test_static_geometry_intersections_are_not_hidden_by_mujoco_weld_filter(scen
         model.geom("support").pos[:] = original
 
 
+def test_static_scene_rejects_invalid_distance_queries(scene_robot, monkeypatch):
+    from alohamini_mujoco import libero
+    from alohamini_mujoco.native_distance import InvalidNativeDistance
+
+    query = libero.checked_geom_distance
+    base = scene_robot.model.geom("base_cad_link__collision_0").id
+
+    def invalid_base(model, data, first, second, maximum):
+        if first == base:
+            raise InvalidNativeDistance("Distance contradicts an independent projection")
+        return query(model, data, first, second, maximum)
+
+    monkeypatch.setattr(libero, "checked_geom_distance", invalid_base)
+    report = scene_robot.scene.static_intersections(scene_robot)
+    assert not report["passed"] and report["invalid_distance_queries"]
+    assert report["invalid_distance_queries"][0]["robot_geom"] == "base_cad_link__collision_0"
+
+
 def test_collection_rejects_failure_preserves_alignment_and_replays(
     scene_robot, tmp_path, monkeypatch
 ):
@@ -209,6 +227,23 @@ def test_collection_rejects_failure_preserves_alignment_and_replays(
         for i in range(len(group["actions"])):
             restore_state(scene_robot.model, data, group["states"][i])
             np.testing.assert_array_equal(group["obs/joint_positions"][i], data.qpos[ids])
+    # Replay must carry the same fixture restrictions as live following.
+    environment = manifest["environment"]
+    manifest["environment"] = {**environment, "rigid_assembly_fixture": {}}
+    (output / "dataset.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="environment differs"):
+        replay_episode(output)
+    with h5py.File(episode, "r+") as file:
+        file.attrs["env_args"] = json.dumps(manifest["environment"])
+    manifest["episode_sha256"] = sha256(episode)
+    (output / "dataset.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="cannot run dynamics"):
+        replay_episode(output)
+    with h5py.File(episode, "r+") as file:
+        file.attrs["env_args"] = json.dumps(environment)
+    manifest["environment"] = environment
+    manifest["episode_sha256"] = sha256(episode)
+    (output / "dataset.json").write_text(json.dumps(manifest))
     with h5py.File(episode, "r+") as file:
         file["data/demo_0/actions"][0, 0] += 0.1
     with pytest.raises(ValueError, match="Episode checksum"):

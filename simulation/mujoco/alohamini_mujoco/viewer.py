@@ -198,7 +198,9 @@ def run_assembly_viewer(robot, *, links=None):
     initial = mujoco.MjData(model)
     mujoco.mj_copyData(initial, model, data)
     transferred, owners, part_colors = {}, set(), {}
-    scoped = set(robot.manifest.get("cad_component_bindings", {}))
+    scoped = set(robot.manifest.get("cad_component_bindings", {})) | set(
+        robot.manifest.get("assembly_envelope_bindings", {})
+    )
     collision_group = 4 if scoped else 3
     colors = ([0.96, 0.45, 0.08, 1], [0.67, 0.25, 0.83, 1], [0.1, 0.6, 0.9, 1])
     for source in fixture["sources"]:
@@ -239,7 +241,7 @@ def run_assembly_viewer(robot, *, links=None):
             window.cam.distance = max(0.1, float(np.linalg.norm(upper - lower)) * 1.2)
             window.cam.azimuth, window.cam.elevation = 45, -20
         collision_label = (
-            "Registered collision components (partial coverage)"
+            "Collision inspection candidates (partial coverage)"
             if scoped
             else "Legacy collisions (original owners)"
         )

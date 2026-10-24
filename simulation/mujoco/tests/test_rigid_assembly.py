@@ -17,6 +17,7 @@ from alohamini_mujoco.meshes import Mesh, binary_stl
 from alohamini_mujoco.model import ModelProfile, RobotModel, pose_attributes
 from alohamini_mujoco.organization import description_hashes
 from alohamini_mujoco.rigid_assembly import assembly_inputs, audit_assembly, bridge_joints
+from alohamini_mujoco.shapes import Primitive
 
 
 @pytest.fixture
@@ -219,12 +220,21 @@ def test_rejects_incomplete_or_stale_ownership_and_ambiguous_reference(assembly,
         assembly_inputs(robot, path)
 
 
-def test_assembly_viewer_uses_kinematic_sliders_and_reset_without_steps(assembly, monkeypatch):
+@pytest.mark.parametrize("envelopes", [False, True])
+def test_assembly_viewer_uses_kinematic_sliders_and_reset_without_steps(
+    assembly, monkeypatch, envelopes
+):
     from contextlib import nullcontext
 
     from alohamini_mujoco import viewer
 
-    robot, _, path = assembly
+    robot, definition, path = assembly
+    if envelopes:
+        definition["sources"][0]["components"][1]["collision_envelope"] = {
+            "primitives": [Primitive("sphere", {"radius": 0.01}, np.eye(4)).record()],
+            "limitations": ["Inspection only"],
+        }
+        path.write_text(json.dumps(definition))
     candidate = assembled(robot, path)
     snapshots = []
 
@@ -269,7 +279,7 @@ def test_assembly_viewer_uses_kinematic_sliders_and_reset_without_steps(assembly
     assert [s[0][1] for s in snapshots] == [-0.3, 0.5, 0.5, -0.3]
     assert all(s[1] == 0 for s in snapshots)
     assert [s[2][2] for s in snapshots] == [1, 1, 0, 0]
-    assert [s[2][3] for s in snapshots] == [0, 1, 1, 1]
+    assert [s[2][4 if envelopes else 3] for s in snapshots] == [0, 1, 1, 1]
 
 
 def test_scoped_collision_reparenting_preserves_native_sphere_distance(assembly, monkeypatch):
@@ -358,6 +368,9 @@ def test_repository_gripper_definition_matches_current_sources_and_compiles_once
                     owner.find(f"geom[@name='{side}_Fixed_Jaw__visual_0__component_{component}']")
                     is not None
                 )
+            envelopes = owner.findall("geom[@type='cylinder']")
+            assert len(envelopes) == 2
+            assert all(node.get("mass") == "0" and node.get("group") == "4" for node in envelopes)
         return sentinel
 
     monkeypatch.setattr(builder, "compile_xml", compile_once)
@@ -367,3 +380,85 @@ def test_repository_gripper_definition_matches_current_sources_and_compiles_once
     sources = robot.manifest["rigid_assembly_fixture"]["sources"]
     assert [len(source["components"]) for source in sources] == [18, 18]
     assert sum(source["triangles"] for source in sources) == 174608
+
+
+@pytest.mark.parametrize(
+    "kind,parameters,point,size",
+    [
+        ("box", {"size": [0.04, 0.06, 0.08]}, [0.02, 0, 0], [0.02, 0.03, 0.04]),
+        ("cylinder", {"radius": 0.02, "length": 0.06}, [0.02, 0, 0], [0.02, 0.03, 0]),
+        ("sphere", {"radius": 0.02}, [0.02, 0, 0], [0.02, 0, 0]),
+    ],
+)
+def test_primitive_envelope_preserves_owner_frame_inertia_and_native_contacts(
+    assembly, kind, parameters, point, size
+):
+    robot, definition, path = assembly
+    primitive = Primitive(kind, parameters, transform([0.08, -0.05, 0.03], [0.3, -0.4, 0.5]))
+    definition["sources"][0]["components"][1]["collision_envelope"] = {
+        "primitives": [primitive.record()],
+        "limitations": ["Synthetic envelope; not a material-equivalence certificate"],
+    }
+    path.write_text(json.dumps(definition))
+    inputs = assembly_inputs(robot, path)
+    root = ET.fromstring(inputs["xml"])
+    probe_body = ET.SubElement(root.find("worldbody"), "body", name="probe_body", mocap="true")
+    ET.SubElement(probe_body, "geom", name="probe", type="sphere", size=".0005")
+    inputs["xml"] = ET.tostring(root, encoding="unicode")
+    candidate = replace(robot, **inputs, model=compile_xml(inputs["xml"], assets=inputs["assets"]))
+    report = audit_assembly(candidate, samples=5)
+    assert report["passed"] and not report["dynamics_allowed"]
+    row = report["components"][-1]
+    assert row["shape"] == kind and row["owner"] == "owner"
+    assert row["max_reference_displacement_m"] > 0.1
+    assert row["max_native_vertex_error_m"] < 1e-14
+    assert row["reference_preservation_error_m"] < 1e-14
+    geom = candidate.model.geom(row["geom"]).id
+    np.testing.assert_array_equal(candidate.model.geom_size[geom], size)
+    np.testing.assert_array_equal(candidate.model.body_mass[:4], robot.model.body_mass)
+    assert candidate.manifest["assembly_envelope_geoms"] == {"owner": [row["geom"]]}
+    assert "cad_component_fixture" not in candidate.manifest
+    probe = candidate.model.geom("probe").id
+    mocap = candidate.model.body_mocapid[candidate.model.body("probe_body").id]
+    for q in [-1.3, 0.4, 0.7]:
+        data = candidate.data({"bend": q})
+        np.testing.assert_array_equal(data.qM, robot.data({"bend": q}).qM)
+        poses = candidate.description.forward(
+            {**candidate.initial_positions, "bend": q}, candidate.profile.T_world_root
+        )
+        pose = poses["owner"] @ row["T_owner_geometry"]
+        for clearance in [0.0002, -0.0001]:
+            center = np.array(point) + np.array([0.0005 + clearance, 0, 0])
+            data.mocap_pos[mocap] = points_in_frame(pose, [center])[0]
+            mujoco.mj_forward(candidate.model, data)
+            distance = mujoco.mj_geomDistance(candidate.model, data, probe, geom, 0.01, None)
+            assert abs(distance - clearance) < 1e-8
+    with pytest.raises(ValueError, match="cannot run dynamics"):
+        DynamicFollower(candidate)
+    candidate.model.geom_size[geom, 0] *= 1.1
+    assert not audit_assembly(candidate, samples=2)["passed"]
+
+
+@pytest.mark.parametrize(
+    "damage", ["empty", "implicit_limits", "extra_claim", "invalid_pose", "duplicate"]
+)
+def test_rejects_ambiguous_or_duplicate_inspection_envelopes(assembly, damage):
+    robot, definition, path = assembly
+    primitive = Primitive("sphere", {"radius": 0.01}, np.eye(4)).record()
+    envelope = {"primitives": [primitive], "limitations": ["Bore accessibility unverified"]}
+    definition["sources"][0]["components"][1]["collision_envelope"] = envelope
+    if damage == "empty":
+        envelope["primitives"] = []
+    elif damage == "implicit_limits":
+        envelope["limitations"] = []
+    elif damage == "extra_claim":
+        envelope["passed"] = True
+    elif damage == "invalid_pose":
+        primitive["T_link_geometry"][0][0] = 2
+    elif damage == "duplicate":
+        robot.manifest["cad_component_bindings"] = {
+            "existing_hull": {"source_link": "source", "visual_index": 0, "component_index": 1}
+        }
+    path.write_text(json.dumps(definition))
+    with pytest.raises(ValueError):
+        assembly_inputs(robot, path)

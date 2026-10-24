@@ -198,6 +198,9 @@ def replay_episode(directory, *, episode=None):
     manifest = json.loads((directory / "dataset.json").read_text())
     if manifest["mujoco_version"] != mujoco.__version__:
         raise ValueError("Replay requires the recorded MuJoCo version")
+    environment = manifest.get("environment")
+    if not isinstance(environment, dict):
+        raise ValueError("Replay requires the recorded environment manifest")
     for relative, expected in manifest["model_files"].items():
         path = (directory / relative).resolve()
         if not path.is_relative_to(directory) or sha256(path) != expected:
@@ -207,6 +210,8 @@ def replay_episode(directory, *, episode=None):
     if manifest.get("episode_sha256") and sha256(episode) != manifest["episode_sha256"]:
         raise ValueError("Episode checksum mismatch")
     with h5py.File(episode, "r") as file:
+        if json.loads(file.attrs["env_args"]) != environment:
+            raise ValueError("Episode environment differs from its dataset manifest")
         group = file["data/demo_0"]
         specification = json.loads(group.attrs["controller"])
         names = json.loads(group.attrs["joint_names"])
@@ -219,7 +224,9 @@ def replay_episode(directory, *, episode=None):
             name: SimpleNamespace(kind=kind)
             for name, kind in zip(names, specification["kinds"], strict=True)
         }
-        robot = SimpleNamespace(model=model, description=SimpleNamespace(joints=joints))
+        robot = SimpleNamespace(
+            model=model, description=SimpleNamespace(joints=joints), manifest=environment
+        )
         follower = DynamicFollower(
             robot, data=data, settings=FollowerSettings(**specification["settings"])
         )
@@ -259,8 +266,7 @@ def collect_episode(
         raise ValueError(f"Scene equivalence failed: {validation['errors']}")
     if not validation["static_robot_scene"]["passed"]:
         raise ValueError(
-            "Fixed robot/scene geometry intersects: "
-            f"{validation['static_robot_scene']['intersections']}"
+            f"Fixed robot/scene geometry validation failed: {validation['static_robot_scene']}"
         )
     steps = _substeps(robot, settings)
     if len(set(cameras)) != len(cameras) or not cameras:
