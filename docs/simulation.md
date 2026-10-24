@@ -169,7 +169,9 @@ alohamini-mujoco mesh-source \
   --output ~/Alohamini_workspace/simulation/cad/mesh-reference
 ```
 
-输出 `mesh.json` 与闭合网格，坐标为应用 URDF scale 后的视觉局部坐标；`T_link_part_hint` 给出其到连杆的变换。接缝位移须落在每个原坐标的 float32 舍入区间内；非流形连接仅允许分离顶点索引，逐面保持原三角形坐标和朝向。重复面、无法闭合的边界及需要删面、补面的情况均拒绝。`source_format: urdf-binary-stl` 不包含 BRep，原始 CAD 离散误差未知。后续使用相同的配准、碰撞生成和探针命令。
+输出 `mesh.json` 与闭合网格，坐标为应用 URDF scale 后的视觉局部坐标；`T_link_part_hint` 给出其到连杆的变换。默认接缝位移须落在每个原坐标的 float32 舍入区间内；非流形连接仅允许分离顶点索引，逐面保持原三角形坐标和朝向。重复面、无法闭合的边界及需要删面、补面的情况均拒绝。`source_format: urdf-binary-stl` 不包含 BRep，原始 CAD 离散误差未知。后续使用相同的配准、碰撞生成和探针命令。
+
+完整反向开边可显式使用 `--seam-budget-m 0.000001`，允许最大 1 μm 的几何修订；默认精度规则保持不变。仅配对互为唯一对应的整条边，不补面、删面或新增拓扑顶点，原三角形朝向保持。输出标记 `source_format: urdf-binary-stl-sewn`，记录边配对、实际位移及逐面对应的双向连续表面误差上界。超预算、缺面、重复面、塌缩或歧义继续拒绝；该预算不代表原始 CAD 或实物精度，修订后仍需检查功能间隙与接触。
 
 ```bash
 alohamini-mujoco cad-register \

@@ -167,11 +167,16 @@ def main(argv=None):
     datums.add_argument("--binding", type=Path, required=True)
     datums.add_argument("--output", type=Path, required=True)
     mesh_source = commands.add_parser(
-        "mesh-source", help="extract a closed visual component within float32 encoding bounds"
+        "mesh-source", help="extract a closed visual reference with explicit seam handling"
     )
     mesh_source.add_argument("--link", required=True)
     mesh_source.add_argument("--visual-index", type=int, default=0)
     mesh_source.add_argument("--component-index", type=int, required=True)
+    mesh_source.add_argument(
+        "--seam-budget-m",
+        type=float,
+        help="explicit geometry revision: pair complete reverse boundary edges within this budget",
+    )
     mesh_source.add_argument("--output", type=Path, required=True)
     cad_collision = commands.add_parser(
         "cad-collision",
@@ -321,8 +326,20 @@ def main(argv=None):
                 link=args.link,
                 visual_index=args.visual_index,
                 component_index=args.component_index,
+                seam_budget_m=args.seam_budget_m,
             )
-            print(json.dumps({"output": str(args.output), "seam_repair": report["seam_repair"]}))
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output),
+                        "seam_repair": {
+                            key: value
+                            for key, value in report["seam_repair"].items()
+                            if key != "edge_use_pairs"
+                        },
+                    }
+                )
+            )
             return 0
         if args.operation == "collision-probe":
             from .contact_probe import probe_cad_contacts

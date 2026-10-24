@@ -17,11 +17,15 @@ from .meshes import Mesh, binary_stl
 from .solid_geometry import _solid
 
 
-def extract_mesh_source(description, output, *, link, component_index, visual_index=0):
+def extract_mesh_source(
+    description, output, *, link, component_index, visual_index=0, seam_budget_m=None
+):
     """Keep every selected triangle; reject holes, orientation damage and ambiguity.
 
     Coordinates use the scaled visual frame, before T_link_visual is applied.
-    A seam may move a vertex only inside its own float32 rounding interval.
+    Default seams stay inside each vertex's own float32 rounding intervals.
+    An explicit seam budget selects a separately labelled geometry revision,
+    pairing whole reverse boundary edges with a continuous surface error bound.
     No analytic CAD accuracy, missing thickness or material ownership is inferred.
     """
     output = Path(output).expanduser().resolve()
@@ -44,18 +48,27 @@ def extract_mesh_source(description, output, *, link, component_index, visual_in
     guard = 128 * np.finfo(float).eps * max(1.0, np.abs(points).max())
     bound = float(np.linalg.norm(np.maximum(lower, upper), axis=1).max())
     original = Mesh(points, selected.faces)
-    repaired, repair = weld_precision_seams(original, bound + guard)
-    distance, mapping = cKDTree(repaired.vertices).query(points)
-    displacement = repaired.vertices[mapping] - points
-    if (
-        repair["collapsed_faces"] != 0
-        or not np.array_equal(mapping[original.faces], repaired.faces)
-        or (displacement < -lower - guard).any()
-        or (displacement > upper + guard).any()
-    ):
-        raise ValueError(
-            "Visual component cannot close within its encoding bounds without losing faces"
-        )
+    if seam_budget_m is None:
+        repaired, repair = weld_precision_seams(original, bound + guard)
+        distance, mapping = cKDTree(repaired.vertices).query(points)
+        displacement = repaired.vertices[mapping] - points
+        if (
+            repair["collapsed_faces"] != 0
+            or not np.array_equal(mapping[original.faces], repaired.faces)
+            or (displacement < -lower - guard).any()
+            or (displacement > upper + guard).any()
+        ):
+            raise ValueError(
+                "Visual component cannot close within its encoding bounds without losing faces"
+            )
+        maximum_displacement = float(distance.max())
+        reference_error = bound + guard
+    else:
+        from .mesh_sewing import sew_boundary_edges
+
+        repaired, repair = sew_boundary_edges(original, seam_budget_m)
+        maximum_displacement = repair["maximum_vertex_displacement_m"]
+        reference_error = bound + repair["continuous_surface_distance_bound_m"]
     connectivity = None
     if any(topology(repaired).values()):
         repaired, connectivity = _split_index_fans(repaired)
@@ -63,19 +76,25 @@ def extract_mesh_source(description, output, *, link, component_index, visual_in
     metadata = {
         "schema_version": 1,
         "status": "closed mesh reference; analytic CAD error and physical calibration unknown",
-        "source_format": "urdf-binary-stl",
+        "source_format": "urdf-binary-stl" if seam_budget_m is None else "urdf-binary-stl-sewn",
         # Retain the source-asset field used by STEP and registration bundles;
         # source_format and the null BRep fields distinguish mesh-only sources.
         "source_cad_sha256": source["sha256"],
         "brep_sha256": None,
-        "definition": f"STL:{source['sha256']}:component:{component_index}",
+        "definition": f"STL:{source['sha256']}:component:{component_index}"
+        + ("" if seam_budget_m is None else ":sewn"),
         "name": f"{link} visual component {component_index}",
         "units": "m",
         "coordinates": "scaled URDF visual frame, float64",
         "linear_deflection_m": None,
         "angular_deflection_rad": None,
-        "surface_reference_error_m": bound + guard,
-        "surface_reference_error_scope": "encoding/seam movement relative to stored STL only",
+        "surface_reference_error_m": reference_error,
+        "surface_reference_error_scope": (
+            "encoding/seam movement relative to stored STL only"
+            if seam_budget_m is None
+            else "float32 encoding bound plus certified triangle-correspondence sewing error; "
+            "stored STL reference only, not analytic CAD or hardware"
+        ),
         "source": {
             "robot_model": description.robot_model.model_id,
             "link": link,
@@ -90,9 +109,9 @@ def extract_mesh_source(description, output, *, link, component_index, visual_in
             **repair,
             "float32_position_error_bound_m": bound,
             "float64_rounding_guard_m": guard,
-            "maximum_vertex_displacement_m": float(distance.max()),
+            "maximum_vertex_displacement_m": maximum_displacement,
             "every_source_triangle_preserved": True,
-            "per_coordinate_rounding_intervals_checked": True,
+            "per_coordinate_rounding_intervals_checked": seam_budget_m is None,
             "hole_filling": False,
         },
         "index_fan_repair": connectivity,

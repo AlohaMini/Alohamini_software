@@ -145,3 +145,51 @@ def test_coincident_duplicate_faces_cannot_be_silently_promoted_to_a_material_re
     with pytest.raises(ValueError, match="Duplicated triangle"):
         extract_mesh_source(description, output, link="part", component_index=0)
     assert not output.exists()
+
+
+def test_explicit_sewing_is_a_separate_geometry_revision_with_a_surface_error_budget(tmp_path):
+    description = fixture(tmp_path, steps=2)
+    strict = tmp_path / "strict"
+    with pytest.raises(ValueError):
+        extract_mesh_source(description, strict, link="part", component_index=0)
+    assert not strict.exists()
+    output = tmp_path / "sewn"
+    metadata = extract_mesh_source(
+        description,
+        output,
+        link="part",
+        component_index=0,
+        seam_budget_m=1e-6,
+    )
+    assert metadata["source_format"] == "urdf-binary-stl-sewn"
+    assert metadata["brep_sha256"] is None
+    repair = metadata["seam_repair"]
+    assert repair["geometry_revision"] and not repair["per_coordinate_rounding_intervals_checked"]
+    assert repair["source_triangles"] == repair["output_triangles"] == 4
+    assert repair["continuous_surface_distance_bound_m"] <= 1e-6
+    assert metadata["surface_reference_error_m"] >= repair["continuous_surface_distance_bound_m"]
+    mesh, _, _ = _source(output)
+    assert len(mesh.faces) == 4
+    assert register_part(
+        description,
+        output,
+        tmp_path / "registered-sewn",
+        link="part",
+        component_index=0,
+        T_link_part=metadata["T_link_part_hint"],
+        tolerance_m=metadata["surface_reference_error_m"] * 2,
+    )["passed"]
+
+
+def test_explicit_sewing_still_cannot_publish_a_real_hole(tmp_path):
+    description = fixture(tmp_path, steps=0, remove_face=True)
+    output = tmp_path / "hole"
+    with pytest.raises(ValueError, match="no unique complete reverse partner"):
+        extract_mesh_source(
+            description,
+            output,
+            link="part",
+            component_index=0,
+            seam_budget_m=1e-6,
+        )
+    assert not output.exists()
