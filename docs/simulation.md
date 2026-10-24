@@ -245,6 +245,28 @@ alohamini-mujoco collision-probe \
 
 检查零件包时，将 `--collision-bundle` 换为 `--component-bundle`。夹具保留所有原机器人碰撞体，只查询新增零件与探针之间的距离、接触；输出标记 `coverage: visual-component`。该夹具禁止动力学跟随和数采，不能用于验证整机抓取。
 
+### 刚体归属与随动检查
+
+```bash
+alohamini-mujoco assembly-view \
+  --assembly examples/simulation/gripper_assembly.json \
+  --initial-positions '{"vertical_move":0.2}' \
+  --links left_Fixed_Jaw left_Moving_Jaw
+alohamini-mujoco assembly-inspect \
+  --assembly examples/simulation/gripper_assembly.json --samples 17 \
+  --output ~/Alohamini_workspace/reports/simulation/rigid-assembly
+```
+
+示例为夹爪装配候选，实物花键相位、轴向贴合及内部轴件归属尚未验收。
+
+装配定义使用 schema 1、`robot_model`、`units: m`、`source_description_sha256` 和 `sources`。每个来源指定 `link`、`visual_index`、完整 `source_visual` 校验记录及 `components`；所选视觉网格的每个连通分量须恰好出现一次。分量指定 `component_index`、`owner` 和 `reference_positions`，后者须显式列出原连杆至目标连杆路径上的全部活动关节，使用 rad/m；归属不变时为 `{}`。
+
+程序由参考姿态的 URDF 正运动学计算零件至目标刚体的变换，保持参考姿态下的世界坐标、全部原三角形、原网格缩放与视觉原点。来源变化、分量遗漏、参考姿态越界或与锁定配置冲突时拒绝加载；安装相位的机械依据由装配定义提供，程序不自动推断。
+
+两条命令均可添加 `--component-bundles 零件目录1 零件目录2`，将已校验的零件碰撞体按相同刚体归属变换。零件包仍只覆盖各自分量，原碰撞体保留，不成为完整连杆替换。检查逐顶点验证原生几何、参考姿态守恒及关节限位采样；`passed` 不代表连续无碰撞或安装、动力学验收。
+
+窗口使用关节滑条改变姿态，F9 复位；橙/紫等颜色标识转移的零件，绿色表示接收零件的连杆。F8 切换碰撞体，F7 叠加；指定零件包时只显示其碰撞体，否则显示原归属的旧碰撞体。两种模式均不运行物理积分。原 URDF 质量、惯量和自碰撞过滤保留；碰撞覆盖与质量分配未完成前禁止跟随和数采。
+
 ### 整机碰撞组织
 
 ```bash

@@ -88,6 +88,11 @@ class FollowerSettings:
 
 class DynamicFollower:
     def __init__(self, robot, data=None, settings=None):
+        if "rigid_assembly_fixture" in robot.manifest:
+            raise ValueError(
+                "Rigid ownership inspection cannot run dynamics or collection; "
+                "collision ownership and inertial redistribution are unqualified"
+            )
         if "cad_component_fixture" in robot.manifest:
             raise ValueError(
                 "Isolated CAD component contact fixtures cannot run dynamics or collection"

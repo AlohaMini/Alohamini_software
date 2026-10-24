@@ -186,6 +186,108 @@ def run_component_viewer(robot, *, links=None):
     return data
 
 
+def run_assembly_viewer(robot, *, links=None):
+    """Inspect component owners using joint sliders, without physics integration."""
+    fixture = robot.manifest.get("rigid_assembly_fixture")
+    if fixture is None:
+        raise ValueError("Assembly viewer requires a rigid ownership inspection fixture")
+    selected = set(links or robot.description.links)
+    if not selected or selected - robot.description.links.keys():
+        raise ValueError("Assembly inspection needs known URDF links")
+    model, data = robot.model, robot.data()
+    initial = mujoco.MjData(model)
+    mujoco.mj_copyData(initial, model, data)
+    transferred, owners, part_colors = {}, set(), {}
+    scoped = set(robot.manifest.get("cad_component_bindings", {}))
+    collision_group = 4 if scoped else 3
+    colors = ([0.96, 0.45, 0.08, 1], [0.67, 0.25, 0.83, 1], [0.1, 0.6, 0.9, 1])
+    for source in fixture["sources"]:
+        for component in source["components"]:
+            if component["owner"] != source["link"]:
+                owners.add(component["owner"])
+                identity = (source["source_visual"]["sha256"], component["component_index"])
+                part_colors.setdefault(identity, colors[len(part_colors) % len(colors)])
+                transferred[component["geom"]] = part_colors[identity]
+    visible = []
+    for name, record in robot.geometry.items():
+        geom_id = model.geom(name).id
+        model.geom_group[geom_id] = (
+            (2 if record["kind"] == "visual" else 4 if name in scoped else 3)
+            if record["link"] in selected
+            else 0
+        )
+        if record["kind"] == "visual" and record["link"] in selected:
+            visible.append(geom_id)
+        if name in transferred:
+            model.geom_rgba[geom_id] = transferred[name]
+        elif record["kind"] == "visual" and record["link"] in owners:
+            model.geom_rgba[geom_id] = [0.25, 0.72, 0.38, 1]
+        elif name in scoped:
+            model.geom_rgba[geom_id] = [0.08, 0.55, 0.88, 0.8]
+    if not visible:
+        raise ValueError("Selected assembly links have no visual geometry")
+    check_display()
+    events = queue.SimpleQueue()
+    collisions, overlay = False, False
+    with component_window(
+        model, data, key_callback=events.put, show_left_ui=False, show_right_ui=True
+    ) as window:
+        with window.lock():
+            centers, radii = data.geom_xpos[visible], model.geom_rbound[visible, None]
+            lower, upper = (centers - radii).min(0), (centers + radii).max(0)
+            window.cam.lookat[:] = (lower + upper) / 2
+            window.cam.distance = max(0.1, float(np.linalg.norm(upper - lower)) * 1.2)
+            window.cam.azimuth, window.cam.elevation = 45, -20
+        collision_label = (
+            "Registered collision components (partial coverage)"
+            if scoped
+            else "Legacy collisions (original owners)"
+        )
+        print(
+            "Rigid ownership inspection: joint sliders change pose only. "
+            "F8: collision geometry; F7: overlay; F9: reset. No dynamics.",
+            flush=True,
+        )
+        while window.is_running():
+            with window.lock():
+                while not events.empty():
+                    key = events.get()
+                    if key == 297:
+                        collisions, overlay = not collisions, False
+                    elif key == 296:
+                        overlay = not overlay
+                    elif key == 298:
+                        mujoco.mj_copyData(data, model, initial)
+                window.opt.geomgroup[:] = 0
+                window.opt.geomgroup[2] = int(overlay or not collisions)
+                window.opt.geomgroup[collision_group] = int(overlay or collisions)
+                window.opt.flags[mujoco.mjtVisFlag.mjVIS_CONVEXHULL] = int(
+                    collisions and not overlay
+                )
+                data.qvel[:] = 0
+                data.time = 0
+                mujoco.mj_forward(model, data)
+                window.set_texts(
+                    (
+                        mujoco.mjtFont.mjFONT_NORMAL,
+                        mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
+                        "Rigid assembly\nGeometry\nControls",
+                        "Kinematic only; legacy collisions and mass allocation unqualified\n"
+                        + (
+                            "Visual + " + collision_label
+                            if overlay
+                            else collision_label
+                            if collisions
+                            else "Assigned component owners; green: receiving link"
+                        )
+                        + "\nJoint sliders: pose  F8: geometry  F7: overlay  F9: reset  F6: frames",
+                    )
+                )
+            window.sync()
+            time.sleep(1 / 30)
+    return data
+
+
 class DynamicPlayback:
     """Pauseable simulation; reset is the only operation that replaces physics state."""
 

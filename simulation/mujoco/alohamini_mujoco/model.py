@@ -113,7 +113,9 @@ class RobotModel:
         return data
 
 
-def build_model(robot_model=None, profile=None, *, scene=None, component_bundles=None):
+def build_model(
+    robot_model=None, profile=None, *, scene=None, component_bundles=None, rigid_assembly=None
+):
     description = Description(robot_model or get_robot_model("alohamini2pro"))
     profile = profile or ModelProfile()
     T_world_root = rigid_transform(profile.T_world_root)
@@ -438,6 +440,12 @@ def build_model(robot_model=None, profile=None, *, scene=None, component_bundles
         inputs = _component_fixtures_inputs(robot, component_bundles)
         robot.xml, robot.assets = inputs["xml"], inputs["assets"]
         robot.geometry, robot.manifest = inputs["geometry"], inputs["manifest"]
+    if rigid_assembly is not None:
+        from .rigid_assembly import assembly_inputs
+
+        inputs = assembly_inputs(robot, rigid_assembly)
+        for key, value in inputs.items():
+            setattr(robot, key, value)
     robot.model = compile_xml(robot.xml, assets=robot.assets)
     for relative, expected in files.items():
         if (

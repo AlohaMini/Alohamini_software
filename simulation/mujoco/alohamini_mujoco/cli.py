@@ -112,6 +112,19 @@ def main(argv=None):
     component_view.add_argument("--component-bundles", type=Path, nargs="+", required=True)
     component_view.add_argument("--initial-positions", type=json.loads, default={})
     component_view.add_argument("--links", nargs="+", help="show selected component-covered links")
+    assembly_view = commands.add_parser(
+        "assembly-view", help="inspect explicit rigid component ownership using joint sliders"
+    )
+    assembly_check = commands.add_parser(
+        "assembly-inspect", help="check native component frames through joint-limit sweeps"
+    )
+    for command in (assembly_view, assembly_check):
+        command.add_argument("--assembly", type=Path, required=True)
+        command.add_argument("--initial-positions", type=json.loads, default={})
+        command.add_argument("--component-bundles", type=Path, nargs="+")
+    assembly_view.add_argument("--links", nargs="+")
+    assembly_check.add_argument("--samples", type=int, default=9)
+    assembly_check.add_argument("--output", type=Path, required=True)
     decompose = commands.add_parser("decompose", help="generate explicit CAD collision candidates")
     decompose.add_argument("--links", nargs="+", required=True, help="named URDF links")
     decompose.add_argument("--tolerance-m", type=float, default=0.0005)
@@ -268,6 +281,26 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
     try:
+        if args.operation in ("assembly-view", "assembly-inspect"):
+            from .rigid_assembly import audit_assembly
+            from .viewer import run_assembly_viewer
+
+            if not isinstance(args.initial_positions, dict):
+                raise ValueError("Initial positions must use named URDF joints")
+            if args.operation == "assembly-inspect" and args.output.expanduser().exists():
+                raise FileExistsError(args.output)
+            robot = build_model(
+                profile=ModelProfile(initial_positions=args.initial_positions),
+                rigid_assembly=args.assembly,
+                component_bundles=args.component_bundles,
+            )
+            if args.operation == "assembly-view":
+                run_assembly_viewer(robot, links=args.links)
+                return 0
+            report = audit_assembly(robot, samples=args.samples)
+            export_robot(robot, report, args.output)
+            print(json.dumps({"output": str(args.output), "passed": report["passed"]}))
+            return 0 if report["passed"] else 1
         if args.operation == "component-view":
             from .viewer import run_component_viewer
 

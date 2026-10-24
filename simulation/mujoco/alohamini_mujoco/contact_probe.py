@@ -33,16 +33,19 @@ def _winding(mesh, point):
 
 
 def _component_fixture_inputs(robot, directory, *, name_prefix="cad_fixture"):
+    if "rigid_assembly_fixture" in robot.manifest:
+        raise ValueError("Add collision components before assigning their rigid owners")
     if robot.scene is not None:
         raise ValueError("Use a robot-only model for isolated CAD component fixtures")
     pieces, metadata = load_cad_components(robot.description, directory)
     root = ET.fromstring(robot.xml)
-    assets, geometry, selected = dict(robot.assets), dict(robot.geometry), {}
+    assets, geometry, selected, bindings = dict(robot.assets), dict(robot.geometry), {}, {}
     for link, meshes in pieces.items():
         body = root.find(f'.//body[@name="{link}"]')
         if body is None:
             raise ValueError("CAD component fixture link is absent from the native model")
         selected[link] = []
+        target = metadata["definition"]["links"][link]["cad_geometry"]["registration"]["target"]
         for i, mesh in enumerate(meshes):
             name = f"{name_prefix}_{link}_{i}"
             if name in geometry or name + ".msh" in assets:
@@ -52,6 +55,11 @@ def _component_fixture_inputs(robot, directory, *, name_prefix="cad_fixture"):
             ET.SubElement(body, "geom", name=name, type="mesh", mesh=name, mass="0", group="4")
             geometry[name] = {"kind": "collision", "link": link}
             selected[link].append(name)
+            bindings[name] = {
+                "source_link": link,
+                "visual_index": target["visual_index"],
+                "component_index": target["component_index"],
+            }
     xml = ET.tostring(root, encoding="unicode")
     return dict(
         xml=xml,
@@ -61,6 +69,7 @@ def _component_fixture_inputs(robot, directory, *, name_prefix="cad_fixture"):
             **robot.manifest,
             "cad_component_fixture": metadata,
             "cad_component_geoms": selected,
+            "cad_component_bindings": bindings,
         },
     )
 
@@ -84,7 +93,7 @@ def _component_fixtures_inputs(robot, directories):
     """
     if not directories:
         raise ValueError("Select at least one registered component bundle")
-    current, bundles, selected, covered = robot, [], {}, set()
+    current, bundles, selected, covered, bindings = robot, [], {}, set(), {}
     for index, directory in enumerate(directories):
         inputs = _component_fixture_inputs(current, directory, name_prefix=f"cad_fixture{index}")
         bundle = inputs["manifest"]["cad_component_fixture"]
@@ -96,6 +105,7 @@ def _component_fixtures_inputs(robot, directories):
             covered.add(identity)
             selected.setdefault(link, []).extend(inputs["manifest"]["cad_component_geoms"][link])
         bundles.append(bundle)
+        bindings.update(inputs["manifest"]["cad_component_bindings"])
         current = replace(current, **inputs)
     manifest = {
         **robot.manifest,
@@ -104,6 +114,7 @@ def _component_fixtures_inputs(robot, directories):
             "components": bundles,
         },
         "cad_component_geoms": selected,
+        "cad_component_bindings": bindings,
     }
     return dict(
         xml=current.xml, assets=current.assets, geometry=current.geometry, manifest=manifest
@@ -117,6 +128,8 @@ def attach_component_fixtures(robot, directories):
 
 
 def probe_cad_contacts(robot, mesh_bundle, configuration, *, component_bundle=None):
+    if "rigid_assembly_fixture" in robot.manifest:
+        raise ValueError("Source-frame contact qualification requires the original rigid owners")
     inputs = (
         _component_fixture_inputs(robot, component_bundle)
         if component_bundle is not None

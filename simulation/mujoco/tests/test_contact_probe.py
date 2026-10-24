@@ -75,7 +75,10 @@ def test_native_probe_follows_link_coordinates_and_detects_a_displaced_collider(
                             "cad_geometry": {
                                 "passed": True,
                                 "source_mesh_manifest_sha256": fingerprint,
-                                "registration": {"T_link_part": np.eye(4).tolist()},
+                                "registration": {
+                                    "T_link_part": np.eye(4).tolist(),
+                                    "target": {"visual_index": 0, "component_index": 0},
+                                },
                             }
                         }
                     }

@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "robot_model": "alohamini2pro",
+  "units": "m",
+  "source_description_sha256": {
+    "urdf/alohamini2pro.urdf": "8459353ebc6af5800d809b96566b5073a7fcff880c67171ab07a0bd2f98ffee6",
+    "srdf/alohamini2pro.srdf": "48314b09feef0348655a8f027c40638b5232a684420aef1ce124fccf714f68e6"
+  },
+  "sources": [
+    {
+      "link": "left_Fixed_Jaw",
+      "visual_index": 0,
+      "source_visual": {"path": "meshes/visual/left_Fixed_Jaw.STL", "sha256": "de4af3b62e96ea792137033c4322681cf929df7d563e64f2526c5edb0d2e7b69", "T_link_visual": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]], "scale": [1.0, 1.0, 1.0]},
+      "components": [
+        {"component_index": 0, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Fixed printed jaw"},
+        {"component_index": 1, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Wrist camera bracket"},
+        {"component_index": 2, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Servo case"},
+        {"component_index": 3, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Servo case"},
+        {"component_index": 4, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Servo case"},
+        {"component_index": 5, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 6, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 7, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 8, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 9, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 10, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 11, "owner": "left_Moving_Jaw", "reference_positions": {"left_gripper": -0.7834523940967959}, "label": "Drive servo horn"},
+        {"component_index": 12, "owner": "left_Moving_Jaw", "reference_positions": {"left_gripper": -0.7834523940967959}, "label": "Passive servo horn"},
+        {"component_index": 13, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Internal shaft group; source ownership pending"},
+        {"component_index": 14, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 15, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 16, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 17, "owner": "left_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"}
+      ]
+    },
+    {
+      "link": "right_Fixed_Jaw",
+      "visual_index": 0,
+      "source_visual": {"path": "meshes/visual/right_Fixed_Jaw.STL", "sha256": "de4af3b62e96ea792137033c4322681cf929df7d563e64f2526c5edb0d2e7b69", "T_link_visual": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]], "scale": [1.0, 1.0, 1.0]},
+      "components": [
+        {"component_index": 0, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Fixed printed jaw"},
+        {"component_index": 1, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Wrist camera bracket"},
+        {"component_index": 2, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Servo case"},
+        {"component_index": 3, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Servo case"},
+        {"component_index": 4, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Servo case"},
+        {"component_index": 5, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 6, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 7, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 8, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 9, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 10, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 11, "owner": "right_Moving_Jaw", "reference_positions": {"right_gripper": -0.7834523940967959}, "label": "Drive servo horn"},
+        {"component_index": 12, "owner": "right_Moving_Jaw", "reference_positions": {"right_gripper": -0.7834523940967959}, "label": "Passive servo horn"},
+        {"component_index": 13, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Internal shaft group; source ownership pending"},
+        {"component_index": 14, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 15, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 16, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"},
+        {"component_index": 17, "owner": "right_Fixed_Jaw", "reference_positions": {}, "label": "Hardware; retained source ownership pending review"}
+      ]
+    }
+  ],
+  "mounting_evidence": {
+    "source_audit_sha256": "e2ff28f60b92b1c33303d6f204af40cda41ff6b1caa70d20c267b9afd1b11fe4",
+    "source_hole_fits_sha256": "0e019119c541fdbeaa2ff3e54266c60f30d17211b44e049a9a4fb9f0c00a155c",
+    "ownership_hypothesis": "both external servo horns are fastened to the U-shaped moving printed jaw",
+    "reference_joint_limits_rad": [
+      -1.8030294104,
+      0.32
+    ],
+    "fit_coordinates": "XZ in Fixed_Jaw; positive gripper q rotates X toward +Z",
+    "fit": {
+      "reference_q_rad": -0.7834523940967959,
+      "per_horn": {
+        "11": {
+          "maximum_hole_axis_residual_m": 8.052567137471893e-09,
+          "one_to_one": true
+        },
+        "12": {
+          "maximum_hole_axis_residual_m": 7.70091922427234e-09,
+          "one_to_one": true
+        }
+      }
+    },
+    "clearance_hole_radius_m": 0.0015,
+    "tap_hole_radius_m": 0.00125,
+    "axial_policy": "preserve legacy STL axial placement; no invented axial offset",
+    "limitations": [
+      "bolt-axis alignment does not verify axial mating faces or fastener preload",
+      "internal shaft and fastener rigid ownership remains pending",
+      "source per-link inertias and collision owners are retained; not a dynamic candidate",
+      "actual installed spline phase requires final whole-system hardware review"
+    ],
+    "source_cad_sha256": "578a1b8564dc3287e03b4fe3c40f4513d9c4a8cd06515a6751ced4c095e00a88",
+    "status": "kinematic candidate; installed spline phase and axial mounting unverified"
+  }
+}
