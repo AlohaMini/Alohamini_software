@@ -395,8 +395,13 @@ Diffusion／FastWAM 使用 `diffusers_cosine`；
 | DDP，每卡完整模型 | `--num_processes=2 --background` |
 | ACT／AM-ACT FSDP2 分片 | `--distributed_backend=fsdp2 --num_processes=2 --background` |
 
+指定显卡：`CUDA_VISIBLE_DEVICES=2,5 alohamini train --config train.json --policy.device=cuda --num_processes=2 --background`。
+所选显卡在进程内重新编号为 `cuda:0`、`cuda:1`。
+
 有效 batch 通常为 `batch_size × 进程数 × 累积次数`；`steps` 按成功的优化器更新计数。
 多进程尾批默认重复样本补齐，`--drop_last=true` 改为丢弃。
+`num_workers`、`prefetch_factor` 和视频缓存按进程生效，多卡时需合计 CPU 内存与解码负载。
+DataLoader 默认使用 `spawn`；可用 `--dataloader_multiprocessing_context=forkserver` 切换。
 多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
 
 FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出分片训练状态和完整推理权重。

@@ -66,6 +66,9 @@ def parse_training_args(argv=None):
     parser.add_argument("--image_size", type=json.loads)
     parser.add_argument("--video_backend", choices=("pyav", "torchcodec"))
     parser.add_argument("--return_uint8", type=boolean)
+    parser.add_argument(
+        "--dataloader_multiprocessing_context", choices=("spawn", "forkserver", "fork")
+    )
     for name in (
         "steps",
         "batch_size",
