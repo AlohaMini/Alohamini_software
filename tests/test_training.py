@@ -341,6 +341,9 @@ def test_periodic_checkpoint_resume_exact_and_no_data_mutation(
         gradient_accumulation_steps=accumulation,
         cudnn_deterministic=True,
         deterministic_algorithms=True,
+        # CPU parallel reductions can differ by a few ULPs across process restarts.
+        # Keep this bitwise-resume check single-threaded; CUDA retains its normal setting.
+        cpu_threads=1 if device == "cpu" else 4,
         seed=1000,
         train_episodes=[0],
         val_episodes=[1],
@@ -498,6 +501,28 @@ def test_trainer_ema_checkpoint_resume(recording, tmp_path, monkeypatch, process
         0,
         kind="act",
         ema_settings={"enable": True, "decay": 0.9, "use_for_eval": use_for_eval},
+    )
+
+
+def test_v3_cuda_ddp_worker_checkpoint_resume(recording, tmp_path, monkeypatch):
+    from alohamini.datasets.lerobotv3 import export_lerobot
+
+    if torch.cuda.device_count() < 2:
+        pytest.skip("NCCL video-worker verification requires two visible GPUs")
+    pytest.importorskip("torchcodec")
+    root = tmp_path / "v3"
+    export_lerobot(recording, root)
+    test_periodic_checkpoint_resume_exact_and_no_data_mutation(
+        root,
+        tmp_path,
+        monkeypatch,
+        "cuda",
+        "bfloat16",
+        2,
+        2,
+        2,
+        kind="act",
+        ema_settings={"enable": True, "decay": 0.9, "use_for_eval": True},
     )
 
 

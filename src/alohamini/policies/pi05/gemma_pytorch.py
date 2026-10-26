@@ -60,6 +60,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
+        self.gemma_expert.main_input_name = "inputs_embeds"
 
         self.to_bfloat16_for_selected_params(precision)
 
@@ -99,6 +100,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         inputs_embeds: list[torch.FloatTensor] | None = None,
         use_cache: bool | None = None,
         adarms_cond: list[torch.Tensor] | None = None,
+        detach_vlm: bool = False,
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
@@ -136,26 +138,6 @@ class PaliGemmaWithExpertModel(nn.Module):
                 and self.gemma_expert.model.gradient_checkpointing
                 and self.training
             ) or (hasattr(self, "gradient_checkpointing") and self.gradient_checkpointing and self.training)
-
-            # Force enable gradient checkpointing if we're in training mode and the model supports it
-            if self.training and hasattr(self.gemma_expert.model, "gradient_checkpointing"):
-                if not self.gemma_expert.model.gradient_checkpointing:
-                    print("Forcing gradient checkpointing to be enabled for Gemma expert model")
-                    self.gemma_expert.model.gradient_checkpointing = True
-                use_gradient_checkpointing = True
-
-            # Debug gradient checkpointing status
-            if hasattr(self, "_debug_gc_printed") and not self._debug_gc_printed:
-                print(f"Gemma expert model gradient checkpointing: {use_gradient_checkpointing}")
-                print(f"Model training mode: {self.training}")
-                print(
-                    f"Gemma expert model has gradient_checkpointing attr: {hasattr(self.gemma_expert.model, 'gradient_checkpointing')}"
-                )
-                if hasattr(self.gemma_expert.model, "gradient_checkpointing"):
-                    print(
-                        f"Gemma expert model gradient_checkpointing value: {self.gemma_expert.model.gradient_checkpointing}"
-                    )
-                self._debug_gc_printed = True
 
             # Define the complete layer computation function for gradient checkpointing
             def compute_layer_complete(layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond):
@@ -201,17 +183,30 @@ class PaliGemmaWithExpertModel(nn.Module):
                 scaling = self.paligemma.language_model.layers[layer_idx].self_attn.scaling
 
                 # Attention computation
-                att_output, _ = modeling_gemma.eager_attention_forward(
-                    self.paligemma.language_model.layers[layer_idx].self_attn,
-                    query_states,
-                    key_states,
-                    value_states,
-                    attention_mask,
-                    scaling,
-                )
+                attention = self.paligemma.language_model.layers[layer_idx].self_attn
+                if detach_vlm:
+                    # KI equations (5)-(6): detach K AND V only on the expert's
+                    # read path. The VLM retains its own differentiable attention.
+                    prefix_len = inputs_embeds[0].shape[1]
+                    prefix_attention, _ = modeling_gemma.eager_attention_forward(
+                        attention, query_states[:, :, :prefix_len],
+                        key_states[:, :, :prefix_len], value_states[:, :, :prefix_len],
+                        attention_mask[:, :, :prefix_len, :prefix_len], scaling,
+                    )
+                    expert_attention, _ = modeling_gemma.eager_attention_forward(
+                        attention, query_states[:, :, prefix_len:],
+                        torch.cat((key_states[:, :, :prefix_len].detach(), key_states[:, :, prefix_len:]), dim=2),
+                        torch.cat((value_states[:, :, :prefix_len].detach(), value_states[:, :, prefix_len:]), dim=2),
+                        attention_mask[:, :, prefix_len:], scaling,
+                    )
+                    att_output = torch.cat((prefix_attention, expert_attention), dim=1)
+                else:
+                    att_output, _ = modeling_gemma.eager_attention_forward(
+                        attention, query_states, key_states, value_states, attention_mask, scaling,
+                    )
                 # Get head_dim from the current layer, not from the model
                 head_dim = self.paligemma.language_model.layers[layer_idx].self_attn.head_dim
-                att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
+                att_output = att_output.reshape(batch_size, -1, query_states.shape[1] * head_dim)
 
                 # Process layer outputs
                 outputs_embeds = []

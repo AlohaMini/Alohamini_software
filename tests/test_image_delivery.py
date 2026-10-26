@@ -118,7 +118,7 @@ def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, si
         assert all(image.min() >= -1 and image.max() <= 1 for image in images)
         assert all(mask.all() for mask in masks)
     if kind == "pi05":
-        assert actual["observation"].images["base_0_rgb"].shape == (2, 3, 224, 224)
+        assert actual["observation"].images["forward"].shape == (2, 3, 224, 224)
         for image in actual["observation"].images.values():
             assert image.min() >= -1 and image.max() <= 1
 

@@ -30,10 +30,12 @@ def evaluate_checkpoint(
         raise ValueError("batch_size must be a positive integer")
     policy = NativePolicy(checkpoint, device=device, offline=True)
     manifest = policy.manifest
+    sample_spec = policy.algorithm.sample_spec(manifest["config"], cameras=manifest["cameras"])
+    sample_spec["exclude_fixed_state"] = manifest.get("fixed_state_excluded", False)
     samples = AlohaMiniDataset(
         dataset,
         episodes=episodes,
-        **policy.algorithm.sample_spec(manifest["config"], cameras=manifest["cameras"]),
+        **sample_spec,
         state=manifest["state"],
         cameras=manifest["cameras"],
         image_size=tuple(manifest["image_size"]),

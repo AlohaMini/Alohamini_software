@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 from test_feetech_device import DelayedRegisterSerial, RegisterSerial, SimulatedClock
 
+from alohamini.apps.teleop_monitor import TeleopMonitor, tracking_rows
 from alohamini.apps.teleoperation import (
     KeyboardInput,
     KeyboardTargets,
@@ -70,6 +71,48 @@ def snapshot(model="alohamini2pro"):
         }
     )
     return HostSnapshot(payload, {}, time.monotonic(), time.monotonic())
+
+
+class GripperMonitorTests(unittest.TestCase):
+    def test_tracking_reports_motion_output_without_changing_position_values(self):
+        payload = snapshot().payload
+        motor = "arm_right_gripper"
+        key = f"{motor}.pos"
+        payload[key] = 70.6
+        payload["_safety"].update(
+            {
+                "requested_targets": {key: 28.97},
+                "accepted_targets": {key: 28.9},
+                "currents_ma": {motor: 78},
+                "gripper_control": {motor: {"phase": "moving", "output_limit_fraction": 1.0}},
+            }
+        )
+        row = tracking_rows(payload)[0][3]
+        self.assertIn("target=28.97 command=28.90 measured=70.60 gap=-41.70", row)
+        self.assertIn("current=+78.0mA grip_phase=moving output_limit=100.0%", row)
+
+    def test_zero_current_and_zero_joint_holds_do_not_hide_latched_gripper(self):
+        payload = snapshot().payload
+        motor = "arm_right_gripper"
+        key = f"{motor}.pos"
+        payload["_safety"].update(
+            {
+                "requested_targets": {key: 0},
+                "accepted_targets": {key: 47},
+                "currents_ma": {motor: 0},
+                "gripper_holds": {motor: 0.47},
+                "gripper_control": {motor: {"phase": "holding", "output_limit_fraction": 0.05}},
+            }
+        )
+        with patch("time.perf_counter", return_value=0):
+            monitor = TeleopMonitor()
+        with (
+            patch("time.perf_counter", return_value=1.1),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            monitor.update(payload, sent=True, fresh=True, permitted=True)
+        self.assertIn("joint_holds=0 gripper_holds=1", output.getvalue())
+        self.assertIn("current=+0.0mA grip_phase=holding output_limit=5.0%", output.getvalue())
 
 
 @unittest.skipUnless(importlib.util.find_spec("scservo_sdk"), "optional STS SDK not installed")
@@ -262,6 +305,72 @@ class LeaderTests(unittest.TestCase):
                 pass
         self.assertFalse(any(s.is_open for s in self.serials.values()))
         self.assertFalse(any(p[4] == 3 for p in self.serials["right"].requests))
+
+    def test_cli_reports_leader_side_and_timeout_cause_without_starting_preview(self):
+        from scservo_sdk.protocol_packet_handler import protocol_packet_handler
+        from scservo_sdk.scservo_def import COMM_RX_TIMEOUT
+
+        receive = protocol_packet_handler.rxPacket
+        for side, label in (("left", "Left leader"), ("right", "Right leader")):
+            with self.subTest(side=side):
+                self.prepare_model("alohamini2pro")
+                self.factory.side_effect = iter(self.serials.values())
+                self.serials[side].drop.add((1, 2, 3))
+                failed = self.serials[side]
+
+                def receive_or_timeout(handler, port, failed_serial=failed):
+                    if port.serial is failed_serial and failed_serial.requests[-1][4:6] == bytes(
+                        [2, 3]
+                    ):
+                        return [], COMM_RX_TIMEOUT
+                    return receive(handler, port)
+
+                with (
+                    patch.object(
+                        protocol_packet_handler,
+                        "rxPacket",
+                        autospec=True,
+                        side_effect=receive_or_timeout,
+                    ),
+                    patch("alohamini.apps.teleoperation.HostClient"),
+                    patch("alohamini.apps.visualization.init_rerun") as preview,
+                    contextlib.redirect_stderr(io.StringIO()) as errors,
+                ):
+                    code = main(
+                        [
+                            "teleoperate",
+                            "--robot_model",
+                            "alohamini2pro",
+                            "--host",
+                            "127.0.0.1",
+                            "--no_keyboard",
+                            "--calibration_dir",
+                            str(self.directory),
+                            "--left_port",
+                            "/dev/test-left",
+                            "--right_port",
+                            "/dev/test-right",
+                        ]
+                    )
+                self.assertEqual(code, 1)
+                message = errors.getvalue()
+                for expected in (
+                    f"{label} connection failed",
+                    f"/dev/test-{side}",
+                    "shoulder_pan (ID 1)",
+                    "Read 3 (model number register)",
+                    "No valid reply from servo before timeout",
+                    "Check motor power supply, bus cable, servo ID, and baud rate",
+                    "transport=-6",
+                    "attempts=4",
+                ):
+                    self.assertIn(expected, message)
+                self.assertNotIn("Traceback", message)
+                self.assertNotIn("No power", message)  # Timeout cannot prove loss of power.
+                preview.assert_not_called()
+                self.assertFalse(any(serial.is_open for serial in self.serials.values()))
+                self.assertEqual(len(failed.requests), 4)
+                self.assertTrue(all(packet[4] == 2 for packet in failed.requests))
 
     def test_calibration_mismatch_is_not_silently_written_back(self):
         self.serials["right"].set(3, 31, 2, 0)
@@ -1099,18 +1208,76 @@ class TeleoperationTests(unittest.TestCase):
         leader.return_value.__enter__.assert_not_called()
         preview.assert_not_called()
 
-    def test_viewer_cleanup_runs_when_leader_connection_fails(self):
+    def test_viewer_is_not_started_when_leader_connection_fails(self):
         with (
             patch("alohamini.apps.teleoperation.HostClient") as client,
             patch("alohamini.apps.teleoperation.BimanualLeader") as leader,
-            patch("alohamini.apps.visualization.init_rerun"),
-            patch("alohamini.apps.visualization.shutdown_rerun") as shutdown,
+            patch("alohamini.apps.visualization.init_rerun") as preview,
+            patch(
+                "alohamini.apps.visualization.shutdown_rerun", autospec=True, return_value=False
+            ) as shutdown,
         ):
             leader.return_value.__enter__.side_effect = OSError("right port failed")
             with self.assertRaisesRegex(OSError, "right port"):
                 teleoperate("127.0.0.1", "alohamini2pro", no_keyboard=True)
-        shutdown.assert_called_once()
+        preview.assert_not_called()
+        shutdown.assert_not_called()
         client.return_value.__exit__.assert_called_once()
+
+    def test_preview_startup_failure_closes_leader_and_client(self):
+        with (
+            patch("alohamini.apps.teleoperation.HostClient") as client,
+            patch("alohamini.apps.teleoperation.BimanualLeader") as leader,
+            patch("alohamini.apps.visualization.init_rerun", side_effect=OSError("viewer failed")),
+            patch(
+                "alohamini.apps.visualization.shutdown_rerun", autospec=True, return_value=False
+            ) as shutdown,
+        ):
+            with self.assertRaisesRegex(OSError, "viewer failed"):
+                teleoperate("127.0.0.1", "alohamini2pro", no_keyboard=True)
+        shutdown.assert_called_once()
+        leader.return_value.__exit__.assert_called_once()
+        client.return_value.__exit__.assert_called_once()
+
+    def test_runtime_leader_failure_stops_robot_and_closes_preview_before_ports(self):
+        events = []
+        failure = ConnectionError("USB/serial write timed out")
+        identity = CommandIdentity("client", 1, "session", 0)
+        with (
+            patch("alohamini.apps.teleoperation.HostClient") as client_type,
+            patch("alohamini.apps.teleoperation.BimanualLeader") as leader_type,
+            patch("alohamini.apps.visualization.init_rerun"),
+            patch("alohamini.apps.visualization.TeleopPreview") as preview_type,
+            patch(
+                "alohamini.apps.visualization.shutdown_rerun",
+                autospec=True,
+                side_effect=lambda *_: events.append("viewer"),
+            ) as shutdown,
+            patch(
+                "alohamini.apps.teleoperation.stop_owned_robot",
+                side_effect=lambda *_: events.append("stop"),
+            ) as stop,
+        ):
+            client = client_type.return_value.__enter__.return_value
+            client.client_id = "client"
+            client.read.side_effect = [snapshot(), snapshot()]
+            client.send_command.return_value = identity
+            leader = leader_type.return_value
+            leader.__enter__.return_value = leader
+            leader.read.side_effect = [{}, failure]
+            for resource, label in (
+                (preview_type, "preview"), (leader_type, "leader"), (client_type, "client")
+            ):
+                resource.return_value.__exit__.side_effect = (
+                    lambda *_args, label=label: events.append(label)
+                )
+            with self.assertRaises(ConnectionError) as caught:
+                teleoperate("127.0.0.1", "alohamini2pro", no_keyboard=True)
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(events, ["stop", "preview", "viewer", "leader", "client"])
+        stop.assert_called_once_with(client, "alohamini2pro", identity)
+        self.assertIs(shutdown.call_args.args[1], failure)
+        preview_type.return_value.__enter__.return_value.submit.assert_called_once()
 
     def test_legacy_optional_profile_is_validated_before_io(self):
         with patch("alohamini.apps.teleoperation.BimanualLeader") as leader:

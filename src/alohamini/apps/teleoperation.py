@@ -451,16 +451,13 @@ def teleoperate(
             )
             client.connect_control()  # Verify both channels before touching leaders or preview.
         on_frame = None
-        if not no_preview:
-            from alohamini.apps.visualization import init_rerun, shutdown_rerun
-
-            cleanup.callback(shutdown_rerun)
-            init_rerun(session_name="alohamini_teleop")
         if leader is not None:
             cleanup.enter_context(leader)
         if not no_preview:
-            from alohamini.apps.visualization import TeleopPreview
+            from alohamini.apps.visualization import TeleopPreview, init_rerun, shutdown_rerun
 
+            cleanup.push(shutdown_rerun)
+            init_rerun(session_name="alohamini_teleop")
             preview = cleanup.enter_context(
                 TeleopPreview(None if no_robot else host, robot_model, fps=camera_fps)
             )

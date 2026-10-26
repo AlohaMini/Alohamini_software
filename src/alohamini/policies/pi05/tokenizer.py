@@ -8,8 +8,9 @@ import sentencepiece
 
 
 class PaligemmaTokenizer:
-    def __init__(self, path, max_len: int = 200):
+    def __init__(self, path, max_len: int = 200, strict: bool = False):
         self._max_len = max_len
+        self._strict = strict
 
         path = Path(path).expanduser()
         with path.open("rb") as f:
@@ -38,6 +39,8 @@ class PaligemmaTokenizer:
             tokens = tokens + padding
         else:
             if len(tokens) > self._max_len:
+                if self._strict:
+                    raise ValueError("KI prompt exceeds max_token_len; increase it to retain the complete task/state prefix")
                 logging.warning(
                     f"Token length ({len(tokens)}) exceeds max length ({self._max_len}), "
                     "truncating. Consider increasing `max_token_len` if this happens frequently."

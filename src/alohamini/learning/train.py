@@ -322,7 +322,18 @@ def _train(settings, execution):
     if eval_steps and not val_episodes:
         raise ValueError("--eval_steps requires held-out --dataset.eval_episodes")
     logger.info("Creating dataset")
-    inspection = DatasetInspection()
+    preparation_timeout = cfg.setdefault("dataset_preparation_timeout_s", 3600)
+
+    def inspect_dataset():
+        inspection = DatasetInspection()
+        if execution.world_size > 1:
+            with log_stage(f"Inspecting dataset on rank 0: {root}"):
+                inspection.check(root, allow_unused_video_tail=args["allow_unannotated"])
+        return inspection
+
+    inspection = execution.main_process_call(
+        inspect_dataset, label="Dataset inspection", timeout_s=preparation_timeout
+    )
     with log_stage(f"Creating training dataset ({len(train_episodes)} episodes)"):
         samples = AlohaMiniDataset(**args, episodes=train_episodes, inspection=inspection)
     validation = None
@@ -420,16 +431,25 @@ def _train(settings, execution):
                 if cfg.get("stats") or cfg.get("normalization") == "checkpoint"
                 else "Computing normalization statistics"
             ):
-                artifact = training_statistics(
-                    components,
-                    samples,
-                    options,
-                    cfg.get("policy", "act"),
-                    cfg.get("stats"),
-                    checkpoint=pretrained_manifest
-                    if cfg.get("normalization") == "checkpoint"
-                    else None,
+                artifact = execution.main_process_call(
+                    lambda: training_statistics(
+                        components,
+                        samples,
+                        options,
+                        cfg.get("policy", "act"),
+                        cfg.get("stats"),
+                        checkpoint=pretrained_manifest
+                        if cfg.get("normalization") == "checkpoint"
+                        else None,
+                    ),
+                    label="Normalization statistics",
+                    timeout_s=preparation_timeout,
                 )
+                if not execution.main:
+                    # Each rank verifies its own data/selection contract before reuse.
+                    training_statistics(
+                        components, samples, options, cfg.get("policy", "act"), artifact=artifact
+                    )
             stats = artifact["stats"]
             if execution.main:
                 write_statistics(output / "statistics.json", artifact)

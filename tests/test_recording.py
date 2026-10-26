@@ -131,6 +131,38 @@ class RecordingLoopTests(unittest.TestCase):
         )
         self.client.prefetch.assert_not_called()
 
+    def test_camera_cleanup_failure_still_attempts_owned_stop(self):
+        def camera_mode(enabled):
+            if not enabled:
+                raise ConnectionError("camera cleanup failed")
+
+        self.client.set_recording_cameras.side_effect = camera_mode
+        with self.assertRaisesRegex(ConnectionError, "camera cleanup failed"):
+            self.run_loop()
+        self.assertIsNotNone(self.stop_call)
+        self.assertEqual(self.stop_call.args[2].sequence, self.clock.count)
+
+    def test_camera_cleanup_failure_preserves_leader_error_and_attempts_owned_stop(self):
+        failure = ConnectionError("leader USB write timed out")
+
+        def input_or_error(units):
+            if self.client.send_command.called:
+                raise failure
+            return self.input(units)
+
+        def camera_mode(enabled):
+            if not enabled:
+                raise ConnectionError("camera cleanup failed")
+
+        self.leader.read.side_effect = input_or_error
+        self.client.set_recording_cameras.side_effect = camera_mode
+        with self.assertLogs(level="WARNING") as logs, self.assertRaises(ConnectionError) as caught:
+            self.run_loop()
+        self.assertIs(caught.exception, failure)
+        self.assertIn("camera cleanup failed", " ".join(logs.output))
+        self.assertIsNotNone(self.stop_call)
+        self.assertEqual(self.stop_call.args[2].sequence, 1)
+
     def test_image_aligned_old_state_uses_current_subsequent_action_and_matching_feedback(self):
         self.run_loop()
         self.assertEqual(self.calls, ["read", "input", "send"] * 5)
@@ -404,7 +436,9 @@ class RecordingEntryTests(unittest.TestCase):
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=False)
         keyboard = RecordingKeyboard()
-        dataset = Mock(num_episodes=0, submitted=3, saved=3, cameras=("forward",), last_save_timings={})
+        dataset = Mock(
+            num_episodes=0, submitted=3, saved=3, cameras=("forward",), last_save_timings={}
+        )
         dataset.save_episode.side_effect = lambda: setattr(dataset, "num_episodes", 1)
         with tempfile.TemporaryDirectory() as directory:
             with (

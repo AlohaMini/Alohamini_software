@@ -56,5 +56,8 @@ class SmolVLAProcessor:
                     raise ValueError(f"{key}: expected finite RGB in [0, 1]")
         return self.numeric(tensors)
 
+    def action_prefix(self, actions, *, context=None):
+        return self.numeric({"action": actions})["action"]
+
     def action(self, tensor, *, context=None):
         return self.numeric.action(tensor)

@@ -147,6 +147,74 @@ class LiftHomingTests(unittest.TestCase):
     def setUp(self):
         self.home = LiftHoming(layout()[1])
 
+    def test_positive_current_slope_requests_unloading_in_the_same_sample(self):
+        self.home.update(lift_batch(0, 1000, speed=900, moving=1, current=0.1))
+        self.home.update(lift_batch(1, 1016, speed=800, moving=1, current=0.5))
+        self.assertEqual(self.home.phase, "settling")
+        self.assertEqual(self.home.velocity_raw, 0)
+        self.assertAlmostEqual(self.home.sampling_hz, 50)
+        self.assertAlmostEqual(self.home.current_slope_a_s, 20)
+
+    def test_bottom_start_trace_does_not_wait_for_continuous_descent(self):
+        # Measured startup prefix: load rises while encoder and speed still advance.
+        trace = ((4013, 0, 0.0), (4013, 0, 0.0), (4013, 0, 0.026),
+                 (4015, 0, 0.1105), (4019, 100, 0.1885), (4024, 200, 0.364))
+        for sequence, (tick, speed, current) in enumerate(trace):
+            self.home.update(lift_batch(
+                sequence, tick, speed=speed, moving=int(speed != 0), current=current,
+            ))
+            self.assertEqual(self.home.phase, "settling" if sequence == 5 else "seeking")
+        self.assertEqual(self.home.velocity_raw, 0)
+        self.assertAlmostEqual(self.home.current_slope_a_s, 8.775)
+
+    def test_slope_uses_the_actual_feedback_interval(self):
+        for interval, expected_phase in ((0.02, "settling"), (0.04, "seeking")):
+            with self.subTest(interval=interval):
+                home = LiftHoming(layout()[1])
+                home.update(lift_batch(0, 1000, speed=400, moving=1, current=0.2))
+                home.update(lift_batch(
+                    1, 1008, speed=400, moving=1, current=0.35, time_s=interval,
+                ))
+                self.assertAlmostEqual(home.current_slope_a_s, 0.15 / interval)
+                self.assertEqual(home.phase, expected_phase)
+
+    def test_falling_current_and_small_rises_do_not_trigger_unloading(self):
+        for first, second in ((0.8, 0.4), (0.2, 0.28), (0.4, 0.45)):
+            with self.subTest(currents=(first, second)):
+                home = LiftHoming(layout()[1])
+                home.update(lift_batch(0, 1000, speed=400, moving=1, current=first))
+                home.update(lift_batch(1, 1008, speed=400, moving=1, current=second))
+                self.assertEqual(home.phase, "seeking")
+                self.assertEqual(home.velocity_raw, 1300)
+
+    def test_current_magnitude_derivative_is_independent_of_current_sign(self):
+        for sign in (-1, 1):
+            with self.subTest(sign=sign):
+                home = LiftHoming(layout()[1])
+                home.update(lift_batch(0, 1000, speed=400, moving=1, current=sign * 0.1))
+                home.update(lift_batch(1, 1008, speed=400, moving=1, current=sign * 0.5))
+                self.assertEqual(home.phase, "settling")
+                self.assertAlmostEqual(home.current_slope_a_s, 20)
+
+    def test_derivative_feedback_gap_fails_without_establishing_zero(self):
+        self.home.update(lift_batch(0, 1000, speed=400, moving=1))
+        with self.assertRaisesRegex(RuntimeError, "feedback gap"):
+            self.home.update(lift_batch(1, 1044, speed=400, moving=1, current=0.5, time_s=0.11))
+        self.assertEqual(self.home.phase, "failed")
+        self.assertEqual(self.home.velocity_raw, 0)
+
+    def test_sampled_current_abort_applies_on_the_first_frame_and_after_release(self):
+        with self.assertRaisesRegex(RuntimeError, "current abort"):
+            self.home.update(lift_batch(0, 1000, current=2.0))
+        self.assertEqual(self.home.phase, "failed")
+        self.home = LiftHoming(layout()[1])
+        self.home.update(lift_batch(0, 1000, current=0.1))
+        self.home.update(lift_batch(1, 1000, current=0.5))
+        self.home.confirm_release(0.03)
+        with self.assertRaisesRegex(RuntimeError, "current abort"):
+            self.home.update(lift_batch(2, 1000, current=2.0))
+        self.assertEqual(self.home.phase, "failed")
+
     def test_contact_requires_stop_then_new_stationary_feedback(self):
         for sequence in range(7):
             self.home.update(lift_batch(sequence, 1000, current=0.31))
@@ -322,6 +390,58 @@ class LiftHomingTests(unittest.TestCase):
                 )
             )
             self.assertEqual(self.home.phase, "settling")
+
+    def test_frequent_one_tick_jitter_can_settle_after_reported_speed_returns_to_zero(self):
+        # Reproduces the reported summary: span=1, drift=0, median_speed=50,
+        # tail_speed=0 and latest speed/moving=0. This is synthetic feedback.
+        for base in (4012, 4095):
+            with self.subTest(base=base):
+                self.home = LiftHoming(layout()[1])
+                self.contact_and_release()
+                for sequence in range(7, 80):
+                    index = sequence - 7
+                    speed = 50 if index < 35 else 0
+                    self.home.update(
+                        lift_batch(
+                            sequence,
+                            (base + (index % 2 if speed else 0)) % 4096,
+                            speed=speed,
+                            moving=0,
+                            current=0.05,
+                        )
+                    )
+                    if self.home.phase == "complete":
+                        break
+                self.assertEqual(self.home.phase, "complete")
+                self.assertGreaterEqual(sequence * 0.02, 1.13)
+                self.assertEqual(self.home.velocity_raw, 0)
+
+    def test_high_window_speed_requires_one_tick_span_zero_drift_and_latest_rest(self):
+        for failure in ("span", "drift", "speed", "moving", "tail", "large_speed"):
+            with self.subTest(failure=failure):
+                self.home = LiftHoming(layout()[1])
+                self.contact_and_release()
+                for sequence in range(7, 60):
+                    index = sequence - 7
+                    speed = 50 if index < 35 else 0
+                    tick = 4012 + (index % 2 if speed else 0)
+                    moving = 0
+                    if failure == "span":
+                        tick = 4012 + (2 * (index % 2) if speed else 0)
+                    elif failure == "drift":
+                        tick = 4012 + int(index >= 25)
+                    elif failure == "speed":
+                        speed = 50 if index < 35 or index >= 50 else 0
+                    elif failure == "moving":
+                        moving = int(index >= 50)
+                    elif failure == "large_speed":
+                        speed = 100 if index < 35 else 0
+                    else:
+                        speed = 50
+                    self.home.update(
+                        lift_batch(sequence, tick, speed=speed, moving=moving, current=0.05)
+                    )
+                    self.assertEqual(self.home.phase, "settling")
 
     def test_sparse_endpoints_do_not_prove_a_stationary_window(self):
         self.contact_and_release()
@@ -681,6 +801,34 @@ class BaseLiftIntegrationTests(unittest.TestCase):
         self.assertEqual(self.serial.get(4, 46, 2), 0)
         self.assertEqual(self.serial.get(4, 40, 1), 0)
 
+    def test_startup_current_candidate_unloads_before_the_next_cycle(self):
+        self.control.begin_lift_homing()
+        self.serial.set(4, 69, 2, 15)
+        self.time_s += 0.02
+        self.host.cycle()
+        self.serial.set(4, 69, 2, 80)  # 0.52 A rising from 0.0975 A.
+        self.serial.set(4, 56, 2, 1004)
+        self.serial.set(4, 58, 2, 200)
+        self.serial.set(4, 66, 1, 1)
+        self.time_s += 0.02
+        result = self.host.cycle()
+        self.assertEqual(result.status.phase, HostPhase.READY)
+        self.assertEqual(self.control.lift_homing_phase, "settling")
+        self.assertEqual(self.serial.get(4, 46, 2), 0)
+        self.assertEqual(self.serial.get(4, 40, 1), 0)
+        self.assertIsNone(self.control.lift_height_m)
+
+    def test_homing_current_abort_stops_and_disables_without_zero(self):
+        self.control.begin_lift_homing()
+        self.serial.set(4, 69, 2, 320)  # 2.08 A, below delayed global protection.
+        self.time_s += 0.02
+        result = self.host.cycle()
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertIn("current abort", result.status.fault)
+        self.assertIsNone(self.control.lift_height_m)
+        self.assertEqual(self.serial.get(4, 46, 2), 0)
+        self.assertEqual(self.serial.get(4, 40, 1), 0)
+
     def test_homing_release_delay_does_not_invalidate_encoder(self):
         self.control._lift_spec = replace(self.lift, max_encoder_speed_ticks_s=32767)
         self.control.begin_lift_homing()
@@ -766,7 +914,7 @@ class BaseLiftIntegrationTests(unittest.TestCase):
                 self.serial.set(4, 69, 2, 10)
             return result
 
-        self.serial.set(4, 69, 2, 800)  # 5.2 A: sustained-overload if not unloaded.
+        self.serial.set(4, 69, 2, 80)  # 0.52 A, unloaded before the height reference.
         with patch.object(self.serial, "write", side_effect=unload_current):
             for _ in range(100):
                 self.time_s += 0.02
@@ -795,8 +943,15 @@ class BaseLiftIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.control.lift_height_m)
         self.assertEqual(self.control.lift_homing_phase, "failed")
 
-    def test_current_protection_still_trips_if_current_stays_high_after_release(self):
+    def test_sampled_current_abort_remains_active_after_release(self):
         self.control.begin_lift_homing()
+        self.serial.set(4, 69, 2, 50)
+        for _ in range(10):
+            self.time_s += 0.02
+            self.host.cycle()
+            if self.control.lift_homing_phase == "settling":
+                break
+        self.assertEqual(self.control.lift_homing_phase, "settling")
         self.serial.set(4, 69, 2, 800)
         for _ in range(50):
             self.time_s += 0.02
@@ -804,7 +959,7 @@ class BaseLiftIntegrationTests(unittest.TestCase):
             if result.status.phase is HostPhase.FAULT:
                 break
         self.assertIs(result.status.phase, HostPhase.FAULT)
-        self.assertEqual(result.status.current_trip.cause, "sustained_overload")
+        self.assertIn("current abort", result.status.fault)
         self.assertIsNone(self.control.lift_height_m)
 
     def test_homing_stop_readback_failure_latches_fault_without_zero(self):
@@ -821,7 +976,7 @@ class BaseLiftIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.control.lift_height_m)
         self.assertTrue(all(self.serial.get(i, 40, 1) == 0 for i in (1, 2, 3, 4)))
 
-    def test_global_overcurrent_still_preempts_homing_contact(self):
+    def test_homing_abort_does_not_wait_for_delayed_global_overcurrent(self):
         self.control.begin_lift_homing()
         self.serial.set(4, 69, 2, 1300)  # 8.45 A, above STS3095 near-stall threshold.
         for _ in range(10):
@@ -830,7 +985,8 @@ class BaseLiftIntegrationTests(unittest.TestCase):
             if result.status.phase is HostPhase.FAULT:
                 break
         self.assertEqual(result.status.phase, HostPhase.FAULT)
-        self.assertIsNotNone(result.status.current_trip)
+        self.assertIsNone(result.status.current_trip)
+        self.assertIn("current abort", result.status.fault)
         self.assertIsNone(self.control.lift_height_m)
         self.assertEqual(self.serial.get(4, 46, 2), 0)
 

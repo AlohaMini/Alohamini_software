@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 import logging
+from dataclasses import dataclass
 
 import torch
 
@@ -7,29 +8,36 @@ from . import image_tools
 
 logger = logging.getLogger("openpi")
 
-# Constants moved from model.py
-IMAGE_KEYS = (
-    "base_0_rgb",
-    "left_wrist_0_rgb",
-    "right_wrist_0_rgb",
-)
-
 IMAGE_RESOLUTION = (224, 224)
+
+
+@dataclass
+class ProcessedObservation:
+    images: dict
+    image_masks: dict
+    state: torch.Tensor
+    tokenized_prompt: torch.Tensor
+    tokenized_prompt_mask: torch.Tensor
+    token_ar_mask: torch.Tensor | None
+    token_loss_mask: torch.Tensor | None
 
 
 def preprocess_observation_pytorch(
     observation,
     *,
     train: bool = False,
-    image_keys: Sequence[str] = IMAGE_KEYS,
+    image_keys: Sequence[str] | None = None,
     image_resolution: tuple[int, int] = IMAGE_RESOLUTION,
 ):
     """Torch.compile-compatible version of preprocess_observation_pytorch with simplified type annotations.
 
     This function avoids complex type annotations that can cause torch.compile issues.
     """
-    if not set(image_keys).issubset(observation.images):
-        raise ValueError(f"images dict missing keys: expected {image_keys}, got {list(observation.images)}")
+    image_keys = tuple(observation.images) if image_keys is None else tuple(image_keys)
+    if not image_keys:
+        raise ValueError("PI0.5 requires at least one image")
+    if len(set(image_keys)) != len(image_keys) or set(image_keys) != set(observation.images):
+        raise ValueError(f"Image keys differ: expected {image_keys}, got {list(observation.images)}")
 
     batch_shape = observation.state.shape[:-1]
 
@@ -156,13 +164,8 @@ def preprocess_observation_pytorch(
         else:
             out_masks[key] = observation.image_masks[key]
 
-    # Create a simple object with the required attributes instead of using the complex Observation class
-    class SimpleProcessedObservation:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-
-    return SimpleProcessedObservation(
+    # Defining a class inside this function introduces a torch.compile graph break.
+    return ProcessedObservation(
         images=out_images,
         image_masks=out_masks,
         state=observation.state,

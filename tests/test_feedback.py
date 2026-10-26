@@ -190,6 +190,11 @@ class FeedbackReaderTests(unittest.TestCase):
         self.assertEqual(result.samples["joint_1"].registers["status_raw"], 0)
         self.assertIn("0x29", result.failures["joint_1"])
         self.assertIn("Input voltage error", result.failures["joint_1"])
+        self.assertIn(
+            "Servo reported input voltage outside its configured limits; "
+            "check voltage at the servo and configured voltage limits",
+            result.failures["joint_1"],
+        )
 
     def test_corrupt_wrong_and_duplicate_packets_do_not_replace_samples(self):
         corrupt = packet(1)[:-1] + bytes([packet(1)[-1] ^ 1])
@@ -213,7 +218,78 @@ class FeedbackReaderTests(unittest.TestCase):
         with patch.object(serial, "write", side_effect=OSError("disconnected")) as write:
             result = self.reader(serial).read()
         self.assertEqual(write.call_count, 1)
-        self.assertEqual(result.failures["joint_1"], "disconnected")
+        self.assertEqual(
+            result.failures["joint_1"], "SyncRead request transmit failed: OSError: disconnected"
+        )
+
+    def test_sync_read_serial_write_timeout_is_one_transmit_failure_for_the_whole_group(self):
+        from serial import SerialTimeoutException
+
+        serial = MemorySerial()
+        reader = self.reader(serial, 1, 2)
+        with (
+            patch.object(
+                serial, "write", side_effect=SerialTimeoutException("Write timeout")
+            ) as write,
+            patch.object(serial, "read", wraps=serial.read) as read,
+        ):
+            result = reader.read_positions()
+        write.assert_called_once()
+        read.assert_not_called()
+        self.assertFalse(result.samples)
+        self.assertEqual(set(result.failures), {"joint_1", "joint_2"})
+        self.assertEqual(len(set(result.failures.values())), 1)
+        reason = result.failures["joint_1"]
+        self.assertIn("SyncRead request transmit failed", reason)
+        self.assertIn("SerialTimeoutException: Write timeout", reason)
+        self.assertIn(
+            "USB/serial write timed out; check USB cable, hub, and serial connection; "
+            "command acceptance is unknown", reason,
+        )
+        self.assertNotIn("No valid reply", reason)
+        self.assertEqual(serial.write_timeout, 0.001)
+
+    def test_sync_read_short_write_reports_transmit_stage_without_waiting_for_replies(self):
+        from scservo_sdk.scservo_def import COMM_TX_FAIL
+
+        serial = MemorySerial()
+        reader = self.reader(serial, 1, 2)
+        with (
+            patch.object(serial, "write", return_value=0) as write,
+            patch.object(serial, "read", wraps=serial.read) as read,
+        ):
+            result = reader.read_positions()
+        write.assert_called_once()
+        read.assert_not_called()
+        self.assertEqual(len(set(result.failures.values())), 1)
+        self.assertIn(
+            f"SyncRead request transmit failed: transport={COMM_TX_FAIL}",
+            result.failures["joint_1"],
+        )
+        self.assertFalse(result.samples)
+
+    def test_sync_read_receive_deadline_is_distinct_from_serial_write_timeout(self):
+        serial = MemorySerial()
+        reader = self.reader(serial, 1, 2)
+        with patch.object(serial, "read", side_effect=TimeoutError("transaction deadline")):
+            result = reader.read_positions()
+        self.assertEqual(len(serial.writes), 1)
+        self.assertEqual(len(set(result.failures.values())), 1)
+        reason = result.failures["joint_1"]
+        self.assertIn("SyncRead reply receive failed: TimeoutError: transaction deadline", reason)
+        self.assertNotIn("USB/serial write timed out", reason)
+        self.assertFalse(result.samples)
+
+    def test_position_voltage_error_has_clear_hint_and_keeps_the_faulted_sample(self):
+        serial = MemorySerial([packet(1, error=0x01, data=(1234).to_bytes(2, "little"))])
+        result = self.reader(serial).read_positions()
+        self.assertEqual(len(serial.writes), 1)
+        self.assertEqual(result.samples["joint_1"].registers["position_raw"], 1234)
+        self.assertEqual(result.samples["joint_1"].packet_error, 0x01)
+        self.assertIn("Servo packet error 0x01", result.failures["joint_1"])
+        self.assertIn(
+            "check voltage at the servo and configured voltage limits", result.failures["joint_1"]
+        )
 
     def test_read_failure_keeps_partial_feedback(self):
         serial = MemorySerial([packet(1)])
@@ -227,7 +303,9 @@ class FeedbackReaderTests(unittest.TestCase):
         with patch.object(serial, "read", side_effect=fail_after_packet):
             result = self.reader(serial, 1, 2).read()
         self.assertEqual(set(result.samples), {"joint_1"})
-        self.assertEqual(result.failures["joint_2"], "disconnected")
+        self.assertEqual(
+            result.failures["joint_2"], "SyncRead reply receive failed: OSError: disconnected"
+        )
 
     def test_continuous_noise_cannot_extend_deadline(self):
         serial = MemorySerial()

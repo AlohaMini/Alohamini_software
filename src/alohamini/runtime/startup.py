@@ -11,7 +11,11 @@ from pathlib import Path
 from alohamini.calibration.procedure import ensure_calibration
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.hardware.camera import CameraConfig, OpenCVCamera
-from alohamini.hardware.feetech_device import CalibrationMismatchError, FeetechBusDevice
+from alohamini.hardware.feetech_device import (
+    CalibrationMismatchError,
+    FeetechBusDevice,
+    PositionMotionProfile,
+)
 from alohamini.model import get_robot_model
 from alohamini.paths import WorkspacePaths
 from alohamini.runtime.arm_contact import (
@@ -23,6 +27,9 @@ from alohamini.runtime.host import NativeHost
 from alohamini.runtime.lift_control import LiftAxisSpec
 
 logger = logging.getLogger(__name__)
+
+_ARM_MOTION_PROFILE = PositionMotionProfile(goal_velocity=2400, acceleration=120)
+_GRIPPER_MOTION_PROFILE = PositionMotionProfile(goal_velocity=2000, acceleration=100)
 
 
 def open_host(
@@ -134,6 +141,15 @@ def _open_host(
                 m.name: positions[m.name] for m in motors if m.name in positions
             },
             position_units={m.name: units[m.name] for m in motors if m.name in units},
+            position_profiles={
+                m.name: (
+                    _GRIPPER_MOTION_PROFILE
+                    if m.name.endswith("_gripper")
+                    else _ARM_MOTION_PROFILE
+                )
+                for m in motors
+                if m.name in positions
+            },
             velocity_limits={
                 m.name: 1300 if m.name == "lift_axis" else 3000
                 for m in motors
@@ -176,6 +192,17 @@ def _open_host(
             return None
         for device in devices.values():
             device.prepare({m.name: calibrations[m.name] for m in device.actuators})
+        initial_limits = host.control.arms.initial_output_limits
+        for device in devices.values():
+            limits = {
+                m.name: initial_limits[m.name] for m in device.actuators if m.name in initial_limits
+            }
+            if limits:
+                applied = device.initialize_output_limits(limits)
+                logger.info(
+                    "Gripper motion output limits: %s",
+                    ", ".join(f"{name}={value:.1%}" for name, value in applied.items()),
+                )
         # No bus is enabled until every bus has a verified safe target.
         for device in devices.values():
             device.stop()

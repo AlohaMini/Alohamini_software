@@ -51,6 +51,7 @@ def test_components_declare_distinct_reductions_and_windows():
     assert algorithm("smolvla").loss_counts(batch) == {"_reconstruction_weight": 4}
     assert algorithm("pi05").loss_counts(batch) == {"_loss_weight": 2}
     assert algorithm("pi05").sample_spec({"network": {"action_horizon": 2}}) == {
+        "exclude_fixed_state": False,
         "delta_indices": {"action": [0, 1]},
         "include_task": True,
     }
@@ -93,7 +94,8 @@ def test_pi05_schedule_matches_openpi_pytorch(warmup):
         assert peak * scheduler.lr_lambdas[0](step) == pytest.approx(expected)
 
 
-def test_pi05_training_resume_checkpoint_and_action_context(recording, tmp_path, monkeypatch):
+@pytest.mark.parametrize("training_recipe", ["flow", "ki"])
+def test_pi05_training_resume_checkpoint_and_action_context(recording, tmp_path, monkeypatch, training_recipe):
     import sentencepiece as spm
     from safetensors.torch import load_file, save_model
 
@@ -107,7 +109,8 @@ def test_pi05_training_resume_checkpoint_and_action_context(recording, tmp_path,
     spm.SentencePieceTrainer.train(
         sentence_iterator=iter(["Task: pick object, State: 0 1 2 3 4 5 6 7 8 9; Action: "] * 20),
         model_writer=buffer,
-        vocab_size=40,
+        vocab_size=600 if training_recipe == "ki" else 40,
+        user_defined_symbols=[f"<extra_{i}>" for i in range(400)] if training_recipe == "ki" else [],
         hard_vocab_limit=False,
     )
     tokenizer.write_bytes(buffer.getvalue())
@@ -117,11 +120,27 @@ def test_pi05_training_resume_checkpoint_and_action_context(recording, tmp_path,
         paligemma_variant="dummy",
         action_expert_variant="dummy",
         action_horizon=2,
-        max_token_len=48,
+        max_token_len=200 if training_recipe == "ki" else 48,
+        pytorch_compile_mode=None,
     )
     model_options = dict(
-        network=network, tokenizer_path=str(tokenizer), n_action_steps=2, num_inference_steps=2
+        network=network, tokenizer_path=str(tokenizer), n_action_steps=2, num_inference_steps=2,
+        training_recipe=training_recipe, finetuning_mode="a" if training_recipe == "ki" else "full",
     )
+    if training_recipe == "ki":
+        from tokenizers import ByteLevelBPETokenizer
+        from PIL import Image
+
+        fast = tmp_path / "fast"
+        fast.mkdir()
+        bpe = ByteLevelBPETokenizer()
+        bpe.train_from_iterator(["abc"], vocab_size=256)
+        bpe._tokenizer.save(str(fast / "tokenizer.json"))
+        (fast / "processor_config.json").write_text(json.dumps({"scale": 10, "min_token": -354, "vocab_size": 256}))
+        Image.new("RGB", (32, 32), (128, 128, 128)).save(tmp_path / "vlm.png")
+        vlm = tmp_path / "vlm.jsonl"
+        vlm.write_text(json.dumps({"images": {"forward": "vlm.png"}, "prompt": "pick object", "answer": "pick"}) + "\n")
+        model_options.update(fast_tokenizer_path=str(fast), vlm_data_path=str(vlm))
     data = AlohaMiniDataset(
         recording, episodes=[0], image_size=(32, 32), **recipe.sample_spec(model_options)
     )
@@ -131,13 +150,15 @@ def test_pi05_training_resume_checkpoint_and_action_context(recording, tmp_path,
         "output_features": data.output_features,
     }
     base = tmp_path / "base.safetensors"
-    save_model(make_policy("pi05", options).network, base)
+    base_options = {**options, "training_recipe": "flow", "finetuning_mode": "full", "vlm_data_path": ""}
+    save_model(make_policy("pi05", base_options).network, base)
     cfg = dict(
         dataset=str(recording),
         policy="pi05",
         pretrained_path=str(base),
         model=model_options,
         device="cpu",
+        mixed_precision="none",
         steps=2,
         batch_size=3,
         gradient_accumulation_steps=2,
@@ -206,6 +227,11 @@ def test_pi05_training_resume_checkpoint_and_action_context(recording, tmp_path,
             assert a == b
 
     identical(*states)
+    if training_recipe == "ki":
+        # Deployment needs neither the source tokenizers nor the co-training data.
+        tokenizer.rename(tmp_path / "removed-tokenizer.model")
+        fast.rename(tmp_path / "removed-fast")
+        vlm.rename(tmp_path / "removed-vlm.jsonl")
     policy = NativePolicy(resumed, task="pick")
     assert policy.predict(data[0]).shape == (2, 18)
     batch = next(iter(torch.utils.data.DataLoader(data, batch_size=1)))

@@ -5,6 +5,7 @@ adapter does not apply another robot's joint signs or gripper geometry.
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -17,11 +18,19 @@ from alohamini.datasets.statistics import ExactQuantileStats, diagnose_statistic
 from .image_tools import resize_with_pad
 
 ARM_DELTA_DIMS = (*range(6), *range(7, 13))
-CAMERAS = {
-    "base_0_rgb": "forward",
-    "left_wrist_0_rgb": "wrist_left",
-    "right_wrist_0_rgb": "wrist_right",
-}
+
+
+def validate_camera_names(names):
+    if isinstance(names, str):
+        raise ValueError("PI0.5 requires a nonempty sequence of unique camera names")
+    names = tuple(names)
+    if (
+        not names
+        or any(not isinstance(name, str) or not name.strip() for name in names)
+        or len(set(names)) != len(names)
+    ):
+        raise ValueError("PI0.5 requires a nonempty sequence of unique camera names")
+    return names
 
 
 def relative_actions(state, actions, delta_dims=ARM_DELTA_DIMS):
@@ -97,8 +106,11 @@ class PI05Processor:
     action_dim: int = 32
     delta_dims: tuple = ARM_DELTA_DIMS
     span_floors: dict | None = None
+    cameras: tuple[str, ...] | None = None
 
     def __post_init__(self):
+        if self.cameras is not None:
+            self.cameras = validate_camera_names(self.cameras)
         self.stats = {
             key: {name: np.asarray(values[name], np.float64) for name in ("q01", "q99")}
             for key, values in self.stats.items()
@@ -147,29 +159,44 @@ class PI05Processor:
         offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
         return (values + offset.unsqueeze(-2)).float()
 
+    def encode_actions(self, actions, state):
+        """Encode absolute targets relative to a new observation for RTC guidance.
+
+        Return only physical coordinates; padded latent dimensions are unconstrained.
+        """
+        if actions.shape[-1] != 18:
+            raise ValueError("RTC requires 18-D absolute PI0.5 targets")
+        state = torch.as_tensor(state, device=actions.device, dtype=torch.float64)
+        offset = torch.zeros_like(state)
+        offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
+        low = torch.as_tensor(self.stats["actions"]["q01"], device=actions.device)
+        span = torch.as_tensor(self.spans["actions"], device=actions.device)
+        return ((actions.double() - offset.unsqueeze(-2) - low) / span * 2 - 1).float()
+
     def prepare(self, state, images, prompt, actions=None, *, device="cpu"):
         """One physical sample: HWC uint8 RGB, original state and target chunk."""
         state = np.asarray(state, np.float64)
         if state.shape != (18,) or not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Expected 18-D state and a nonempty task prompt")
-        if "forward" not in images or set(images) - set(CAMERAS.values()):
-            raise ValueError("Select forward and optional wrist_left/wrist_right cameras")
+        if not isinstance(images, Mapping):
+            raise ValueError("PI0.5 images must map camera names to RGB arrays")
+        provided = validate_camera_names(images)
+        cameras = self.cameras if self.cameras is not None else provided
+        if set(provided) != set(cameras):
+            raise ValueError(f"PI0.5 expected cameras {cameras}, got {provided}")
         tokens, mask = self.tokenizer.tokenize(prompt, self.normalize("state", state))
         rgb, image_masks = {}, {}
-        for target, source in CAMERAS.items():
-            if source in images:
-                image = np.asarray(images[source])
-                if image.dtype != np.uint8 or image.ndim != 3 or image.shape[-1] != 3:
-                    raise ValueError(f"{source}: expected HWC uint8 RGB")
-                image = resize_with_pad(image, 224, 224)
-                rgb[target] = (
-                    torch.as_tensor(image.copy(), device=device).permute(2, 0, 1).float()[None]
-                    / 127.5
-                    - 1
-                )
-            else:
-                rgb[target] = torch.full((1, 3, 224, 224), -1.0, device=device)
-            image_masks[target] = torch.tensor([source in images], device=device)
+        for camera in cameras:
+            image = np.asarray(images[camera])
+            if image.dtype != np.uint8 or image.ndim != 3 or image.shape[-1] != 3:
+                raise ValueError(f"{camera}: expected HWC uint8 RGB")
+            image = resize_with_pad(image, 224, 224)
+            rgb[camera] = (
+                torch.as_tensor(image.copy(), device=device).permute(2, 0, 1).float()[None]
+                / 127.5
+                - 1
+            )
+            image_masks[camera] = torch.ones(1, dtype=torch.bool, device=device)
         padded_state = np.pad(self.normalize("state", state), (0, self.action_dim - 18))
         observation = SimpleNamespace(
             images=rgb,

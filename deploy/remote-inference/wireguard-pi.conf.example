@@ -1,0 +1,10 @@
+# 将本模板复制到树莓派仓库之外，填入密钥和公网地址后 chmod 600。
+[Interface]
+Address = 10.88.0.2/32
+PrivateKey = PI_PRIVATE_KEY_BASE64
+
+[Peer]
+PublicKey = CLOUD_PUBLIC_KEY_BASE64
+Endpoint = CLOUD_PUBLIC_HOST:51820
+AllowedIPs = 10.88.0.1/32
+PersistentKeepalive = 25
