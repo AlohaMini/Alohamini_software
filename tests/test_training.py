@@ -551,6 +551,14 @@ def test_fsdp_checkpoint_resume(recording, tmp_path, monkeypatch, kind, precisio
     )
 
 
+def test_fsdp_ema_checkpoint_resume(recording, tmp_path, monkeypatch):
+    test_periodic_checkpoint_resume_exact_and_no_data_mutation(
+        recording, tmp_path, monkeypatch, "cuda", "none", 2, 2, 0,
+        backend="fsdp2", kind="act",
+        ema_settings={"enable": True, "decay": 0.9, "use_for_eval": True},
+    )
+
+
 @pytest.mark.parametrize(
     "flags,rank,expected",
     [
