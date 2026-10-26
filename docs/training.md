@@ -279,7 +279,7 @@ state 必须存在。CLIP 权重与 tokenizer 默认读取工作区 `pretrained/
   --policy.integration_method=euler --policy.timestep_sampling_strategy=beta
 ```
 
-支持单设备、DDP 和训练器 EMA，暂不支持 FSDP2。
+支持单设备、DDP、FSDP2 和训练器 EMA。
 checkpoint 打包权重、CLIP 配置和 tokenizer；EMA 部署使用 `checkpoint-ema`，续训使用在线 checkpoint。
 
 ### FastWAM

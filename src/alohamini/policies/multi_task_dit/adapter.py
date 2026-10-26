@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import limits_statistics, validate_statistics
@@ -18,7 +18,7 @@ CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
 class MultiTaskDiTAlgorithm:
     include_task = True
-    fsdp_classes = ()  # FSDP2 export has not been adapted; single device/DDP are supported.
+    fsdp_classes = ("TransformerBlock", "CLIPEncoderLayer")
 
     @property
     def config_class(self):
@@ -196,6 +196,8 @@ class MultiTaskDiTAlgorithm:
         return options
 
     def save(self, path, model, manifest, model_state=None):
+        from alohamini.learning.checkpoint import save_weights
+
         encoder = model.observation_encoder
         vision = (
             encoder.vision_encoder
@@ -210,11 +212,7 @@ class MultiTaskDiTAlgorithm:
             text_encoder_name="clip_text",
             load_pretrained_encoders=False,
         )
-        state = model.state_dict() if model_state is None else model_state
-        save_file(
-            {key: value.detach().cpu().contiguous() for key, value in state.items()},
-            path / "model.safetensors",
-        )
+        save_weights(path / "model.safetensors", model, model_state)
 
     def load(self, path, model):
         model.load_state_dict(load_file(path / "model.safetensors"), strict=True)

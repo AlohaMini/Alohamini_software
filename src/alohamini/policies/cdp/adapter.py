@@ -22,6 +22,8 @@ class CDPProcessor(Processor):
 
 
 class CDPAlgorithm(DiffusionAlgorithm):
+    fsdp_classes = ("CausalBlock", "BasicBlock", "Bottleneck")
+
     @property
     def config_class(self):
         from .configuration_cdp import CDPConfig
