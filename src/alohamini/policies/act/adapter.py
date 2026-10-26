@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 
 from alohamini.learning.checkpoint import (
     model_directory,
@@ -118,11 +118,9 @@ class ACTAlgorithm:
         return options
 
     def save(self, path, model, manifest, model_state=None):
-        state = model.state_dict() if model_state is None else model_state
-        save_file(
-            {k: v.detach().cpu().contiguous() for k, v in state.items()},
-            path / "model.safetensors",
-        )
+        from alohamini.learning.checkpoint import save_weights
+
+        save_weights(path / "model.safetensors", model, model_state)
 
     def load(self, path, model):
         _, manifest = read_checkpoint(path)

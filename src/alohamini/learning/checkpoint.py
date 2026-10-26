@@ -15,6 +15,45 @@ ASSET_FIELDS = {
 }
 
 
+def save_weights(path, model, state=None, *, prefix=""):
+    """Export ordinary safetensors from live or collectively gathered weights.
+
+    Keep parameter aliases in safetensors metadata, matching save_model(), so
+    tied embeddings do not duplicate the vocabulary matrix on disk or in RAM.
+    prefix selects a policy's weight-bearing submodule without renaming its
+    existing portable checkpoint keys.
+    """
+    from safetensors.torch import save_file, save_model
+
+    if state is None:
+        save_model(model, path, force_contiguous=True)
+        return
+    selected = {
+        key.removeprefix(prefix): value for key, value in state.items() if key.startswith(prefix)
+    }
+    if selected.keys() != model.state_dict().keys():
+        raise ValueError("Gathered model weights differ from the portable checkpoint schema")
+    aliases, owners = {}, {}
+    for name, value in (
+        *model.named_parameters(remove_duplicate=False),
+        *model.named_buffers(remove_duplicate=False),
+    ):
+        if name not in selected:
+            continue
+        if id(value) in owners:
+            aliases[name] = owners[id(value)]
+        else:
+            owners[id(value)] = name
+    save_file(
+        {
+            key: value.detach().cpu().contiguous()
+            for key, value in selected.items() if key not in aliases
+        },
+        path,
+        metadata=aliases,
+    )
+
+
 def model_directory(path):
     path = Path(path).expanduser().resolve()
     if not (path / "policy.json").is_file() and (path / "pretrained_model/policy.json").is_file():

@@ -252,8 +252,6 @@ def train(settings):
     if settings.get("deterministic_algorithms"):
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     backend = settings.get("distributed_backend", "ddp")
-    if backend == "fsdp2" and not components.fsdp_classes:
-        raise ValueError(f"{settings.get('policy')}: FSDP2 boundaries are not adapted yet")
     execution = Execution(
         settings.get("device", "cuda"), settings.get("mixed_precision", "none"), backend
     )
@@ -562,9 +560,12 @@ def _train(settings, execution):
                 logger.debug("Validation loss reduction: algorithm denominators %s", eval_totals)
         with log_stage("Preparing execution backend"):
             wrapped, optimizer = execution.prepare(model, optimizer)
-        ema = EMAManager(model, ema_config) if ema_config.enable and execution.main else None
+        ema = (
+            EMAManager(model, ema_config)
+            if ema_config.enable and (execution.main or execution.sharded) else None
+        )
         if ema is not None:
-            if resume_state:
+            if resume_state and not execution.sharded:
                 ema.load_state_dict(resume_state["ema"])
             logger.info(
                 "Trainer EMA: %d updates; FP32 trainable parameters; copied buffers; eval=%s",
@@ -573,7 +574,7 @@ def _train(settings, execution):
             )
         if resume_state and execution.sharded:
             execution.distributed_checkpoint(
-                checkpoint_path / "distributed", wrapped, optimizer, load=True
+                checkpoint_path / "distributed", wrapped, optimizer, load=True, ema=ema
             )
         with log_stage("Starting dataloader workers"):
             iterator = iter(loader)

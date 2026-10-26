@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import torch
-from safetensors.torch import load_model, save_model
+from safetensors.torch import load_model
 
 from alohamini.policies.configuration import PolicyConfig
 
@@ -298,7 +298,7 @@ class PI05Algorithm:
     config_class = PI05TrainingConfig
     state_stats_key = "state"
     include_task = True
-    fsdp_classes = ()
+    fsdp_classes = ("GemmaRMSNorm", "Embedding")
 
     @staticmethod
     def metric_specs(config):
@@ -490,8 +490,7 @@ class PI05Algorithm:
         return options
 
     def save(self, path, model, manifest, model_state=None):
-        if model_state is not None:
-            raise ValueError("PI0.5 sharded export is not adapted yet")
+        from alohamini.learning.checkpoint import save_weights
         shutil.copyfile(Path(model.config.tokenizer_path).expanduser(), path / "tokenizer.model")
         manifest["config"]["tokenizer_path"] = "tokenizer.model"
         if model.config.fast_tokenizer_path:
@@ -504,7 +503,7 @@ class PI05Algorithm:
                     path / "fast_tokenizer" / filename,
                 )
             manifest["config"]["fast_tokenizer_path"] = "fast_tokenizer"
-        save_model(model.network, path / "model.safetensors")
+        save_weights(path / "model.safetensors", model.network, model_state, prefix="network.")
 
     def load(self, path, model):
         load_model(model.network, path / "model.safetensors", strict=True)

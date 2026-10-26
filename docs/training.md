@@ -393,7 +393,7 @@ Diffusion／FastWAM 使用 `diffusers_cosine`；
 | --- | --- |
 | 单卡 | 默认 |
 | DDP，每卡完整模型 | `--num_processes=2 --background` |
-| ACT／AM-ACT FSDP2 分片 | `--distributed_backend=fsdp2 --num_processes=2 --background` |
+| FSDP2 分片 | `--distributed_backend=fsdp2 --num_processes=2 --background` |
 
 指定显卡：`CUDA_VISIBLE_DEVICES=2,5 alohamini train --config train.json --policy.device=cuda --num_processes=2 --background`。
 所选显卡在进程内重新编号为 `cuda:0`、`cuda:1`。
@@ -406,8 +406,10 @@ DataLoader 默认使用 `spawn`；可用 `--dataloader_multiprocessing_context=f
 `--stats` 可跨训练复用统计；启动结果同步默认最多等待 3600 秒，可用 `--dataset_preparation_timeout_s` 调整。
 多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
 
-FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出分片训练状态和完整推理权重。
-当前仅 ACT／AM-ACT 支持 FSDP2；不支持 ZeRO 或张量并行。
+FSDP2 由通用训练器管理参数、梯度和优化器分片，保留模型原有的 BF16／FP32 精度与冻结设置。
+每个进程需要足够 CPU 内存构建模型；保存时同时导出分片训练状态和完整推理权重，主进程需留出完整权重的 CPU 内存。
+FSDP2 不分摊输入激活；单卡仍需容纳当前计算模块及其激活。不支持 ZeRO 或张量并行。
+FastWAM 的外置冻结 VAE／文本编码器仍在每张卡保留一份。
 
 ### 训练器 EMA
 
@@ -417,7 +419,7 @@ EMA 默认关闭，使用 `--ema.enable=true` 开启。
 
 EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
 验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
-支持单设备与 DDP，不支持 FSDP2；需额外的参数存储及评估／导出临时内存。
+支持单设备、DDP 和 FSDP2；FSDP2 的 EMA 参数按相同布局分片。评估／导出需要临时内存。
 
 ## 5. 保存与续训
 
@@ -433,7 +435,8 @@ EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；�
 | --- | --- |
 | `pretrained_model/` | 在线模型，与优化器状态对应，用于恢复训练 |
 | `ema_pretrained_model/` | 可直接部署的 EMA 模型，包含同一套预处理信息 |
-| `training_state/state.pt` 中的 `ema` | FP32 影子参数、复制的 buffer、衰减配置和更新计数 |
+| `training_state/state.pt` 中的 `ema` | 单设备／DDP 的完整 EMA 状态；FSDP2 的更新计数 |
+| `distributed/` | FSDP2 模型、优化器及完整 EMA 分片状态 |
 
 运行目录中的 `checkpoint` 指向最新在线模型，`checkpoint-ema` 指向最新 EMA 模型。
 评估或部署 EMA 时指定 `--policy.path=<运行目录>/checkpoint-ema`。
