@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from safetensors.torch import load_file, load_model, save_file, save_model
+from safetensors.torch import load_file, load_model
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 
@@ -236,6 +236,8 @@ class SpiritAlgorithm:
         return options
 
     def save(self, path, model, manifest, model_state=None):
+        from alohamini.learning.checkpoint import save_weights
+
         fields = SpiritFields(model.config)
         if fields.geometry:
             absolute = fields.geometry.feature()
@@ -292,41 +294,7 @@ class SpiritAlgorithm:
         if provenance.is_file():
             shutil.copyfile(provenance, assets / "sources.json")
         manifest["config"]["backbone_path"] = "qwen_assets"
-        if model_state is None:
-            save_model(model, path / "model.safetensors")
-        else:
-            state, aliases, owners = {}, {}, {}
-            export = {key: value.detach().cpu().contiguous() for key, value in model_state.items()}
-            # Full FSDP gathers may copy tied parameters into different storages.
-            # Their logical identities, not the gathered addresses, own aliases.
-            groups = {}
-            for name, parameter in model.named_parameters(remove_duplicate=False):
-                groups.setdefault(id(parameter), []).append(name)
-            for names in groups.values():
-                present = sorted(name for name in names if name in export)
-                if len(present) > 1:
-                    kept = present[0]
-                    for name in present[1:]:
-                        if not torch.equal(export[name], export[kept]):
-                            raise ValueError(f"Gathered tied weights disagree: {kept}, {name}")
-                        aliases[name] = kept
-                        del export[name]
-            for key, value in export.items():
-                identity = (
-                    value.untyped_storage().data_ptr(),
-                    value.storage_offset(),
-                    tuple(value.shape),
-                    value.dtype,
-                )
-                if identity in owners:
-                    aliases[key] = owners[identity]
-                else:
-                    state[key], owners[identity] = value, key
-            for name, target in aliases.items():
-                while target in aliases:
-                    target = aliases[target]
-                aliases[name] = target
-            save_file(state, path / "model.safetensors", metadata=aliases)
+        save_weights(path / "model.safetensors", model, model_state)
 
     def load(self, path, model):
         load_model(model, path / "model.safetensors", strict=True)
