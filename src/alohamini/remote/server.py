@@ -31,9 +31,9 @@ class NativeChunkPolicy:
         from alohamini.learning.checkpoint import read_checkpoint
 
         _, manifest = read_checkpoint(checkpoint)
-        if manifest["kind"] not in ("pi05", "smolvla"):
+        if manifest["kind"] not in ("pi05", "smolvla", "spirit"):
             raise ValueError(
-                "Remote inference currently supports only pi05 and smolvla checkpoints"
+                "Remote inference currently supports pi05, smolvla and spirit checkpoints"
             )
         if chunk_size is not None and (type(chunk_size) is not int or not 1 <= chunk_size <= 512):
             raise ValueError("chunk_size must be an integer in [1, 512]")

@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 ASSET_FIELDS = {
+    "spirit": ("backbone_path",),
     "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
     "smolvla": ("vlm_model_name",),
     "pi05": ("tokenizer_path", "fast_tokenizer_path"),
@@ -65,6 +66,9 @@ def checkpoint_sidecars(manifest):
         "action_feature": manifest["source_info"]["features"]["action"],
         "normalization_mapping": manifest["config"].get("normalization_mapping"),
     }
+    for key in ("field_transforms", "statistics_features"):
+        if key in manifest:
+            processor[key] = manifest[key]
     return {"config.json": config, "preprocessing.json": processor}
 
 

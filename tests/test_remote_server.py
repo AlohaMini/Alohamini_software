@@ -335,22 +335,23 @@ def test_remote_backend_rejects_non_pi05_before_loading_model(monkeypatch):
     )
     constructor = Mock(side_effect=AssertionError("Model must not load"))
     monkeypatch.setattr("alohamini.learning.policy.NativePolicy", constructor)
-    with pytest.raises(ValueError, match="only pi05"):
+    with pytest.raises(ValueError, match="pi05, smolvla and spirit"):
         NativeChunkPolicy("checkpoint")
     constructor.assert_not_called()
 
 
-def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkeypatch):
+@pytest.mark.parametrize("kind", ["pi05", "smolvla", "spirit"])
+def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkeypatch, kind):
     live = snapshot()
     policy = SimpleNamespace(
-        config=SimpleNamespace(network={"action_horizon": 5}, n_action_steps=4),
+        config=SimpleNamespace(network={"action_horizon": 5}, chunk_size=5, n_action_steps=4),
         names=state_names(live.robot_model), manifest={"cameras": ["forward"]}, fps=30,
         fixed_current=["lift_axis.height_mm"], fixed_dimensions=None,
         fixed_deployment={}, reset=Mock(), bind_robot=Mock(),
         predict_action_chunk=Mock(return_value=torch.zeros(5, 18)),
     )
     monkeypatch.setattr(
-        "alohamini.learning.checkpoint.read_checkpoint", lambda _: (None, {"kind": "pi05"})
+        "alohamini.learning.checkpoint.read_checkpoint", lambda _: (None, {"kind": kind})
     )
     monkeypatch.setattr("alohamini.learning.policy.NativePolicy", Mock(return_value=policy))
     monkeypatch.setattr(

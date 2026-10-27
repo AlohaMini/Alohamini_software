@@ -46,6 +46,10 @@ def make_processor(kind, shape):
         output_features={"action": {"type": "ACTION", "shape": (18,)}},
     )
     options = {**features, **({"crop_shape": None} if kind in ("diffusion", "cdp") else {})}
+    if kind == "spirit":
+        options.update(
+            backbone_path="unused-tokenizer-free-processor", action_representation="recorded"
+        )
     config = algorithm(kind).config_class(**options)
     stats = {}
     for key, feature in {**config.input_features, **config.output_features}.items():
@@ -54,7 +58,11 @@ def make_processor(kind, shape):
             name: torch.full(shape, value).tolist()
             for name, value in [("mean", 0.4), ("std", 0.2), ("min", -2.0), ("max", 3.0)]
         }
-    if kind == "smolvla":
+    if kind == "spirit":
+        from alohamini.policies.spirit.processor_spirit import SpiritProcessor
+
+        processor = SpiritProcessor(config, {}, "cpu")
+    elif kind == "smolvla":
         from alohamini.policies.smolvla.processor_smolvla import SmolVLAProcessor
 
         processor = SmolVLAProcessor(config, stats, Tokenizer())
@@ -102,7 +110,7 @@ def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, si
         "action": torch.ones(2, 3, 18),
         "action_is_pad": torch.tensor([[False, False, True]] * 2),
     }
-    if kind in ("smolvla", "fastwam", "pi05", "multi_task_dit"):
+    if kind in ("smolvla", "fastwam", "pi05", "multi_task_dit", "spirit"):
         extras["task"] = ["pick", "pick"]
     if kind in ("diffusion", "fastwam", "multi_task_dit"):
         extras[key + "_is_pad"] = torch.tensor([[True, False, False]] * 2)
@@ -123,7 +131,7 @@ def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, si
             assert image.min() >= -1 and image.max() <= 1
 
 
-@pytest.mark.parametrize("kind", ["smolvla", "pi05"])
+@pytest.mark.parametrize("kind", ["smolvla", "pi05", "spirit"])
 @pytest.mark.parametrize("bad", [float("nan"), -0.1, 1.1])
 def test_float_input_validation_is_not_relaxed(kind, bad):
     processor, _ = make_processor(kind, (3, 16, 16))
