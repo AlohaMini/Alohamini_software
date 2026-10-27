@@ -161,7 +161,7 @@ class AMACTAlgorithm(ACTAlgorithm):
 
     def apply_preset(self, settings):
         resolved = super().apply_preset(settings)
-        if settings.get("pretrained_path"):
+        if settings.get("pretrained_path") and not settings.get("resume"):
             _, manifest = read_checkpoint(settings["pretrained_path"])
             if "base_classification" not in manifest["config"]:
                 resolved["model"].setdefault("base_classification", False)
