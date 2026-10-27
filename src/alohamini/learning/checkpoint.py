@@ -103,6 +103,9 @@ def checkpoint_sidecars(manifest):
         "action_feature": manifest["source_info"]["features"]["action"],
         "normalization_mapping": manifest["config"].get("normalization_mapping"),
     }
+    for key in ("field_transforms", "statistics_features"):
+        if key in manifest:
+            processor[key] = manifest[key]
     return {"config.json": config, "preprocessing.json": processor}
 
 
