@@ -50,7 +50,6 @@ episode 从 0 编号。`--dataset` 指工作区中的名称，也可换成 `--ro
 
 `recompute_stats` 排除无效反馈，统计诊断保存在 `meta/stats_info.json`。
 `--operation.relative_action true --operation.chunk_size 50` 统计动作块的关节增量分布，不改写 action。
-训练归一化统计只使用训练回合；可自动计算或复用下方提前生成的统计文件。
 
 ### 修复
 
@@ -74,8 +73,6 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 
 缺少平台标定和安全记录的外部 v3 数据，训练时加 `--dataset.allow_unannotated=true`。
 有 state 时可用 `--state=recorded` 读取原向量，保留字段顺序和数值；纯视觉任务使用 `--state=none`。
-未提供的标定与单位会记为未知，不要求生成平台 sidecar。
-离线推理使用 checkpoint 保存的字段、预处理与缺失元信息声明；真机部署另按动作单位和标定检查。
 
 ### 导出与纯视觉副本
 
