@@ -10,7 +10,7 @@ from .processor_smolvla import SmolVLAProcessor, fit_statistics
 
 
 class SmolVLAAlgorithm:
-    fsdp_classes = ()
+    fsdp_classes = ("LlamaRMSNorm",)
     include_task = True
     apply_preset = staticmethod(apply_preset)
     validate_statistics = staticmethod(validate_statistics)
@@ -103,16 +103,13 @@ class SmolVLAAlgorithm:
         return options
 
     def save(self, path, model, manifest, model_state=None):
-        from safetensors.torch import save_model
-
-        if model_state is not None:
-            raise ValueError("SmolVLA sharded export is not adapted yet")
+        from alohamini.learning.checkpoint import save_weights
         assets = path / "vlm_assets"
         backbone = model.model.vlm_with_expert
         backbone.config.save_pretrained(assets)
         backbone.processor.save_pretrained(assets)
         manifest["config"].update(vlm_model_name="vlm_assets", load_vlm_weights=False)
-        save_model(model, path / "model.safetensors")
+        save_weights(path / "model.safetensors", model, model_state)
 
     def load(self, path, model):
         from safetensors.torch import load_model

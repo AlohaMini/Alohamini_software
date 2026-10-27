@@ -17,8 +17,12 @@
 import logging
 import numbers
 import os
+import socket
+import subprocess
 import threading
 import time
+from importlib.resources import files
+from pathlib import Path
 
 import numpy as np
 
@@ -32,6 +36,91 @@ ACTION = "action"
 ACTION_PREFIX = ACTION + "."
 DEPTH_METER_UNIT = "m"
 DEPTH_MILLIMETER_UNIT = "mm"
+_VIEWER_START_TIMEOUT_S = 5.0
+_VIEWER_STOP_TIMEOUT_S = 1.0
+_viewer_process: subprocess.Popen | None = None
+
+
+def _viewer_executable() -> str:
+    override = os.environ.get("RERUN_CLI_PATH")
+    executable = override or str(files("rerun_cli").joinpath("rerun"))
+    if os.name == "nt" and not executable.endswith(".exe"):
+        executable += ".exe"
+    if not Path(executable).is_file():
+        raise FileNotFoundError(f"找不到 Rerun 预览程序：{executable}")
+    return executable
+
+
+def _unused_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        return reservation.getsockname()[1]
+
+
+def _wait_for_viewer(process: subprocess.Popen, port: int) -> None:
+    deadline = time.monotonic() + _VIEWER_START_TIMEOUT_S
+    while True:
+        code = process.poll()
+        if code is not None:
+            raise RuntimeError(f"Rerun 预览启动失败，退出码：{code}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"等待 Rerun 预览启动超时：127.0.0.1:{port}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=min(0.1, remaining)):
+                code = process.poll()
+                if code is not None:
+                    raise RuntimeError(f"Rerun 预览启动失败，退出码：{code}")
+                return
+        except OSError:
+            time.sleep(min(0.02, remaining))
+
+
+def _start_local_viewer(memory_limit: str) -> str:
+    global _viewer_process
+    executable = _viewer_executable()
+    port = _unused_local_port()
+    environment = os.environ.copy()
+    environment["RERUN_APP_ONLY"] = "true"
+    environment.setdefault("RUST_LOG", "warn")
+    # Launch the native binary directly: the rerun_cli Python entry point creates
+    # another child, which would survive termination of its wrapper process.
+    _viewer_process = subprocess.Popen(
+        [
+            executable,
+            "--bind=127.0.0.1",
+            f"--port={port}",
+            f"--memory-limit={memory_limit}",
+            "--server-memory-limit=0B",
+            "--expect-data-soon",
+        ],
+        stdin=subprocess.DEVNULL,
+        env=environment,
+        start_new_session=True,
+    )
+    _wait_for_viewer(_viewer_process, port)
+    return f"rerun+http://127.0.0.1:{port}/proxy"
+
+
+def _stop_owned_viewer() -> None:
+    global _viewer_process
+    process = _viewer_process
+    if process is None:
+        return
+    if process.poll() is None:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass  # The viewer may have exited between poll and terminate.
+    try:
+        process.wait(timeout=_VIEWER_STOP_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=_VIEWER_STOP_TIMEOUT_S)
+    _viewer_process = None
 
 
 def infer_depth_unit(dtype: np.dtype | type) -> str:
@@ -61,25 +150,59 @@ def init_rerun(
 
     import rerun as rr
 
+    if _viewer_process is not None:
+        shutdown_rerun()
     log_rerun_data.blueprint = None  # Reset blueprint cache for new session
     log_rerun_data.paths = (set(), set(), set())
 
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
-    rr.init(session_name)
-    memory_limit = os.getenv("ALOHAMINI_RERUN_MEMORY_LIMIT", "10%")
-    if ip and port:
-        rr.connect_grpc(url=f"rerun+http://{ip}:{port}/proxy")
-    else:
-        rr.spawn(memory_limit=memory_limit)
+    try:
+        rr.init(session_name)
+        if ip and port:
+            url = f"rerun+http://{ip}:{port}/proxy"
+        else:
+            memory_limit = os.getenv("ALOHAMINI_RERUN_MEMORY_LIMIT", "10%")
+            url = _start_local_viewer(memory_limit)
+        rr.connect_grpc(url=url)
+    except BaseException as exc:
+        try:
+            shutdown_rerun(type(exc), exc, exc.__traceback__)
+        except BaseException as cleanup:
+            logging.warning("Rerun 初始化失败后的清理未完成：%s", cleanup)
+        raise
 
 
-def shutdown_rerun() -> None:
-    """Shuts down the Rerun SDK gracefully."""
+def shutdown_rerun(_exc_type=None, exc=None, _traceback=None) -> bool:
+    """Disconnect the SDK and reap only the viewer launched by this application."""
+    failures = []
+    try:
+        import rerun as rr
 
-    import rerun as rr
-
-    rr.rerun_shutdown()
+        rr.rerun_shutdown()
+    except BaseException as error:
+        failures.append(("Rerun SDK", error))
+    try:
+        _stop_owned_viewer()
+    except BaseException as error:
+        failures.append(("Rerun 预览进程", error))
+    if failures:
+        if exc is not None and all(isinstance(error, Exception) for _, error in failures):
+            for label, error in failures:
+                logging.warning("%s清理失败：%s", label, error)
+        else:
+            failure = next(
+                (error for _, error in failures if not isinstance(error, Exception)),
+                failures[0][1],
+            )
+            for label, error in failures:
+                if error is not failure:
+                    if hasattr(failure, "add_note"):
+                        failure.add_note(f"{label}清理失败：{error}")
+                    else:
+                        logging.warning("%s清理失败：%s", label, error)
+            raise failure
+    return False
 
 
 def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]):

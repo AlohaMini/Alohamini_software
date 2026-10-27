@@ -23,6 +23,22 @@ def tracking_rows(payload):
         current = currents.get(motor)
         current_text = "n/a" if current is None else f"{float(current):+.1f}mA"
         unit = motors.get(motor, {}).get("normalization", "command_units")
+        grip_text = ""
+        grip = safety.get("gripper_control", {}).get(motor)
+        if isinstance(grip, dict):
+            phase = grip.get("phase")
+            if phase not in ("moving", "holding", "stopped"):
+                phase = "unknown"
+            output = grip.get("output_limit_fraction")
+            output_text = (
+                f"{output:.1%}"
+                if isinstance(output, (float, int))
+                and not isinstance(output, bool)
+                and math.isfinite(output)
+                and 0 <= output <= 1
+                else "n/a"
+            )
+            grip_text = f" grip_phase={phase} output_limit={output_text}"
         rows.append(
             (
                 motor,
@@ -31,7 +47,7 @@ def tracking_rows(payload):
                 (
                     f"[TELEOP TRACKING][{motor}] target={target:.2f} command={command:.2f} "
                     f"measured={measured:.2f} gap={command - measured:+.2f} "
-                    f"unit={unit} current={current_text}"
+                    f"unit={unit} current={current_text}{grip_text}"
                 ),
             )
         )
@@ -64,9 +80,13 @@ class TeleopMonitor:
         if fresh and permitted and not self._sent:
             state = "waiting_send"
         holds = len(safety.get("joint_holds", {})) if fresh else "n/a"
+        grip_holds = ""
+        if "gripper_holds" in safety:
+            count = len(safety["gripper_holds"]) if fresh else "n/a"
+            grip_holds = f" gripper_holds={count}"
         print(
             f"[TELEOP] loop_hz={self._cycles / elapsed:.1f} sent_hz={self._sent / elapsed:.1f} "
-            f"state={state} joint_holds={holds}",
+            f"state={state} joint_holds={holds}{grip_holds}",
             flush=True,
         )
         if fresh:

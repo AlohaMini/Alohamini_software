@@ -27,7 +27,7 @@ def test_float32_constant_has_no_artificial_variance():
     np.testing.assert_array_equal(stats.get_statistics()["std"], np.zeros(3))
 
 
-def processor():
+def processor(**kwargs):
     from alohamini.policies.pi05.processor_pi05 import PI05Processor
 
     class Tokenizer:
@@ -36,7 +36,7 @@ def processor():
             return np.array([2, 3]), np.array([True, True])
 
     stats = {key: {"q01": [-2.0] * 18, "q99": [3.0] * 18} for key in ("state", "actions")}
-    return PI05Processor(stats, Tokenizer())
+    return PI05Processor(stats, Tokenizer(), **kwargs)
 
 
 def test_quantile_formula_and_differentiable_inverse():
@@ -70,7 +70,7 @@ def test_explicit_physical_span_floor_is_reversible():
         PI05Processor(stats, original.tokenizer, span_floors={"state": [0.1]})
 
 
-def test_delta_targets_and_black_masked_camera():
+def test_delta_targets_and_selected_camera():
     from alohamini.policies.pi05.processor_pi05 import ARM_DELTA_DIMS, relative_actions
 
     p = processor()
@@ -84,11 +84,40 @@ def test_delta_targets_and_black_masked_camera():
     np.testing.assert_array_equal(
         delta[:, [6, 13, 14, 15, 16, 17]], actions[:, [6, 13, 14, 15, 16, 17]]
     )
-    assert obs.images["base_0_rgb"].shape == (1, 3, 224, 224)
-    assert not obs.image_masks["left_wrist_0_rgb"].any()
+    assert list(obs.images) == ["forward"]
+    assert obs.images["forward"].shape == (1, 3, 224, 224)
+    assert obs.image_masks["forward"].all()
     assert targets.shape == (1, 2, 32)
     assert not targets[..., 18:].any()
     np.testing.assert_allclose(p.restore_actions(targets, state)[0], actions, atol=1e-5)
+
+
+@pytest.mark.parametrize("cameras", [("chest",), ("wrist_right", "wrist_left"),
+                                     ("forward", "wrist_left", "wrist_right", "chest")])
+def test_processor_uses_selected_cameras_and_preserves_saved_order(cameras):
+    from alohamini.policies.pi05.preprocessing_pytorch import preprocess_observation_pytorch
+
+    p = processor(cameras=cameras)
+    images = {name: np.full((32, 32, 3), 20 + i * 50, np.uint8)
+              for i, name in enumerate(cameras)}
+    obs, _ = p.prepare(np.zeros(18), dict(reversed(list(images.items()))), "pick")
+    processed = preprocess_observation_pytorch(obs)
+    assert tuple(processed.images) == cameras
+    for i, name in enumerate(cameras):
+        torch.testing.assert_close(
+            processed.images[name], torch.full((1, 3, 224, 224), (20 + i * 50) / 127.5 - 1)
+        )
+        assert processed.image_masks[name].all()
+    with pytest.raises(ValueError, match="camera"):
+        p.prepare(np.zeros(18), {**images, "unexpected": images[cameras[0]]}, "pick")
+    with pytest.raises(ValueError, match="camera"):
+        p.prepare(np.zeros(18), {k: v for k, v in images.items() if k != cameras[-1]}, "pick")
+
+
+def test_processor_infers_all_camera_names_for_direct_api():
+    images = {name: np.zeros((24, 32, 3), np.uint8) for name in ("overhead", "side")}
+    obs, _ = processor().prepare(np.zeros(18), images, "pick")
+    assert tuple(obs.images) == tuple(images)
 
 
 def test_official_model_small_forward_and_sampling(monkeypatch):
@@ -134,6 +163,7 @@ def test_official_model_small_forward_and_sampling(monkeypatch):
     wrapper = PI05TrainModel.__new__(PI05TrainModel)
     torch.nn.Module.__init__(wrapper)
     wrapper.network = model
+    wrapper.config = SimpleNamespace(training_recipe="flow", flow_loss_weight=1.0)
     torch.manual_seed(71)
     expected = model(obs, actions).mean()
     torch.manual_seed(71)
@@ -178,3 +208,100 @@ def test_policy_queue_and_reset():
     policy.reset()
     policy.select_action(*args)
     assert model.calls == 3
+
+
+@pytest.mark.parametrize("cameras", [("forward",),
+                                     ("wrist_right", "chest", "wrist_left", "forward")])
+def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(
+    tmp_path, monkeypatch, cameras
+):
+    from contextlib import closing
+
+    from test_dataset import frame, jpeg
+    from test_recording_storage import metadata
+
+    from alohamini.datasets.record import LocalDataset, state_names
+    from alohamini.learning.data import AlohaMiniDataset
+    from alohamini.learning.evaluate import evaluate_checkpoint
+    from alohamini.learning.policy import NativePolicy, save_checkpoint
+    from alohamini.learning.statistics import sample_arguments, training_statistics
+    from alohamini.policies.pi05 import adapter, modeling_pi05, tokenizer
+    from alohamini.policies.pi05.adapter import PI05Algorithm
+
+    root = tmp_path / "recording"
+    targets = {"x.vel": 0, "y.vel": 0, "theta.vel": 0, "lift_axis.height_mm": 292}
+    with closing(
+        LocalDataset(
+            root, fps=30, task="pick", robot_metadata=metadata(cameras),
+            fixed_dimensions={"version": 1, "source": "test", "targets": targets},
+        )
+    ) as writer:
+        writer.begin_episode()
+        for index in range(3):
+            row = frame(writer)
+            row["observation.state"][:14] = index
+            row["action"][:14] = index + 1
+            for key in ("observation.state", "action"):
+                row[key][14:] = [0, 0, 0, 292]
+            writer.add_frame(row, dict.fromkeys(cameras, jpeg()),
+                             {"safety": {"feedback_valid": True}})
+        writer.save_episode()
+
+    # Other algorithms retain the existing fixed-state exclusion default.
+    ordinary = AlohaMiniDataset(root, episodes=[0], cameras=["forward"])
+    assert ordinary.selection.feature["shape"] == [14]
+
+    component = PI05Algorithm()
+    asset = tmp_path / "tokenizer.model"
+    asset.write_bytes(b"test tokenizer")
+    options = {"network": {"action_horizon": 2}, "n_action_steps": 1, "tokenizer_path": str(asset)}
+    cfg = component.apply_preset({"dataset": str(root), "train_episodes": [0]})
+    args, episodes, _ = sample_arguments(cfg, component, options)
+    samples = AlohaMiniDataset(**args, episodes=episodes)
+    assert tuple(samples.cameras) == cameras
+    names = state_names("alohamini2pro")
+    assert samples.selection.feature["names"] == names
+    assert samples[0]["observation.state"].shape == (18,)
+    assert samples[0]["observation.state"][17] == 292
+    options.update(input_features=samples.input_features, output_features=samples.output_features)
+    stats = training_statistics(component, samples, options, "pi05")["stats"]
+    assert stats["state"]["q01"][17] == 292
+
+    # Exercise the real processor/checkpoint path without a full VLM or downloads.
+    class TinyNetwork(torch.nn.Linear):
+        def __init__(self, config):
+            super().__init__(18, 32)
+            self.config = config
+
+        def gradient_checkpointing_enable(self):
+            pass
+
+        def sample_actions(self, device, observation, num_steps):
+            return torch.zeros(len(observation.state), self.config.action_horizon, 32, device=device)
+
+    monkeypatch.setattr(modeling_pi05, "PI0Pytorch", TinyNetwork)
+    monkeypatch.setattr(adapter, "configure_finetuning", lambda *args: {})
+    monkeypatch.setattr(tokenizer, "PaligemmaTokenizer", lambda *args: processor().tokenizer)
+    model = component.build(options, stats)
+    path = tmp_path / "checkpoint"
+    save_checkpoint(path, model, stats, samples, training={})
+    loaded = NativePolicy(path, offline=True)
+    assert tuple(loaded.manifest["config"]["camera_order"]) == cameras
+    assert loaded.config.camera_order == cameras
+    assert loaded.manifest["fixed_state_excluded"] is False
+    assert loaded.selection.feature["names"] == names
+    assert loaded.fixed_state_references == {14: 0, 15: 0, 16: 0, 17: 292}
+    raw = {
+        "observation.state": samples[0]["observation.state"][None],
+        **{f"observation.images.{c}": samples[0][f"observation.images.{c}"][None]
+           for c in reversed(cameras)},
+        "task": ["pick"],
+    }
+    raw["observation.state"][0, 17] = 300
+    prepared = loaded.processor(loaded.fixed_input(raw))
+    assert tuple(prepared["observation"].images) == cameras
+    assert raw["observation.state"][0, 17] == 300
+    assert prepared["_action_context"][0, 17] == 292
+    assert prepared["observation"].state.shape == (1, 32)
+    report = evaluate_checkpoint(path, root, episodes=[0], batch_size=2)
+    assert report["samples"] == 3

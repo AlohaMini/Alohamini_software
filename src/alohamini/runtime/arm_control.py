@@ -8,7 +8,7 @@ from alohamini._validation import identifier
 from alohamini.calibration import EncoderCalibration
 from alohamini.hardware.feedback import FeedbackBatch
 from alohamini.model import ActuatorSpec
-from alohamini.runtime.arm_contact import ArmContactGuard, ArmJointSpec
+from alohamini.runtime.arm_contact import ArmContactGuard, ArmJointSpec, GripperContactCalibration
 
 
 class ArmDevice(Protocol):
@@ -21,6 +21,10 @@ class ArmDevice(Protocol):
     def write_targets(
         self, *, positions_rad: Mapping[str, float], velocities_raw: Mapping[str, int]
     ) -> None: ...
+
+    def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]: ...
+
+    def ensure_position_targets(self, positions_rad: Mapping[str, float]) -> None: ...
 
 
 class ArmController:
@@ -54,6 +58,7 @@ class ArmController:
         self._session: str | None = None
         self._positions: dict[str, float] = {}
         self._currents: dict[str, float] = {}
+        self._feedback_times_s: dict[str, float] = {}
         self._targets: dict[str, float] = {}
         self._sent: dict[str, float] = {}
         self._new_command = False
@@ -87,6 +92,19 @@ class ArmController:
     def joint_stall_currents_a(self) -> dict[str, float]:
         return self._guard.joint_stall_currents_a
 
+    @property
+    def initial_output_limits(self) -> dict[str, float]:
+        """Free-motion ceilings at startup, bounded by persistent device settings."""
+        return {
+            name: self._guard.gripper_hold.motion_output_fraction
+            for name, spec in self._joints.items()
+            if isinstance(spec.contact, GripperContactCalibration)
+        }
+
+    @property
+    def gripper_status(self) -> dict[str, dict]:
+        return self._guard.gripper_status
+
     def bind_session(self, host_session_id: str) -> None:
         identifier(host_session_id, "host_session_id")
         if self._session is not None:
@@ -95,10 +113,12 @@ class ArmController:
 
     def clear_targets(self) -> None:
         """Cancel motion on stop; preserve contact holds until explicit retreat."""
+        self._guard.stop_holds(self._positions)
         self._targets.clear()
         self._sent.clear()
         self._positions.clear()
         self._currents.clear()
+        self._feedback_times_s.clear()
         self._new_command = False
         self._fresh = False
         self._guard.cancel_candidates()
@@ -107,12 +127,13 @@ class ArmController:
         self._fresh = False
         self._positions.clear()
         self._currents.clear()
+        self._feedback_times_s.clear()
         if self._session is None:
             raise RuntimeError("Arm controller has no Host session")
         sources = [batch.source_id for batch in batches]
         if len(set(sources)) != len(sources) or not self._groups.keys() <= set(sources):
             raise ValueError("Missing or duplicated arm feedback bus")
-        positions, currents = {}, {}
+        positions, currents, feedback_times = {}, {}, {}
         for batch in batches:
             if batch.source_id not in self._groups:
                 continue
@@ -142,7 +163,9 @@ class ArmController:
                     sample.registers["position_raw"]
                 )
                 currents[name] = sample.current_a
+                feedback_times[name] = batch.received_s
         self._positions, self._currents = positions, currents
+        self._feedback_times_s = feedback_times
         self._fresh = True
 
     def validate_targets(self, positions_rad: Mapping[str, float]) -> None:
@@ -178,12 +201,32 @@ class ArmController:
             raise RuntimeError("Arm supervision requires a new feedback batch")
         self._fresh = False
         limited = self._guard.limit(
-            self._targets, self._positions, self._currents, now=time.monotonic()
+            self._targets,
+            self._positions,
+            self._currents,
+            now=time.monotonic(),
+            feedback_times_s=self._feedback_times_s,
         )
         # Check both arms before either bus is written. A hold outside calibrated
         # target bounds faults the Host; its stop backend can hold actual raw position.
         for name, position in limited.items():
             self._joints[name].calibration.validate_position(position)
+        output_limits = self._guard.output_limits
+        # A previous low-output opening SyncWrite may have been lost. Confirm
+        # the currently intended target under that low cap before raising it.
+        restorations = self._guard.motion_output_restorations
+        for source, group in self._groups.items():
+            positions = {name: limited[name] for name in restorations if name in group}
+            if positions:
+                self._devices[source].ensure_position_targets(positions)
+        # In particular, reduce both gripper caps before sending contact preload.
+        for source, group in self._groups.items():
+            requested = {name: value for name, value in output_limits.items() if name in group}
+            if requested:
+                applied = self._devices[source].write_output_limits(requested)
+                if applied.keys() != requested.keys():
+                    raise RuntimeError("Device did not confirm every gripper output limit")
+                self._guard.confirm_output_limits(applied)
         for source, group in self._groups.items():
             changed = {
                 name: position

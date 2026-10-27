@@ -206,12 +206,14 @@ alohamini record \
 | 按键 | 操作 |
 | --- | --- |
 | 右方向键 | 提前结束当前阶段 |
-| `R` / 左方向键 | 重录当前 episode |
+| `R` / 左方向键 | 删除当前 episode 的临时数据并重录 |
 | Esc、`q`、Ctrl+C | 结束数采 |
 
 复位阶段可继续遥操，但不记录数据。退出时尝试保存已采到的有效帧。
 
 数据默认保存到 `~/Alohamini_workspace/datasets/pickup_01/`。自定义位置用 `--root`；继续已有数据集用 `--resume`，型号、标定、相机、任务和帧率须一致。
+
+完整内容检查使用 `dataset check --decode-videos`。
 
 任务需要固定部分关节时，先遥操摆好位置，退出遥操，再在上述采集命令后追加：
 
@@ -249,7 +251,8 @@ alohamini dataset recover ~/Alohamini_workspace/datasets/pickup_01 \
   --output ~/Alohamini_workspace/datasets/pickup_01_recovered
 ```
 
-仅恢复完整帧，不修改原数据。不要手动删除 `*.pending/`；重录前的数据保留在 `discarded/`。
+仅恢复完整帧，不修改原数据。异常中断留下的 `*.pending/` 用于恢复，不要手动删除。
+按 `R` 或左方向键重录会删除当前回合的临时图片和日志。
 
 AlohaMini 或 LeRobot v3 数据的索引、媒体引用异常时，修复到新目录：
 
@@ -287,11 +290,7 @@ alohamini replay --dataset pickup_01 \
 
 支持 AlohaMini 数据集及其 LeRobot v3 导出；自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。
 
-回放评估数据时应保留完整元数据与 safety 文件。记录的提交动作不等于机器人实际执行轨迹。
-
-默认按数据集帧率回放；`--fps` 覆盖帧率，`--speed` 调整倍率。它们不缩放底盘速度值，包含底盘运动时应保持原帧率。Ctrl+C、关节保护、反馈中断或控制权变化会终止回放，并尝试保持当前位置、停止底盘。
-
-回放按绝对时间推进并跳过过期动作。短暂超时会重试，持续失联达到看门狗时限时停止；结束显示跳过行数和超时次数。低频或跳帧可能漏掉关键动作，无法保证底盘路径精确复现。
+默认按数据集帧率回放；`--fps` 覆盖帧率，`--speed` 调整倍率。低频或跳帧可能漏掉关键动作，无法保证底盘路径精确复现。
 
 ## 8. 工作文件
 

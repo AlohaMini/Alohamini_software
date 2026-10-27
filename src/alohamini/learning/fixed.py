@@ -143,7 +143,9 @@ def configure(policy, selection=None, dataset=None, current=None):
     policy.fixed_state_references = {}
     fixed_names = set(targets) | set(policy.fixed_current)
     if fixed_names and policy.selection:
-        stats = manifest["stats"].get("observation.state", {})
+        component = getattr(policy, "algorithm", None)
+        state_key = getattr(component, "state_stats_key", "observation.state")
+        stats = manifest["stats"].get(state_key, {})
         means = stats.get("mean")
         for j, name in enumerate(policy.selection.feature["names"]):
             joint = name.rsplit(".", 1)[0] + ".pos"

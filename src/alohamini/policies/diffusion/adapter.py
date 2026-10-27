@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 import numpy as np
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import (
@@ -17,7 +17,7 @@ from alohamini.learning.processor import (
 
 class DiffusionAlgorithm:
     include_task = False
-    fsdp_classes = ()  # Diffusion FSDP2 boundaries are not adapted yet.
+    fsdp_classes = ("DiffusionConditionalResidualBlock1d", "BasicBlock", "Bottleneck")
 
     @staticmethod
     def metric_specs(config):
@@ -168,10 +168,9 @@ class DiffusionAlgorithm:
         return options
 
     def save(self, path, model, manifest, model_state=None):
-        state = model.state_dict() if model_state is None else model_state
-        save_file(
-            {k: v.detach().cpu().contiguous() for k, v in state.items()}, path / "model.safetensors"
-        )
+        from alohamini.learning.checkpoint import save_weights
+
+        save_weights(path / "model.safetensors", model, model_state)
 
     def load(self, path, model):
         model.load_state_dict(load_file(path / "model.safetensors"), strict=True)

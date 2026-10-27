@@ -132,7 +132,7 @@ class SmolVLAConfig:
         if self.n_obs_steps != 1 or not self.use_cache:
             raise ValueError("SmolVLA requires one observation and prefix KV caching")
         if self.rtc_config is not None:
-            raise ValueError("RTC is not supported by the SmolVLA executor")
+            raise ValueError("Configure RTC at deployment with --rtc, not policy.rtc_config")
         if self.adapt_to_pi_aloha:
             raise ValueError("Trossen ALOHA transforms do not describe AlohaMini coordinates")
         if self.empty_cameras != 0:

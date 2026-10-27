@@ -21,12 +21,23 @@ from alohamini.runtime.arm_contact import ArmJointSpec
 from alohamini.runtime.arm_control import ArmController
 from alohamini.runtime.base_lift_control import BaseLiftController
 from alohamini.runtime.camera_stream import CameraStreamPublisher
-from alohamini.runtime.lifecycle import CycleResult, HostPhase, HostSupervisor
+from alohamini.runtime.lifecycle import CycleResult, HostPhase, HostStatus, HostSupervisor
 from alohamini.runtime.lift_control import LiftAxisSpec
 from alohamini.runtime.robot_control import RobotController
 from alohamini.schema import BodyVelocity, RobotCommand
 
 logger = logging.getLogger(__name__)
+
+
+def _fault_message(status: HostStatus) -> str | None:
+    trip = status.current_trip
+    if trip is None:
+        return status.fault
+    reason = status.fault or f"{trip.cause}: {trip.motor}"
+    return (
+        f"{reason}; current={trip.current_a:.3f} A; threshold={trip.limit_a:.3f} A; "
+        f"duration>={trip.duration_s:.3f} s"
+    )
 
 
 class RecordingCameraBuffer:
@@ -190,11 +201,28 @@ class NativeHost:
         self._pending_responses = deque()
         self._sequence = 0
         self.timing_ms: dict[str, float] = {}
+        # Report the profiles owned by the buses, including the slower grippers.
+        # The legacy summary is scoped to ordinary arm joints; per-motor values
+        # remain authoritative when a caller configures different joint profiles.
+        profiles = {
+            name: device.position_profiles[name] for name, device in self._arm_buses.items()
+        }
+        arm_profiles = {
+            profile for name, profile in profiles.items() if not name.endswith("_gripper")
+        }
+        arm_profile = {
+            "motor_names": [name for name in profiles if not name.endswith("_gripper")]
+        }
+        if len(arm_profiles) == 1:
+            profile = next(iter(arm_profiles))
+            arm_profile.update(
+                arm_goal_velocity=profile.goal_velocity, arm_acceleration=profile.acceleration
+            )
         self._metadata = {
             "schema_version": 1,
             "robot_model": model.model_id,
             "cameras": list(self._cameras),
-            "arm_profile": {"arm_goal_velocity": 2000, "arm_acceleration": 100},
+            "arm_profile": arm_profile,
             "lift_axis": {
                 "soft_min_mm": 0.0,
                 "soft_max_mm": 600.0,
@@ -238,6 +266,8 @@ class NativeHost:
                     **asdict(units),
                     "homing_offset": calibration.homing_offset,
                 }
+        for name, profile in profiles.items():
+            self._metadata["motors"][name]["motion_profile"] = asdict(profile)
         self._target_source = "startup"
 
     def _check_thread(self) -> None:
@@ -497,7 +527,8 @@ class NativeHost:
                 "version": 1,
                 "sampled_at_monotonic_s": time.monotonic(),
                 "phase": status.phase.value,
-                "fault": status.fault,
+                "fault": _fault_message(status),
+                "current_trip": asdict(status.current_trip) if status.current_trip else None,
                 "feedback_valid": feedback_valid,
                 "host_session_id": status.host_session_id,
                 "control_epoch": status.control_epoch,
@@ -516,6 +547,7 @@ class NativeHost:
                 "gripper_holds": {
                     name: value for name, value in holds.items() if name.endswith("gripper")
                 },
+                "gripper_control": self.control.arms.gripper_status,
                 "joint_hold_events": self.control.arms.joint_hold_events,
                 "joint_stall_currents_a": self.control.arms.joint_stall_currents_a,
                 "currents_ma": currents,
@@ -741,7 +773,7 @@ class NativeHost:
                 loop_start_t = time.perf_counter()
                 result = self.step()
                 if result.status.phase is HostPhase.FAULT:
-                    raise RuntimeError(result.status.fault)
+                    raise RuntimeError(_fault_message(result.status))
                 phase = self.control.base_lift.lift_homing_phase
                 if phase != homing_phase:
                     if phase == "complete":

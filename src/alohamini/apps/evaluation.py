@@ -331,6 +331,9 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
             inference_started = time.monotonic()
             # Preserve the exact input for recording even if a policy mutates its argument.
             value = policy.select_action(deepcopy(observation))
+            if value is None and getattr(policy, "asynchronous", False) is True:
+                time.sleep(max(0, min(loop_started + 1 / fps, deadline) - time.monotonic()))
+                continue
             selected += 1
             inference_finished = time.monotonic()
             if time.monotonic() >= deadline:
@@ -395,6 +398,10 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                         "action_semantics": HOST_REQUEST_SEMANTICS,
                         **({"fixed_dimensions": fixed_config} if fixed_targets else {}),
                         "policy_action": {name: float(value[name]) for name in names},
+                        **(
+                            {"rtc_timing": deepcopy(policy.rtc_timing)}
+                            if isinstance(getattr(policy, "rtc_timing", None), dict) else {}
+                        ),
                         "issued_command": asdict(identity),
                         "host_timing": timing,
                         "client_timing": {
@@ -416,6 +423,8 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
         return commands
     finally:
         stop_owned_robot(client, robot_model, identity)
+        if getattr(policy, "asynchronous", False) is True:
+            policy.reset()
 
 
 def evaluate(
@@ -459,6 +468,8 @@ def evaluate(
     if not isinstance(fixed_config, Mapping):
         fixed_config = None
     with ExitStack() as cleanup:
+        if getattr(policy, "asynchronous", False) is True:
+            cleanup.callback(policy.close)
         client = cleanup.enter_context(
             HostClient(
                 host,

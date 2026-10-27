@@ -246,6 +246,20 @@ def test_rank_sampler_resume_ignores_prefetch(size, drop):
         assert list(resumed) == second
 
 
+@pytest.mark.parametrize("world_size", [2, 8])
+def test_rank_sampler_partitions_each_epoch_and_only_pads_tail(world_size):
+    samplers = [RankBatchSampler(35, 2, 1000, rank, world_size) for rank in range(world_size)]
+    orders = []
+    for _ in range(2):
+        ranks = [list(sampler) for sampler in samplers]
+        assert len({len(batches) for batches in ranks}) == 1
+        order = [item for step in zip(*ranks, strict=True) for batch in step for item in batch]
+        assert sorted(order[:35]) == list(range(35))
+        assert order[35:] == order[: len(order) - 35]
+        orders.append(order[:35])
+    assert orders[0] != orders[1]
+
+
 def test_exact_stats_constant_sparse_and_small_variance():
     values = np.column_stack(
         [np.full(1000, 1234.1), 1e8 + np.linspace(0, 0.001, 1000), np.r_[np.zeros(999), 1]]
@@ -331,6 +345,18 @@ def test_explicit_loss_weights_ignore_accelerate_accumulation_env(monkeypatch):
     runtime = Execution("cpu")
     assert runtime.accelerator.gradient_accumulation_steps == 1
     assert not runtime.accelerator.gradient_state.sync_with_dataloader
+    runtime.close()
+
+
+def test_single_process_preparation_without_collectives(monkeypatch):
+    import torch.distributed as dist
+
+    runtime = Execution("cpu")
+    monkeypatch.setattr(dist, "new_group", lambda **kw: pytest.fail("Unexpected group"))
+    assert runtime.main_process_call(lambda: {"value": 1}, label="Test") == {"value": 1}
+    for invalid in (0, -1, True, 0.5):
+        with pytest.raises(ValueError, match="positive integer"):
+            runtime.main_process_call(lambda: None, label="Test", timeout_s=invalid)
     runtime.close()
 
 

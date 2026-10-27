@@ -50,7 +50,6 @@ episode 从 0 编号。`--dataset` 指工作区中的名称，也可换成 `--ro
 
 `recompute_stats` 排除无效反馈，统计诊断保存在 `meta/stats_info.json`。
 `--operation.relative_action true --operation.chunk_size 50` 统计动作块的关节增量分布，不改写 action。
-训练归一化统计只使用训练回合；可自动计算或复用下方提前生成的统计文件。
 
 ### 修复
 
@@ -74,8 +73,6 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 
 缺少平台标定和安全记录的外部 v3 数据，训练时加 `--dataset.allow_unannotated=true`。
 有 state 时可用 `--state=recorded` 读取原向量，保留字段顺序和数值；纯视觉任务使用 `--state=none`。
-未提供的标定与单位会记为未知，不要求生成平台 sidecar。
-离线推理使用 checkpoint 保存的字段、预处理与缺失元信息声明；真机部署另按动作单位和标定检查。
 
 ### 导出与纯视觉副本
 
@@ -303,7 +300,7 @@ python -m alohamini.learning.train \
 自动预设 `smolvla-realworld-alohamini-v1`：位置 state、任务文本、512×512 等比例补边、
 50 步动作块、10 步流匹配采样、冻结 VLM、BF16、AdamW 与 warmup/cosine。
 训练步数默认 200000；来源及覆盖参数保存在 `paper_preset` 和训练配置中。
-checkpoint 自带 tokenizer 和骨干配置。此入口不支持纯视觉、RTC、PEFT 或 ACT 时间融合。
+checkpoint 自带 tokenizer 和骨干配置。不支持纯视觉、PEFT 或 ACT 时间融合。
 
 ### π0.5
 
@@ -324,8 +321,59 @@ python -m alohamini.learning.train \
 
 自动预设 `openpi-pi05-alohamini-v1`：位置 state、任务文本、224×224 等比例补边、
 50 步动作块、q01/q99 归一化、AdamW 与 warmup/cosine。
+相机自动采用数据集声明的视角，可用 `--cameras` 选择子集；至少选择一路，名称沿用数据集。
+相机顺序自动保存到 checkpoint；推理须提供训练时选定的全部视角。
+state 保留完整 18 维原始位置、底盘速度和升降高度，包括数据集中声明的固定维度。
 双臂各 6 个关节预测相对当前 state 的增量，执行前还原为绝对目标；夹爪、底盘速度、升降高度保持原义。
 网络参数用 `--policy.network='{"action_horizon":30}'` 覆盖；checkpoint 自带 tokenizer。
+
+先选择训练方案，再选择参数更新方式：
+
+- `--policy.training_recipe=flow`（默认）：OpenPI 公开的流匹配微调，保留动作损失到 VLM 的梯度。
+- `--policy.training_recipe=ki`：FAST 交叉熵与流匹配联合训练；逐层隔离动作专家到 VLM 的 K/V 梯度，两种动作分支互不可见。推理仍使用连续动作专家。
+
+| `--policy.finetuning_mode` | 视觉编码器及投影 | LLM | 动作专家 Transformer |
+| --- | --- | --- | --- |
+| `a` | 冻结；`--policy.a_vision_mode=full` 可全量训练 | LoRA | LoRA |
+| `b` | 冻结 | 冻结 | 全量 |
+| `c` | 全量 | LoRA | 全量 |
+| `d` | LoRA | LoRA | 全量 |
+| `full`（默认） | 全量 | 全量 | 全量 |
+
+四份配置见 [`examples/learning/pi05/`](../examples/learning/pi05/)。`ki + b` 不支持：冻结整个 VLM 不属于双目标 KI。
+LoRA 作用于注意力和 MLP 投影；D 还包含视觉投影。动作输入/输出及时间 MLP 全量训练。
+LLM/视觉默认 rank=16、alpha=16；动作专家 rank=32、alpha=32，分别用 `lora_rank/lora_alpha`、`expert_lora_rank/expert_lora_alpha` 覆盖。
+这些微调组合是平台配置，不是官方发布的四组实验。
+
+下载小型 tokenizer 资源（不包含完整基座）：
+
+```bash
+python -m alohamini.policies.pi05.assets
+python -m alohamini.learning.train \
+  --config=examples/learning/pi05/a.json \
+  --policy.training_recipe=ki --policy.a_vision_mode=frozen \
+  --policy.path=/path/to/pi05_pytorch \
+  --dataset.root=/path/to/dataset --dataset.eval_episodes='[1]' \
+  --run_name=pi05_ki_a --background
+```
+
+资源默认位于工作区 `pretrained/pi05_tokenizers/`；KI 的 FAST 默认读取其中的 `fast/`，可用 `--policy.fast_tokenizer_path` 覆盖。
+FAST 编码补零前的 18 维归一化动作，沿用 π0.5 的 task/state/Action 提示词；目标超出 `--policy.fast_max_tokens=256` 时须增大上限，不截断动作。
+KI checkpoint 包含完整网络、LoRA、两种 tokenizer 和训练方案；推理不需要原始基座目录。续训不允许更换方案或微调方式。
+
+默认采用公开 OpenPI 的 BF16 主干并保留部分 FP32 模块（平台 `mixed_precision=none`）、完整梯度检查点、30000 步、AdamW `2.5e-5`、betas `(0.9,0.95)`、weight decay `1e-10`、梯度裁剪 `1`、1000 步预热及余弦衰减至 `2.5e-6`；每 100 步日志、1000 步保存。EMA 默认关闭。
+示例使用 batch=1、累积 32 次，单卡有效 batch=32。可关闭 `--policy.gradient_checkpointing=false`；`network.pytorch_compile_mode` 默认 `max-autotune`，只编译采样，首次推理较慢，设为 `null` 可关闭。
+
+KI 可通过 `--policy.vlm_data_path=/path/to/train.jsonl` 混入图文或规划数据，每个机器人样本配一个独立抽样的 VLM 样本：
+
+```json
+{"images":{"forward":"images/001.jpg"},"prompt":"下一步做什么？","answer":"抓起红色方块。"}
+```
+
+图像路径相对 JSONL，相机集合从清单自动读取，缺少的视角用 mask 屏蔽；只对 answer 计算语言损失，不计算动作损失。
+默认三项损失权重均为 1；`flow_loss_weight/fast_loss_weight/vlm_loss_weight` 可覆盖。token 损失先按每条样本有效 token 平均，再按样本平均。
+联合数据仅用于训练，保存清单 SHA256 并在续训时核验；无该数据时运行机器人数据 KI。官方通用预训练数据混合未复现。
+方法见 [KI 论文 §5](https://www.pi.website/download/pi05_KI.pdf)；训练默认值见 [OpenPI](https://github.com/Physical-Intelligence/openpi/tree/15a9616a00943ada6c20a0f158e3adb39df2ccac)。
 
 SmolVLA／π0.5 的完整基座须按可用显存调整 batch 和精度。
 
@@ -383,14 +431,23 @@ Diffusion／FastWAM 使用 `diffusers_cosine`；
 | --- | --- |
 | 单卡 | 默认 |
 | DDP，每卡完整模型 | `--num_processes=2 --background` |
-| ACT／AM-ACT FSDP2 分片 | `--distributed_backend=fsdp2 --num_processes=2 --background` |
+| FSDP2 分片 | `--distributed_backend=fsdp2 --num_processes=2 --background` |
+
+指定显卡：`CUDA_VISIBLE_DEVICES=2,5 alohamini train --config train.json --policy.device=cuda --num_processes=2 --background`。
+所选显卡在进程内重新编号为 `cuda:0`、`cuda:1`。
 
 有效 batch 通常为 `batch_size × 进程数 × 累积次数`；`steps` 按成功的优化器更新计数。
 多进程尾批默认重复样本补齐，`--drop_last=true` 改为丢弃。
+`num_workers`、`prefetch_factor` 和视频缓存按进程生效，多卡时需合计 CPU 内存与解码负载。
+DataLoader 默认使用 `spawn`；可用 `--dataloader_multiprocessing_context=forkserver` 切换。
+多卡启动时，rank 0 检查数据并计算或加载归一化统计，其他 rank 校验后复用；文件变化时重新检查。
+`--stats` 可跨训练复用统计；启动结果同步默认最多等待 3600 秒，可用 `--dataset_preparation_timeout_s` 调整。
 多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
 
-FSDP2 需要每个进程有足够 CPU 内存构建模型，保存时同时导出分片训练状态和完整推理权重。
-当前仅 ACT／AM-ACT 支持 FSDP2；不支持 ZeRO 或张量并行。
+FSDP2 由通用训练器管理参数、梯度和优化器分片，保留模型原有的 BF16／FP32 精度与冻结设置。
+每个进程需要足够 CPU 内存构建模型；保存时同时导出分片训练状态和完整推理权重，主进程需留出完整权重的 CPU 内存。
+FSDP2 不分摊输入激活；单卡仍需容纳当前计算模块及其激活。不支持 ZeRO 或张量并行。
+FastWAM 的外置冻结 VAE／文本编码器仍在每张卡保留一份。
 
 ### 训练器 EMA
 
@@ -400,7 +457,7 @@ EMA 默认关闭，使用 `--ema.enable=true` 开启。
 
 EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
 验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
-支持单设备与 DDP，不支持 FSDP2；需额外的参数存储及评估／导出临时内存。
+支持单设备、DDP 和 FSDP2；FSDP2 的 EMA 参数按相同布局分片。评估／导出需要临时内存。
 
 ## 5. 保存与续训
 
@@ -416,7 +473,8 @@ EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；�
 | --- | --- |
 | `pretrained_model/` | 在线模型，与优化器状态对应，用于恢复训练 |
 | `ema_pretrained_model/` | 可直接部署的 EMA 模型，包含同一套预处理信息 |
-| `training_state/state.pt` 中的 `ema` | FP32 影子参数、复制的 buffer、衰减配置和更新计数 |
+| `training_state/state.pt` 中的 `ema` | 单设备／DDP 的完整 EMA 状态；FSDP2 的更新计数 |
+| `distributed/` | FSDP2 模型、优化器及完整 EMA 分片状态 |
 
 运行目录中的 `checkpoint` 指向最新在线模型，`checkpoint-ema` 指向最新 EMA 模型。
 评估或部署 EMA 时指定 `--policy.path=<运行目录>/checkpoint-ema`。
@@ -580,6 +638,46 @@ SmolVLA／π0.5／FastWAM 评估须增加 `--task "拿起物体"`。Diffusion／
 跨机器使用时复制完整 checkpoint 目录，勿只复制符号链接。
 自定义策略接口见 [客户端接口](host-protocol.md#python-策略评估)，示例为 `examples/learning/custom_policy.py`。
 Notebook 入口见 [Notebook](notebook.md)，LeRobot 权重使用见 [LeRobot](lerobot.md)。
+
+### RTC 异步推理
+
+π0.5（flow／KI）和 SmolVLA 支持推理期引导 RTC，无需重新训练；默认关闭。
+在评估命令中增加：
+
+```bash
+--rtc --rtc.replan_steps 10 --rtc.inference_delay_steps 3
+```
+
+RTC 使用完整预测块，重规划间隔由 `rtc.replan_steps` 控制，覆盖 `n_action_steps` 的执行节奏。
+旧块在后台生成新块时继续执行；π0.5 的旧绝对目标会按新 state 重编码。
+动作按观测时间对齐，跳过过期前缀；队列耗尽或预测过期时停止，复位清空旧计划。
+
+| 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `rtc.replan_steps` | 10 | 两次预测起点的最小间隔，单位为控制步 |
+| `rtc.inference_delay_steps` | 3 | 延迟估计下限；运行中结合实测延迟加一控制步更新 |
+| `rtc.max_guidance_weight` | 10 | 引导强度上限 |
+| `rtc.prefix_attention_schedule` | `linear` | 重叠区权重，可选 `linear/exp/ones/zeros` |
+| `rtc.max_prediction_age_s` | 1.0 | 动作源观测的最大允许年龄，单位秒 |
+
+预测块长度须大于重规划间隔加延迟，实测延迟也须小于剩余重叠区。
+RTC 需要对动作输入求梯度，使用 eager 采样，会增加计算和显存开销；不与 ACT 时间融合组合。
+评估数据的 `meta/evaluation.json` 保存 RTC 参数，帧元数据保存预测来源时间。
+
+远程推理在 GPU 服务端开启，Pi 根据握手配置执行：
+
+```bash
+# GPU 服务端
+alohamini inference serve --bind tcp://127.0.0.1:5560 \
+  --policy.path <checkpoint> --task "拿起物体" --rtc
+# Pi，经 VPN 或 SSH 隧道连接服务端
+alohamini inference run --server tcp://127.0.0.1:5560 \
+  --host 127.0.0.1 --robot_model alohamini2pro --fps 30
+```
+
+远程 `--chunk-size` 默认使用完整预测块；有效预测年龄上限取服务端 RTC 设置与 Pi 的
+`--max-prediction-age-s`（默认 1 秒）的较小值。两端须使用支持 RTC 协议的版本。
+算法参考 [Physical Intelligence RTC](https://github.com/Physical-Intelligence/real-time-chunking-kinetix/tree/9296f31d62d5bfeb5779dcb2f9bcf71ca37f448b)，仅提供推理期引导模式。
 
 ### 固定维度的训练与推理
 

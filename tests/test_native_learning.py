@@ -804,6 +804,9 @@ def test_policy_statistics_reuse_without_building_model(recording, tmp_path, mon
     path = write_statistics(tmp_path / "stats.json", artifact)
     monkeypatch.setattr(components, "statistics", lambda *a: pytest.fail("Unexpected recompute"))
     assert training_statistics(components, data, options, kind, path) == artifact
+    assert training_statistics(components, data, options, kind, artifact=artifact) == artifact
+    with pytest.raises(ValueError, match="Choose a statistics"):
+        training_statistics(components, data, options, kind, path, artifact=artifact)
     original_hashes = data.table_sha256
     data.table_sha256 = {**original_hashes, "changed": "changed"}
     with pytest.raises(ValueError, match="do not match"):

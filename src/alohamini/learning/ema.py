@@ -1,4 +1,4 @@
-"""Trainer-owned EMA for unsharded policies, independent of network architecture."""
+"""Trainer-owned EMA for replicated or FSDP2 parameters."""
 
 import math
 from contextlib import contextmanager
@@ -53,11 +53,6 @@ class EMAConfig:
 
 def validate_ema_setup(settings):
     config = EMAConfig.from_dict(settings.get("ema"))
-    if config.enable:
-        if settings.get("distributed_backend", "ddp") != "ddp":
-            raise ValueError(
-                "Trainer EMA supports single-device/DDP only; FSDP2 EMA is not supported"
-            )
     return config
 
 
@@ -73,7 +68,9 @@ def _tensors(model):
 class EMAManager:
     """FP32 parameter shadows with copied persistent buffers, including BatchNorm.
 
-    Construct after DDP preparation on rank zero. Update once per *successful*
+    Construct after preparation on rank zero (DDP) or every rank (FSDP2).
+    DTensor shadows retain the parameter's mesh/placement and store only its shard.
+    Update once per *successful*
     optimizer step. Buffers are copied, not averaged; no BN recalibration is implied.
     Frozen parameters remain in the live model and are included normally on export.
     """
@@ -85,8 +82,7 @@ class EMAManager:
         params, buffers = _tensors(model)
         if not params:
             raise ValueError("EMA requires trainable parameters")
-        if any(hasattr(p, "placements") for p in params.values()):
-            raise ValueError("Sharded parameters are not supported by trainer EMA")
+        self.sharded = any(hasattr(p, "placements") for p in params.values())
         self.parameters = {name: p.detach().float().clone() for name, p in params.items()}
         self.buffers = {name: b.detach().clone() for name, b in buffers.items()}
         self.num_updates = 0
@@ -129,6 +125,16 @@ class EMAManager:
         """Temporarily apply EMA for eval/export; restore live tensors even on failure."""
         if self._active:
             raise RuntimeError("EMA weight contexts cannot be nested")
+
+        def reshard():
+            if self.sharded:
+                from torch.distributed.fsdp import FSDPModule
+
+                for module in model.modules():
+                    if isinstance(module, FSDPModule):
+                        module.reshard()
+
+        reshard()
         params, buffers = self._model_tensors(model)
         pairs = [(params, self.parameters), (buffers, self.buffers)]
         backups = [
@@ -144,6 +150,9 @@ class EMAManager:
             model.eval()
             yield
         finally:
+            # Inference can retain gathered root weights. Invalidate them before
+            # restoring local shards so the next forward cannot reuse EMA weights.
+            reshard()
             with torch.no_grad():
                 for (live, _), backup in zip(pairs, backups, strict=True):
                     for name, value in live.items():
@@ -153,13 +162,17 @@ class EMAManager:
             self._active = False
 
     def state_dict(self):
+        def snapshot(value):
+            # FSDP2 state is serialized collectively by distributed.checkpoint.
+            return value.detach().clone() if self.sharded else value.detach().cpu().clone()
+
         return {
             "version": 1,
             "config": asdict(self.config),
             "num_updates": self.num_updates,
             "buffer_policy": "copy",
-            "parameters": {name: p.detach().cpu().clone() for name, p in self.parameters.items()},
-            "buffers": {name: b.detach().cpu().clone() for name, b in self.buffers.items()},
+            "parameters": {name: snapshot(p) for name, p in self.parameters.items()},
+            "buffers": {name: snapshot(b) for name, b in self.buffers.items()},
         }
 
     def load_state_dict(self, state):

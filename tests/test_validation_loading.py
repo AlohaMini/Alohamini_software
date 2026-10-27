@@ -65,13 +65,19 @@ def test_loader_inherits_and_overrides_settings():
     )
     assert loader_options(cfg)["num_workers"] == 4
     options = loader_options(cfg, evaluation=True)
-    assert options == dict(num_workers=2, prefetch_factor=2, persistent_workers=True)
+    assert options == dict(
+        num_workers=2, prefetch_factor=2, persistent_workers=True, multiprocessing_context="spawn"
+    )
     loader = make_loader(Targets(), device="cuda", **options)
     assert loader.pin_memory and loader.num_workers == 2 and loader.prefetch_factor == 2
+    assert loader.multiprocessing_context.get_start_method() == "spawn"
     zero = make_loader(Targets(), num_workers=0)
     assert zero.prefetch_factor is None and not zero.persistent_workers
+    assert zero.multiprocessing_context is None
     with pytest.raises(ValueError, match="num_workers"):
         make_loader(Targets(), num_workers=-1)
+    with pytest.raises(ValueError, match="multiprocessing_context"):
+        make_loader(Targets(), num_workers=2, multiprocessing_context="invalid")
 
 
 def test_denominators_use_real_windows_without_decoding(recording, monkeypatch):

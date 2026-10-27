@@ -159,7 +159,7 @@ class RecordingKeyboard(KeyboardInput):
                     print("Right arrow key pressed. Exiting loop...")
                     self.events["exit_early"] = True
                 elif name in ("left", "r", "R"):
-                    print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                    print("Rerecord requested. Ending the current episode...")
                     self.events.update(rerecord_episode=True, exit_early=True)
                 elif name in ("esc", "q"):
                     print("Escape key pressed. Stopping data recording...")
@@ -507,9 +507,16 @@ def record_loop(
                 totals = dict.fromkeys(totals, 0.0)
                 report_started = loop_done_t
     finally:
-        client.set_recording_cameras(False)
-        stop_owned_robot(client, robot_model, identity)
-        print(flush=True)
+        primary = sys.exc_info()[1]
+        try:
+            client.set_recording_cameras(False)
+        except Exception as exc:
+            if primary is None:
+                raise
+            logging.warning("Recording camera cleanup failed: %s", exc)
+        finally:
+            stop_owned_robot(client, robot_model, identity)
+            print(flush=True)
 
 
 def record(
@@ -617,7 +624,7 @@ def record(
         if display_data:
             from alohamini.apps.visualization import init_rerun, log_snapshot, shutdown_rerun
 
-            cleanup.callback(shutdown_rerun)
+            cleanup.push(shutdown_rerun)
             init_rerun("alohamini_record")
             on_frame = log_snapshot
         recorded_episodes = 0
@@ -670,7 +677,7 @@ def record(
             if events["rerecord_episode"]:
                 dataset.discard_episode()
                 print(
-                    f"Discarding episode {episode_number}; retained under {path / 'discarded'}.",
+                    f"Discarded episode {episode_number}; recording again.",
                     flush=True,
                 )
             else:

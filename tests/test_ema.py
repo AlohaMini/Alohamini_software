@@ -146,8 +146,7 @@ def test_ema_cli_and_backend_validation(tmp_path):
         ]
     )
     assert cfg["ema"] == {"enable": True, "decay": 0.99, "use_for_eval": False}
-    with pytest.raises(ValueError, match="FSDP2"):
-        validate_ema_setup({**cfg, "distributed_backend": "fsdp2"})
+    assert validate_ema_setup({**cfg, "distributed_backend": "fsdp2"}).enable
 
 
 def test_legacy_dp_ema_checkpoint_is_rejected(tmp_path):

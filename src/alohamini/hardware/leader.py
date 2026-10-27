@@ -105,9 +105,13 @@ class BimanualLeader:
         try:
             for _ in range(2):
                 session = uuid4().hex
-                for device in self.devices.values():
+                for side, device in self.devices.items():
                     self._resources.callback(device.close)
-                    device.connect_passive(session)
+                    try:
+                        device.connect_passive(session)
+                    except OSError as exc:
+                        label = "Left leader" if side == "left" else "Right leader"
+                        raise ConnectionError(f"{label} connection failed: {exc}") from exc
                     self._resources.callback(device.disable_torque)
                 for device in self.devices.values():
                     device.disable_torque()

@@ -3,7 +3,7 @@
 from copy import deepcopy
 from pathlib import Path
 
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import Processor, limits_statistics, validate_statistics
@@ -27,7 +27,7 @@ class FastWAMProcessor:
 
 class FastWAMAlgorithm:
     include_task = True
-    fsdp_classes = ()
+    fsdp_classes = ("MoTLayer",)
     validate_statistics = staticmethod(validate_statistics)
 
     @staticmethod
@@ -196,12 +196,9 @@ class FastWAMAlgorithm:
         return options
 
     def save(self, path, model, manifest, model_state=None):
-        if model_state is not None:
-            raise ValueError("FastWAM sharded export is not adapted yet")
-        save_file(
-            {k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()},
-            path / "model.safetensors",
-        )
+        from alohamini.learning.checkpoint import save_weights
+
+        save_weights(path / "model.safetensors", model, model_state)
 
     def load(self, path, model):
         model.load_state_dict(load_file(path / "model.safetensors"), strict=True)

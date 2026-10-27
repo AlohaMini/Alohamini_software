@@ -7,15 +7,22 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
-from alohamini._validation import identifier
+from alohamini._validation import finite_number, identifier
 from alohamini.calibration import EncoderCalibration
 from alohamini.calibration.encoder import HostPositionUnits
 from alohamini.calibration.servo import MotorCalibration
 from alohamini.hardware.feedback import FeedbackBatch, MotorFeedback
-from alohamini.hardware.feetech import _FIELDS, _START, FeetechFeedbackReader, _PacketPort
+from alohamini.hardware.feetech import (
+    _FIELDS,
+    _INPUT_VOLTAGE_HINT,
+    _SERIAL_WRITE_TIMEOUT_HINT,
+    _START,
+    FeetechFeedbackReader,
+    _PacketPort,
+)
 from alohamini.hardware.motors_bus import MotorsBus
 from alohamini.model import ActuatorSpec
 
@@ -29,7 +36,22 @@ _REGISTER_IO_BUDGET_S = 0.050
 _REGISTER_ATTEMPTS = 4  # Source driver: initial attempt plus three transport retries.
 _GOAL_POSITION = 42
 _GOAL_VELOCITY = 46
+_OUTPUT_LIMIT = 48
 _TORQUE_ENABLE = 40
+
+
+@dataclass(frozen=True)
+class PositionMotionProfile:
+    """Raw STS position-mode speed and acceleration register values."""
+
+    goal_velocity: int = 2000
+    acceleration: int = 100
+
+    def __post_init__(self) -> None:
+        if type(self.goal_velocity) is not int or not 1 <= self.goal_velocity <= 32767:
+            raise ValueError("Position goal velocity must be an integer in [1, 32767]")
+        if type(self.acceleration) is not int or not 0 <= self.acceleration <= 254:
+            raise ValueError("Position acceleration must be an integer in [0, 254]")
 
 
 class CalibrationMismatchError(ValueError):
@@ -41,7 +63,10 @@ class DeviceOperationError(ConnectionError):
 
     def __init__(self, errors: Mapping[str, str], *, context: str | None = None) -> None:
         self.errors = dict(errors)
-        detail = "; ".join(f"{name}: {error}" for name, error in errors.items())
+        grouped: dict[str, list[str]] = {}
+        for name, error in errors.items():
+            grouped.setdefault(error, []).append(name)
+        detail = "; ".join(f"{', '.join(names)}: {error}" for error, names in grouped.items())
         super().__init__(f"{context}: {detail}" if context else detail)
 
 
@@ -77,6 +102,7 @@ class FeetechBusDevice(MotorsBus):
         position_calibrations: Mapping[str, EncoderCalibration],
         velocity_limits: Mapping[str, int],
         position_units: Mapping[str, HostPositionUnits] | None = None,
+        position_profiles: Mapping[str, PositionMotionProfile] | None = None,
     ) -> None:
         if not isinstance(port, str) or not port or "\x00" in port:
             raise ValueError("Provide a serial device path")
@@ -119,6 +145,21 @@ class FeetechBusDevice(MotorsBus):
         super().__init__(
             position_calibrations=position_calibrations, position_units=position_units
         )
+        if position_profiles is None:
+            self._position_profiles = {name: PositionMotionProfile() for name in self._positions}
+        else:
+            if not isinstance(position_profiles, Mapping):
+                raise TypeError("Position profiles must be a mapping")
+            if position_profiles.keys() != self._positions.keys():
+                raise ValueError(
+                    "Position profiles must cover exactly the calibrated position motors"
+                )
+            if any(
+                not isinstance(profile, PositionMotionProfile)
+                for profile in position_profiles.values()
+            ):
+                raise TypeError("Expected PositionMotionProfile values")
+            self._position_profiles = dict(position_profiles)
         self._velocities = dict(velocity_limits)
         self._position_io_budget_s = (
             _IO_BUDGET_S if self._positions or self._velocities else _REGISTER_IO_BUDGET_S
@@ -134,6 +175,8 @@ class FeetechBusDevice(MotorsBus):
         self._calibrating = False
         self._passive = False
         self._released_velocities: set[str] = set()
+        self._output_limit_baselines: dict[str, int] = {}
+        self._output_limits: dict[str, float] = {}
         self._feedback_retry: dict[str, tuple[float, float]] = {}
         self._used = False
         self._thread = threading.get_ident()
@@ -145,6 +188,15 @@ class FeetechBusDevice(MotorsBus):
     @property
     def velocity_limits(self) -> Mapping[str, int]:
         return MappingProxyType(self._velocities)
+
+    @property
+    def position_profiles(self) -> Mapping[str, PositionMotionProfile]:
+        return MappingProxyType(self._position_profiles)
+
+    @property
+    def output_limits(self) -> Mapping[str, float]:
+        """Last confirmed RAM output limits, expressed as fractions of full output."""
+        return MappingProxyType(self._output_limits)
 
     def _check_thread(self) -> None:
         if threading.get_ident() != self._thread:
@@ -183,15 +235,17 @@ class FeetechBusDevice(MotorsBus):
         from scservo_sdk.scservo_def import COMM_RX_CORRUPT, COMM_RX_TIMEOUT, COMM_TX_FAIL
         from serial import SerialTimeoutException
 
-        # Repeat only RAM target/Profile writes, or torque OFF. Never blindly
+        # Repeat only RAM target/Profile/output-limit writes, or torque OFF. Never blindly
         # repeat EEPROM, EEPROM lock, torque enable, or calibration commands.
         repeatable = (
             value is None
-            or address in (41, 42, 44, 46, 85)
+            or address in (41, 42, 44, 46, _OUTPUT_LIMIT, 85)
             or (address == _TORQUE_ENABLE and value == 0)
         )
         attempts = _REGISTER_ATTEMPTS if deadline is None and repeatable else 1
         operation = f"Read {address}" if value is None else f"Write {address}={value}"
+        if value is None and address == 3:
+            operation += " (model number register)"
         context = f"{self._path} {name} (ID {self._ids[name]}): {operation}"
         for attempt in range(attempts):
             port = self._packet_port(deadline, register=True)
@@ -231,8 +285,22 @@ class FeetechBusDevice(MotorsBus):
                     if len(packet) == expected + 6 and packet[3] == expected + 2:
                         return bytes(packet[5:-1])
                 reason = f"transport={result}, servo_error=0x{error:02x}"
+                description = {
+                    COMM_RX_TIMEOUT: (
+                        "No valid reply from servo before timeout"
+                        if value is None
+                        else "No acknowledgement from servo; command acceptance is unknown"
+                    )
+                    + ". Check motor power supply, bus cable, servo ID, and baud rate",
+                    COMM_RX_CORRUPT: "Invalid servo reply (corrupt data or checksum error)",
+                    COMM_TX_FAIL: "Failed to send servo request; check USB/serial connection",
+                }.get(result)
+                if description is not None:
+                    reason = f"{description}; {reason}"
                 if error:
                     reason += f" ({self._handler.getRxPacketError(error)})"
+                    if error & 0x01:
+                        reason += f"; {_INPUT_VOLTAGE_HINT}"
                 retry = not error and result in (COMM_RX_TIMEOUT, COMM_RX_CORRUPT, COMM_TX_FAIL)
             except OSError as exc:
                 # Disconnected/closed ports and other OS errors are not transient
@@ -240,6 +308,18 @@ class FeetechBusDevice(MotorsBus):
                 if not isinstance(exc, (TimeoutError, SerialTimeoutException)):
                     raise ConnectionError(f"{context}: {exc}") from exc
                 reason, retry = str(exc), True
+                if isinstance(exc, SerialTimeoutException):
+                    reason += f"; {_SERIAL_WRITE_TIMEOUT_HINT}"
+                elif isinstance(exc, TimeoutError):
+                    description = (
+                        "No valid reply from servo before timeout"
+                        if value is None
+                        else "Servo write timed out; command acceptance is unknown"
+                    )
+                    reason = (
+                        f"{description}. Check motor power supply, bus cable, servo ID, "
+                        f"and baud rate; {reason}"
+                    )
             finally:
                 port.is_using = False
             if not retry or attempt + 1 == attempts:
@@ -296,9 +376,10 @@ class FeetechBusDevice(MotorsBus):
                 else:
                     continue
                 if mode == 0:
+                    profile = self._position_profiles[name]
                     for address, width, expected in (
-                        (46, 2, 2000),
-                        (41, 1, 100),
+                        (46, 2, profile.goal_velocity),
+                        (41, 1, profile.acceleration),
                         (21, 1, 16),
                         (23, 1, 0),
                         (22, 1, 32),
@@ -379,8 +460,12 @@ class FeetechBusDevice(MotorsBus):
 
     def _write_verified(self, name: str, address: int, width: int, value: int) -> None:
         self._write_register(name, address, width, value)
-        if self._read_register(name, address, width) != value:
-            raise ConnectionError(f"Register write not accepted: {name}, address {address}")
+        actual = self._read_register(name, address, width)
+        if actual != value:
+            raise ConnectionError(
+                f"Register write not accepted: {name}, address {address} "
+                f"({self._path}, ID {self._ids[name]}, raw actual={actual}, expected={value})"
+            )
 
     def verify_calibration(self, calibrations: Mapping[str, MotorCalibration]) -> None:
         """Check torque-off and installed coordinates without configuring motion."""
@@ -399,8 +484,12 @@ class FeetechBusDevice(MotorsBus):
                 and calibration.encoder_calibration() != self._positions[name]
             ):
                 raise ValueError(f"Encoder coordinate mismatch: {name}")
-            if self._read_register(name, _TORQUE_ENABLE, 1) != 0:
-                raise ConnectionError(f"Disable every motor before preparation: {name}")
+            torque = self._read_register(name, _TORQUE_ENABLE, 1)
+            if torque != 0:
+                raise ConnectionError(
+                    f"Expected torque OFF before preparation: {self._path} {name} "
+                    f"(ID {self._ids[name]}), register 40 raw={torque}; startup aborted"
+                )
             for address, expected in (
                 (31, calibration.offset_register),
                 (9, calibration.range_min),
@@ -666,9 +755,18 @@ class FeetechBusDevice(MotorsBus):
             self._calibration_write(name, [(address, 1, value) for address, value in settings])
             self._modes.add(name)
             self._write_verified(name, 85, 1, 254)
-            self._write_verified(name, 41, 1, 100 if position else 254)
-            self._write_verified(name, _GOAL_VELOCITY, 2, 2000 if position else 0)
+            self._write_verified(
+                name, 41, 1, self._position_profiles[name].acceleration if position else 254
+            )
+            self._write_verified(
+                name, _GOAL_VELOCITY, 2,
+                self._position_profiles[name].goal_velocity if position else 0,
+            )
             self._write_verified(name, 44, 2, 0)
+        # Configuration is not complete until every motor is confirmed unloaded
+        # after all mode/Profile writes. Keep readiness false on any failure.
+        for name in self._ids:
+            self._write_verified(name, _TORQUE_ENABLE, 1, 0)
         self._prepared = self._ready = True
 
     def enable_torque(self) -> None:
@@ -705,6 +803,8 @@ class FeetechBusDevice(MotorsBus):
     def _sync_write(self, address: int, values: Mapping[str, int]) -> None:
         if not values:
             return
+        from serial import SerialTimeoutException
+
         params = []
         for name, value in values.items():
             params.extend([self._ids[name], *value.to_bytes(2, "little")])
@@ -718,7 +818,10 @@ class FeetechBusDevice(MotorsBus):
         try:
             result = self._handler.syncWriteTxOnly(port, address, 2, params, len(params))
         except OSError as exc:
-            raise ConnectionError(f"{context}: {type(exc).__name__}: {exc}") from exc
+            detail = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, SerialTimeoutException):
+                detail += f"; {_SERIAL_WRITE_TIMEOUT_HINT}"
+            raise ConnectionError(f"{context}: {detail}") from exc
         finally:
             port.is_using = False
         if result != 0:
@@ -759,6 +862,100 @@ class FeetechBusDevice(MotorsBus):
             self._released_velocities.remove(name)
         self._sync_write(_GOAL_POSITION, positions)
         self._sync_write(_GOAL_VELOCITY, velocities)
+
+    def ensure_position_targets(self, positions_rad: Mapping[str, float]) -> None:
+        """Confirm accepted position goals before the robot layer raises output.
+
+        Reuse matching goals; repair missing group-write targets with an
+        acknowledged write and readback. This confirms the target register,
+        not physical motion, and never enables torque or changes output caps.
+        """
+        self._check_thread()
+        if (
+            not self._ready
+            or self._verified != self._ids.keys()
+            or self._modes != self._ids.keys()
+        ):
+            raise ConnectionError("Bus has not passed connection validation")
+        if not positions_rad or not positions_rad.keys() <= self._positions.keys():
+            raise ValueError("Expected nonempty known position-controlled motors")
+        positions = self.encode_positions(positions_rad)
+        for name, target in positions.items():
+            if self._read_register(name, _GOAL_POSITION, 2) != target:
+                self._write_verified(name, _GOAL_POSITION, 2, target)
+
+    def _encode_output_limits(self, limits: Mapping[str, float]) -> dict[str, int]:
+        self._check_thread()
+        if (
+            not self._ready
+            or self._verified != self._ids.keys()
+            or self._modes != self._ids.keys()
+        ):
+            raise ConnectionError("Bus has not passed connection validation")
+        if not limits or not limits.keys() <= self._positions.keys():
+            raise ValueError("Output limits require known position-controlled motors")
+        encoded = {}
+        for name, value in limits.items():
+            finite_number(value, f"Output limit for {name}")
+            if not 0 <= value <= 1:
+                raise ValueError(f"Output limit must be between zero and one: {name}")
+            encoded[name] = int(value * 1000)
+        return encoded
+
+    def initialize_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
+        """Initialize torque-off RAM caps from the persistent maximum at register 16.
+
+        prepare establishes torque-off for the whole bus. Recheck every selected
+        position motor before changing any cap, then treat persistent settings as
+        authoritative over RAM left by a previous Host. EEPROM is never changed.
+        """
+        encoded = self._encode_output_limits(limits)
+        for name in encoded:
+            torque = self._read_register(name, _TORQUE_ENABLE, 1)
+            if torque != 0:
+                raise ConnectionError(
+                    f"Expected torque OFF before output initialization: {self._path} {name} "
+                    f"(ID {self._ids[name]}), register 40 raw={torque}; startup aborted"
+                )
+        baselines, actual = {}, {}
+        for name in encoded:
+            baseline = self._read_register(name, 16, 2)
+            current = self._read_register(name, _OUTPUT_LIMIT, 2)
+            if not 0 <= baseline <= 1000:
+                raise ConnectionError(f"Invalid STS maximum output limit: {name}, raw={baseline}")
+            if not 0 <= current <= 1000:
+                raise ConnectionError(f"Invalid STS output limit: {name}, raw={current}")
+            baselines[name] = baseline
+            actual[name] = current / 1000
+        self._output_limit_baselines.update(baselines)
+        self._output_limits.update(actual)
+        return self.write_output_limits(limits)
+
+    def write_output_limits(self, limits: Mapping[str, float]) -> dict[str, float]:
+        """Set acknowledged RAM output caps for calibrated position motors.
+
+        Fractions are truncated to STS per-mille units and bounded by the captured
+        ceiling: persistent register 16 after initialization, otherwise register
+        48 on first access. The robot layer selects the grippers.
+        """
+        encoded = self._encode_output_limits(limits)
+
+        # Capture every missing value before changing any register. A failed
+        # write invalidates its cached actual value but retains the original cap.
+        for name in encoded:
+            if name not in self._output_limits:
+                current = self._read_register(name, _OUTPUT_LIMIT, 2)
+                if not 0 <= current <= 1000:
+                    raise ConnectionError(f"Invalid STS output limit: {name}, raw={current}")
+                self._output_limit_baselines.setdefault(name, current)
+                self._output_limits[name] = current / 1000
+        for name, value in encoded.items():
+            effective = min(value, self._output_limit_baselines[name])
+            if self._output_limits[name] != effective / 1000:
+                del self._output_limits[name]
+                self._write_verified(name, _OUTPUT_LIMIT, 2, effective)
+                self._output_limits[name] = effective / 1000
+        return {name: self._output_limits[name] for name in encoded}
 
     def stop_motion(self, feedback: FeedbackBatch) -> None:
         """Watchdog: source-cycle arm hold, grouped base zero and lift zero.
@@ -890,7 +1087,7 @@ class FeetechBusDevice(MotorsBus):
         _finish_cleanup(errors, interrupts)
 
     def disable_torque(self) -> None:
-        """Attempt each verified motor; never unlock EEPROM or enable torque here."""
+        """Unload every verified motor, then restore captured RAM output ceilings."""
         self._check_thread()
         self._ready = False
         self._prepared = False
@@ -909,6 +1106,19 @@ class FeetechBusDevice(MotorsBus):
                 errors[name] = f"{type(exc).__name__}: {exc}"
                 if not isinstance(exc, Exception):
                     interrupts.append(exc)
+        # Raising a cap is safe only after every motor's torque-off readback has
+        # succeeded. Keep unload failures intact and leave all caps in place.
+        if not errors and not interrupts:
+            for name, baseline in self._output_limit_baselines.items():
+                try:
+                    if self._output_limits.get(name) != baseline / 1000:
+                        self._output_limits.pop(name, None)
+                        self._write_verified(name, _OUTPUT_LIMIT, 2, baseline)
+                        self._output_limits[name] = baseline / 1000
+                except BaseException as exc:
+                    errors[f"{name} output limit"] = f"{type(exc).__name__}: {exc}"
+                    if not isinstance(exc, Exception):
+                        interrupts.append(exc)
         _finish_cleanup(errors, interrupts)
 
     def close(self) -> None:

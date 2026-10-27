@@ -56,7 +56,7 @@ def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
     }
     from alohamini.learning.fixed import action_summary
 
-    manifest["fixed_state_excluded"] = True
+    manifest["fixed_state_excluded"] = getattr(samples, "fixed_state_excluded", True)
     summary = action_summary(samples)
     if summary is not None:
         manifest["physical_action_summary"] = summary
@@ -302,7 +302,8 @@ class NativePolicy:
                 .cpu()
             )
 
-    def select_action(self, snapshot):
+    def _observation_batch(self, snapshot):
+        """Prepare one live Host snapshot with the checkpoint's original input contract."""
         self._check_calibration(snapshot)
         observation = {}
         if self.selection:
@@ -333,7 +334,89 @@ class NativePolicy:
         batch = {k: v[None] for k, v in observation.items()}
         if self.algorithm.include_task:
             batch["task"] = [self.task]
-        batch = self.processor(self.fixed_input(batch))
+        return self.processor(self.fixed_input(batch))
+
+    def validate_rtc(self, config):
+        if self.manifest["kind"] not in ("pi05", "smolvla"):
+            raise ValueError("RTC currently supports pi05 and smolvla checkpoints")
+        horizon = (
+            self.config.network["action_horizon"]
+            if self.manifest["kind"] == "pi05" else self.config.chunk_size
+        )
+        config.validate_horizon(horizon)
+        if getattr(self.config, "inference_action_scale", 1.0) <= 0:
+            raise ValueError("RTC requires positive inference_action_scale")
+        return horizon
+
+    def predict_action_chunk(
+        self, snapshot, *, rtc=None, previous_actions=None, inference_delay=0
+    ):
+        """Return one absolute CPU action chunk without using the model's action queue."""
+        guided = rtc is not None and rtc.enabled
+        if guided:
+            self.validate_rtc(rtc)
+        # Prefix caches must be ordinary tensors for the later denoiser VJP.
+        with torch.inference_mode(not guided), torch.no_grad():
+            return self._predict_action_chunk(
+                snapshot, rtc=rtc if guided else None,
+                previous_actions=previous_actions, inference_delay=inference_delay,
+            )
+
+    def _predict_action_chunk(self, snapshot, *, rtc, previous_actions, inference_delay):
+        batch = self._observation_batch(snapshot)
+        kwargs = {}
+        if rtc is not None:
+            from alohamini.policies.rtc import RTCGuidance
+
+            prefix = None
+            if previous_actions is not None:
+                previous = torch.as_tensor(
+                    previous_actions, dtype=torch.float32,
+                    device=next(self.model.parameters()).device,
+                )
+                if (
+                    previous.ndim != 2 or previous.shape[1] != len(self.names)
+                    or not torch.isfinite(previous).all()
+                ):
+                    raise ValueError("RTC requires finite absolute targets")
+                previous = scale_action(
+                    previous,
+                    getattr(self.config, "inference_action_scale_dims", ()),
+                    1 / getattr(self.config, "inference_action_scale", 1.0),
+                )
+                prefix = self.processor.action_prefix(
+                    previous[None], context=batch.get("_action_context")
+                )
+            kwargs = dict(
+                rtc_processor=RTCGuidance(rtc), prev_chunk_left_over=prefix,
+                inference_delay=inference_delay,
+            )
+        with self.inference_context():
+            action = self.model.predict_action_chunk(batch, **kwargs)
+            if (
+                not isinstance(action, torch.Tensor)
+                or action.ndim != 3
+                or action.shape[0] != 1
+                or action.shape[1] < 1
+                or action.shape[2] < 1
+            ):
+                raise ValueError("Policy returned invalid action chunk dimensions or values")
+            raw_finite = torch.isfinite(action).all()
+            values = self.execution_action(action, context=batch.get("_action_context"))
+        if not isinstance(values, torch.Tensor) or values.shape != (
+            1, action.shape[1], len(self.names)
+        ):
+            raise ValueError("Policy returned invalid absolute action chunk")
+        # Transfer the absolute outputs and raw validity in one operation. PI0.5
+        # pads model coordinates beyond the Host targets; validate those too
+        # without forcing an extra CUDA synchronization before the CPU copy.
+        copied = torch.cat((values.reshape(-1).float(), raw_finite.reshape(1).float())).cpu()
+        if copied[-1] != 1 or not torch.isfinite(copied[:-1]).all():
+            raise ValueError("Policy returned invalid absolute action chunk values")
+        return copied[:-1].reshape(action.shape[1], len(self.names))
+
+    def select_action(self, snapshot):
+        batch = self._observation_batch(snapshot)
         with torch.inference_mode(), self.inference_context():
             action = self.model.select_action(batch)
             values = (

@@ -136,7 +136,14 @@ def test_training_pipeline_defaults_resolve_backend_and_preserve_overrides(monke
     assert cfg["video_backend"] == "torchcodec"
     assert cfg["camera_workers"] == 3 and cfg["video_cache_size"] == 32
     assert cfg["return_uint8"] is True
-    override = dict(video_backend="pyav", camera_workers=0, video_cache_size=8, return_uint8=False)
+    assert cfg["dataloader_multiprocessing_context"] == "spawn"
+    override = dict(
+        video_backend="pyav",
+        camera_workers=0,
+        video_cache_size=8,
+        return_uint8=False,
+        dataloader_multiprocessing_context="forkserver",
+    )
     assert resolve_data_pipeline(override) == override
     monkeypatch.setattr("alohamini.learning.loading.importlib.util.find_spec", lambda name: None)
     assert resolve_data_pipeline({})["video_backend"] == "pyav"

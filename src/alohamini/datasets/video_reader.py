@@ -67,12 +67,20 @@ class _TorchCodecReader:
 
         self.lock = RLock()
         self.path = path
-        # Match LeRobot's backend defaults, but enforce our frame-index contract.
-        self.decoder = VideoDecoder(path, seek_mode="approximate", dimension_order="NHWC")
-        self.rate = self.decoder.metadata.average_fps
-        if not self.rate or self.rate <= 0:
+        self.decoder = None
+        # An owned file object avoids native-path heap growth during repeated
+        # decoder replacement (TorchCodec 0.11.1); LeRobot also uses file objects.
+        self.file = open(path, "rb")
+        try:
+            self.decoder = VideoDecoder(
+                self.file, seek_mode="approximate", dimension_order="NHWC"
+            )
+            self.rate = self.decoder.metadata.average_fps
+            if not self.rate or self.rate <= 0:
+                raise ValueError("Video must have a fixed frame rate and timestamps")
+        except Exception:
             self.close()
-            raise ValueError("Video must have a fixed frame rate and timestamps")
+            raise
 
     def read_tensor(self, target):
         try:
@@ -88,8 +96,9 @@ class _TorchCodecReader:
         return self.read_tensor(target).numpy().copy()
 
     def close(self):
-        # Releasing the decoder also releases its owned local-file handle.
+        # The decoder must be released before its backing file is closed.
         self.decoder = None
+        self.file.close()
 
 
 class VideoFrameCache:

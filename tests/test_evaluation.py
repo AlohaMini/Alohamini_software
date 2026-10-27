@@ -62,6 +62,38 @@ def test_sync_episode_resets_policy_submits_and_stops(setup):
     stop.assert_called_once_with(client, "alohamini2pro", client.sent[-1][2])
 
 
+def test_rtc_episode_waits_for_first_plan_and_stops_before_worker_cleanup(setup):
+    import torch
+    from test_rtc import ManualExecutor
+
+    from alohamini.learning.rtc import RTCPolicy
+    from alohamini.rtc import RTCConfig
+
+    clock, client, policy, stop = setup
+    policy.fps, policy.names, policy.task = 30, state_names("alohamini2pro"), "pick"
+    policy.validate_rtc.return_value = 20
+    policy.predict_action_chunk.side_effect = lambda snap, **_: torch.tensor([
+        [snap.payload[name] for name in policy.names] for _ in range(20)
+    ])
+
+    class ImmediateExecutor(ManualExecutor):
+        def submit(self, fn, *args):
+            result = super().submit(fn, *args)
+            self.complete()
+            return result
+
+    rtc = RTCPolicy(
+        policy, RTCConfig(enabled=True, replan_steps=3, inference_delay_steps=1),
+        clock=lambda: clock.now, executor=ImmediateExecutor(),
+    )
+    count = run_evaluation(client, rtc, "alohamini2pro", duration_s=0.3)
+    assert count >= 5 and count == len(client.sent)
+    assert policy.predict_action_chunk.call_count >= 2
+    assert rtc.plan is None  # Episode exit invalidates the old timeline.
+    stop.assert_called_once()
+    rtc.close()
+
+
 @pytest.mark.parametrize("delay", [0.25, 0.4])
 def test_initial_poll_timeout_waits_for_late_feedback(setup, delay):
     clock, client, policy, _ = setup
