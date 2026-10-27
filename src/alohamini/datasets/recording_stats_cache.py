@@ -241,6 +241,18 @@ def _check_history(previous, current):
 
 def save_recording_statistics(root, stats) -> None:
     """Atomically cache exact accumulators after a successful episode publication."""
+    try:
+        _save_recording_statistics(root, stats)
+    except BaseException:
+        # A missed generation must never be skipped by a later delta. Keep the
+        # source binding: rebuilding a base cannot authorize changed history.
+        stats._recording_cache_checkpoint = None
+        raise
+
+
+def _save_recording_statistics(root, stats):
+    from alohamini.datasets import recording_stats_incremental as incremental
+
     root = Path(root).expanduser().resolve()
     binding, metadata = _capture_binding(root)
     info = _committed(metadata)
@@ -255,26 +267,46 @@ def save_recording_statistics(root, stats) -> None:
     numeric = _numeric(features)
     if set(stats.trackers) != set(features):
         raise ValueError("Recording statistics trackers differ from features")
+    previous = incremental.append_checkpoint(root, stats, features, info["fps"])
+    states = {}
+    if previous is not None:
+        segment_frames = stats.frames - previous["frames"]
+        for key in numeric:
+            tracker = stats.trackers[key]
+            state = tracker.export_delta()
+            if state["count"].item() != segment_frames:
+                previous = None
+                break
+            state["count"] = np.array(stats.frames, dtype=np.int64)
+            state.update(
+                {name: getattr(tracker, f"_{name}").copy() for name in ("mean", "m2", "min", "max")}
+            )
+            states[key] = state
+    if previous is None:
+        segment_frames = stats.frames
+        states = {key: stats.trackers[key].export_state() for key in numeric}
     arrays, indices = {}, {}
     for index, (key, feature) in enumerate(numeric.items()):
-        state = stats.trackers[key].export_state()
-        _validate_arrays(state, stats.frames, _width(feature))
+        state = states[key]
+        incremental.validate_state(state, stats.frames, segment_frames, _width(feature))
         indices[key] = index
         arrays.update({f"tracker_{index}__{name}": value for name, value in state.items()})
     manifest = {
-        "version": 1,
+        "version": 2 if previous is not None else 1,
         "frames": stats.frames,
         "fps": info["fps"],
         "features": features,
         "trackers": indices,
         "image_stats": images.payload(),
-        "binding": binding,
+        "binding": incremental.compact_binding(binding) if previous is not None else binding,
     }
+    if previous is not None:
+        manifest["parent"] = incremental.preserve_parent(root, previous)
     manifest_bytes = _json(manifest)
     if len(manifest_bytes) > _MAX_MANIFEST_BYTES:
         raise ValueError("Recording statistics manifest exceeds its size limit")
     arrays["manifest"] = np.frombuffer(manifest_bytes, dtype=np.uint8)
-    array_count, byte_limit = _archive_limits(features, stats.frames)
+    array_count, byte_limit = _archive_limits(features, segment_frames)
     if len(arrays) != array_count or sum(value.nbytes for value in arrays.values()) > byte_limit:
         raise ValueError("Recording statistics cache exceeds its size limit")
     temporary = None
@@ -295,6 +327,13 @@ def save_recording_statistics(root, stats) -> None:
         finally:
             os.close(directory)
         stats._recording_source_binding = binding
+        stats._recording_cache_checkpoint = incremental.checkpoint(
+            root, stats.frames, features, info["fps"]
+        )
+        for key in numeric:
+            # No observations can be submitted while the caller saves. The
+            # base also acknowledges any batches retained after a failed cache.
+            stats.trackers[key].acknowledge_delta()
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -302,6 +341,8 @@ def save_recording_statistics(root, stats) -> None:
 
 def load_recording_statistics(root):
     """Restore validated cached accumulators, or return None for a legacy/stale cache."""
+    from alohamini.datasets import recording_stats_incremental as incremental
+
     root = Path(root).expanduser().resolve()
     path = root / _CACHE
     try:
@@ -310,69 +351,10 @@ def load_recording_statistics(root):
         _regular(root, _CACHE)
         binding, metadata = _capture_binding(root)
         info = _committed(metadata)
-        array_count, byte_limit = _archive_limits(info["features"], info["total_frames"])
-        with zipfile.ZipFile(path) as archive:
-            entries = archive.infolist()
-            names = [entry.filename for entry in entries]
-            if (
-                len(entries) != array_count
-                or len(set(names)) != len(names)
-                or any("/" in name or not name.endswith(".npy") for name in names)
-                or sum(entry.file_size for entry in entries) > byte_limit
-                or any(
-                    entry.filename == "manifest.npy"
-                    and entry.file_size > _MAX_MANIFEST_BYTES + 65536
-                    for entry in entries
-                )
-            ):
-                raise ValueError("Invalid recording statistics archive size or entries")
-        with np.load(path, allow_pickle=False, max_header_size=65536) as archive:
-            encoded = archive["manifest"]
-            if encoded.dtype != np.uint8 or encoded.ndim != 1 or encoded.size > _MAX_MANIFEST_BYTES:
-                raise ValueError("Invalid recording statistics manifest array")
-            manifest = _decode_json(encoded.tobytes())
-            if (
-                not isinstance(manifest, dict)
-                or set(manifest)
-                != {"version", "frames", "fps", "features", "trackers", "image_stats", "binding"}
-                or type(manifest["version"]) is not int
-                or manifest["version"] != 1
-                or type(manifest["frames"]) is not int
-                or manifest["frames"] != info["total_frames"]
-                or type(manifest["fps"]) not in (int, float)
-                or manifest["fps"] != info["fps"]
-                or manifest["features"] != info["features"]
-                or manifest["binding"] != binding
-            ):
-                raise ValueError("Recording statistics cache does not match the current commit")
-            features, frames = manifest["features"], manifest["frames"]
-            numeric, indices = _numeric(features), manifest["trackers"]
-            if (
-                not isinstance(indices, dict)
-                or set(indices) != set(numeric)
-                or any(type(value) is not int for value in indices.values())
-                or set(indices.values()) != set(range(len(numeric)))
-            ):
-                raise ValueError("Invalid recording accumulator index")
-            expected, restored = {"manifest"}, {}
-            from alohamini.datasets.exact_distribution import ExactDistributionStats
-
-            for key, feature in numeric.items():
-                width, prefix = _width(feature), f"tracker_{indices[key]}__"
-                keys = {"count", "mean", "m2", "min", "max"} | {
-                    f"{name}_{index}" for index in range(width) for name in ("values", "counts")
-                }
-                expected.update(prefix + name for name in keys)
-                state = {name: archive[prefix + name] for name in keys}
-                _validate_arrays(state, frames, width)
-                tracker = ExactDistributionStats.from_state(state)
-                if tracker._count != frames or len(tracker._mean) != width:
-                    raise ValueError(f"Cached recording accumulator count differs: {key}")
-                restored[key] = tracker
-            if set(archive.files) != expected:
-                raise ValueError("Unexpected recording statistics cache arrays")
-            images = _image_statistics(manifest["image_stats"], features, frames)
-            _check_published_counts(metadata, features, frames, images)
+        manifest, restored, latest_signature = incremental.load_chain(root, info, binding)
+        features, frames = info["features"], info["total_frames"]
+        images = _image_statistics(manifest["image_stats"], features, frames)
+        _check_published_counts(metadata, features, frames, images)
         if recording_statistics_binding(root) != binding:
             raise ValueError("Recording changed while loading its statistics cache")
         from alohamini.datasets.lerobotv3 import _Stats
@@ -381,6 +363,11 @@ def load_recording_statistics(root):
         result.trackers.update(restored)
         result.frames, result.image_statistics = frames, images
         result._recording_source_binding = binding
+        result._recording_cache_checkpoint = incremental.checkpoint(
+            root, frames, features, info["fps"]
+        )
+        if result._recording_cache_checkpoint["signature"] != latest_signature:
+            raise ValueError("Recording statistics cache changed during loading")
         return result
     except (
         OSError,

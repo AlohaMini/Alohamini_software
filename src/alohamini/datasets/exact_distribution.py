@@ -22,12 +22,80 @@ class ExactDistributionStats(RunningQuantileStats):
         self._values = []
         self._value_counts = []
         self._pending = []
+        self._delta_batches = []
+        self._delta_count = 0
 
     def _adjust_histograms(self):
         pass
 
     def _update_histograms(self, batch):
-        self._pending.append(batch.copy())
+        owned = batch.copy()
+        self._pending.append(owned)
+        # Quantile calculation can consume _pending before the cache is durable.
+        # Keep the same owned arrays alive until explicit cache acknowledgement.
+        self._delta_batches.append(owned)
+        self._delta_count += len(owned)
+
+    def export_delta(self) -> dict:
+        """Export only vectors added since the last cache acknowledgement.
+
+        Returns an independent int64 scalar count and sorted float64 values_N /
+        int64 counts_N arrays, without moments or any historical distribution
+        copies. Exporting or computing statistics does not acknowledge data. A
+        restored tracker starts with an empty delta. An untouched tracker has
+        only count=0; initialized trackers retain empty arrays for each column.
+        """
+        state = {"count": np.array(self._delta_count, dtype=np.int64)}
+        width = 0 if self._mean is None else len(self._mean)
+        if not self._delta_count:
+            for column in range(width):
+                state[f"values_{column}"] = np.empty(0, dtype=np.float64)
+                state[f"counts_{column}"] = np.empty(0, dtype=np.int64)
+            return state
+        pending = (
+            self._delta_batches[0]
+            if len(self._delta_batches) == 1
+            else np.concatenate(self._delta_batches, axis=0)
+        )
+        for column in range(width):
+            values, counts = np.unique(pending[:, column], return_counts=True)
+            state[f"values_{column}"] = values
+            state[f"counts_{column}"] = counts.astype(np.int64, copy=False)
+        return state
+
+    def acknowledge_delta(self, count=None) -> None:
+        """Forget a durable delta prefix, retaining any later updates.
+
+        Pass export_delta()['count'] after its cache write succeeds, or omit
+        count after a successful full-state write. No statistic or pending
+        quantile update is removed. Prefix acknowledgements may split a batch
+        through a view, without copying its data. Callers serialize updates and
+        cache operations; this tracker is not thread-safe.
+        """
+        if count is None:
+            count = self._delta_count
+        else:
+            scalar = np.asarray(count)
+            if scalar.ndim != 0 or scalar.dtype.kind not in "iu":
+                raise ValueError("Delta acknowledgement count must be an integer scalar")
+            count = int(scalar)
+        if not 0 <= count <= self._delta_count:
+            raise ValueError("Delta acknowledgement exceeds the pending vector count")
+        if count == self._delta_count:
+            self._delta_batches.clear()
+            self._delta_count = 0
+            return
+        remaining, consumed = count, 0
+        while remaining:
+            batch = self._delta_batches[consumed]
+            if len(batch) <= remaining:
+                remaining -= len(batch)
+                consumed += 1
+            else:
+                self._delta_batches[consumed] = batch[remaining:]
+                remaining = 0
+        del self._delta_batches[:consumed]
+        self._delta_count -= count
 
     def _merge_pending(self):
         if not self._pending:
@@ -44,11 +112,13 @@ class ExactDistributionStats(RunningQuantileStats):
                 counts.append(new_counts)
                 continue
             old_values = self._values[column]
-            old_counts = self._value_counts[column].copy()
+            old_counts = self._value_counts[column]
             positions = np.searchsorted(old_values, new_values)
             matched = positions < old_values.size
             matched[matched] = old_values[positions[matched]] == new_values[matched]
-            old_counts[positions[matched]] += new_counts[matched]
+            if matched.any():
+                old_counts = old_counts.copy()
+                old_counts[positions[matched]] += new_counts[matched]
             unmatched = ~matched
             if unmatched.any():
                 values.append(np.insert(old_values, positions[unmatched], new_values[unmatched]))
@@ -69,9 +139,14 @@ class ExactDistributionStats(RunningQuantileStats):
         for column, (values, counts) in enumerate(
             zip(self._values, self._value_counts, strict=True)
         ):
-            cumulative = np.cumsum(counts, dtype=np.int64)
-            left = values[np.searchsorted(cumulative, lower, side="right")]
-            right = values[np.searchsorted(cumulative, upper, side="right")]
+            if len(values) == self._count:
+                # Positive multiplicities sum to _count, so every count is one.
+                # Sample times and global indices need no historical CDF scan.
+                left, right = values[lower], values[upper]
+            else:
+                cumulative = np.cumsum(counts, dtype=np.int64)
+                left = values[np.searchsorted(cumulative, lower, side="right")]
+                right = values[np.searchsorted(cumulative, upper, side="right")]
             difference = right - left
             # NumPy's linear quantile uses this branch to reduce cancellation
             # near the upper endpoint. Keep its operation ordering unchanged.

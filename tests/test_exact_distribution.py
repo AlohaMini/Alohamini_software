@@ -203,3 +203,212 @@ def test_empty_and_nonfinite_updates_keep_existing_rejection_semantics():
         tracker.update(np.zeros((2, 3)))
     for key, value in baseline.items():
         np.testing.assert_array_equal(tracker.export_state()[key], value)
+
+
+def assert_delta(actual, vectors):
+    assert actual["count"].shape == () and actual["count"].dtype == np.int64
+    assert actual["count"].item() == len(vectors)
+    assert set(actual) == {"count"} | {
+        f"{name}_{column}" for column in range(vectors.shape[1]) for name in ("values", "counts")
+    }
+    for column in range(vectors.shape[1]):
+        expected_values, expected_counts = np.unique(vectors[:, column], return_counts=True)
+        assert actual[f"values_{column}"].dtype == np.float64
+        assert actual[f"counts_{column}"].dtype == np.int64
+        np.testing.assert_array_equal(actual[f"values_{column}"], expected_values)
+        np.testing.assert_array_equal(actual[f"counts_{column}"], expected_counts)
+
+
+def test_delta_shares_owned_batches_and_survives_quantile_and_full_state_export():
+    tracker = ExactDistributionStats()
+    vectors = np.array([[1.0, 5.0], [1.0, 7.0], [3.0, 5.0]])
+    expected = vectors.copy()
+    tracker.update(vectors)
+    # Incremental persistence must retain the already-owned data, not allocate
+    # a second raw batch solely for the cache.
+    assert tracker._delta_batches[0] is tracker._pending[0]
+    assert not np.shares_memory(tracker._delta_batches[0], vectors)
+    vectors[:] = 123456
+    tracker.get_statistics()
+    tracker.export_state()
+    assert not tracker._pending
+    first = tracker.export_delta()
+    assert_delta(first, expected)
+    for array in first.values():
+        array[...] = 0
+    assert_delta(tracker.export_delta(), expected)
+    tracker.acknowledge_delta()
+    assert_delta(tracker.export_delta(), np.empty((0, 2), dtype=np.float64))
+    reference = ExactDistributionStats()
+    reference.update(expected)
+    assert_statistics(tracker.get_statistics(), reference.get_statistics())
+
+
+def test_delta_export_only_processes_new_vectors_without_merging_or_copying_history(monkeypatch):
+    tracker = ExactDistributionStats()
+    tracker.update(values())
+    tracker.export_state()
+    tracker.acknowledge_delta()
+    new = values()[:7].copy()
+    tracker.update(new[:3])
+    tracker.update(new[3:])
+    expected = tracker.export_delta()
+    unique = np.unique
+    observed = []
+
+    def only_new(vectors, *args, **kwargs):
+        assert len(vectors) == len(new), "delta must exclude acknowledged history"
+        observed.append(len(vectors))
+        return unique(vectors, *args, **kwargs)
+
+    def forbid_history():
+        pytest.fail("delta export must not merge or copy the complete historical distribution")
+
+    monkeypatch.setattr(np, "unique", only_new)
+    monkeypatch.setattr(tracker, "_merge_pending", forbid_history)
+    assert_statistics(tracker.export_delta(), expected)
+    assert observed == [len(new)] * new.shape[1]
+
+
+def test_failed_save_can_retry_and_acknowledge_an_export_without_losing_later_updates():
+    tracker, reference = ExactDistributionStats(), ExactDistributionStats()
+    first, later = values()[:17], values()[17:23]
+    tracker.update(first)
+    reference.update(first)
+    exported = tracker.export_delta()
+    # No acknowledgement after an unsuccessful write: repeated export is safe.
+    assert_statistics(tracker.export_delta(), exported)
+    tracker.get_statistics()
+    tracker.update(later)
+    reference.update(later)
+    tracker.acknowledge_delta(exported["count"])
+    assert_delta(tracker.export_delta(), later)
+    assert_statistics(tracker.get_statistics(), reference.get_statistics())
+    tracker.acknowledge_delta()
+    assert_delta(tracker.export_delta(), np.empty((0, 5), dtype=np.float64))
+
+
+def test_prefix_acknowledgement_can_split_batch_without_copy_or_consuming_quantile_pending():
+    tracker = ExactDistributionStats()
+    vectors = np.arange(18, dtype=np.float64).reshape(9, 2)
+    for batch in np.array_split(vectors, [3, 7]):
+        tracker.update(batch)
+    original_second = tracker._pending[1]
+    tracker.acknowledge_delta(4)
+    assert np.shares_memory(tracker._delta_batches[0], original_second)
+    assert_delta(tracker.export_delta(), vectors[4:])
+    tracker.acknowledge_delta()
+    assert len(tracker._pending) == 3
+    reference = ExactDistributionStats()
+    for batch in np.array_split(vectors, [3, 7]):
+        reference.update(batch)
+    assert_statistics(tracker.get_statistics(), reference.get_statistics())
+
+
+def test_full_base_can_be_acknowledged_and_restored_tracker_starts_without_delta():
+    tracker = ExactDistributionStats()
+    assert_statistics(tracker.export_delta(), {"count": np.array(0, dtype=np.int64)})
+    tracker.acknowledge_delta(0)
+    tracker.update(values())
+    state = tracker.export_state()
+    tracker.acknowledge_delta(state["count"])
+    restored = ExactDistributionStats.from_state(state)
+    assert_delta(restored.export_delta(), np.empty((0, 5), dtype=np.float64))
+    new = values()[4:9]
+    tracker.update(new)
+    restored.update(new)
+    assert_delta(restored.export_delta(), new)
+    assert_statistics(restored.get_statistics(), tracker.get_statistics())
+
+
+@pytest.mark.parametrize("count", [True, 1.0, [1], np.array([1]), -1, 4])
+def test_invalid_delta_acknowledgement_keeps_data_and_statistics(count):
+    tracker = ExactDistributionStats()
+    tracker.update(values()[:3])
+    delta, statistics = tracker.export_delta(), tracker.get_statistics()
+    with pytest.raises(ValueError, match="Delta acknowledgement"):
+        tracker.acknowledge_delta(count)
+    assert_statistics(tracker.export_delta(), delta)
+    assert_statistics(tracker.get_statistics(), statistics)
+
+
+def test_unique_timestamp_and_index_quantiles_match_numpy_without_scanning_cdf(monkeypatch):
+    indices = np.arange(1031, dtype=np.float64)
+    data = np.column_stack((1_000_000 + indices / 30, indices + 5000, -(indices**1.3)))
+    expected = np.quantile(data, DEFAULT_QUANTILES, axis=0, method="linear")
+    tracker = ExactDistributionStats()
+    for batch in np.array_split(data, [13, 515, 1020]):
+        tracker.update(batch)
+    tracker.export_state()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("all-unique coordinates must directly index ranks without a cumulative scan")
+
+    monkeypatch.setattr(np, "cumsum", forbidden)
+    actual = tracker.get_statistics()
+    for index, key in enumerate(tracker._quantile_keys):
+        np.testing.assert_array_equal(actual[key], expected[index], err_msg=key)
+
+
+def test_only_repeated_coordinates_scan_counts_in_a_mixed_distribution(monkeypatch):
+    indices = np.arange(101, dtype=np.float64)
+    data = np.column_stack((indices, indices % 4))
+    expected = np.quantile(data, DEFAULT_QUANTILES, axis=0, method="linear")
+    tracker = ExactDistributionStats()
+    tracker.update(data)
+    tracker.export_state()
+    cumulative = np.cumsum
+    scanned = []
+
+    def repeated_only(counts, *args, **kwargs):
+        scanned.append(len(counts))
+        return cumulative(counts, *args, **kwargs)
+
+    monkeypatch.setattr(np, "cumsum", repeated_only)
+    actual = tracker.get_statistics()
+    assert scanned == [4]
+    for index, key in enumerate(tracker._quantile_keys):
+        np.testing.assert_array_equal(actual[key], expected[index], err_msg=key)
+
+
+def test_all_new_values_do_not_copy_old_counts_before_insertion():
+    class NoHistoricalCopy(np.ndarray):
+        def copy(self, *args, **kwargs):
+            pytest.fail("all-new values need only the insertion allocation")
+
+    tracker = ExactDistributionStats()
+    tracker.update(np.arange(1000, dtype=np.float64)[:, None])
+    tracker.export_state()
+    original = tracker._value_counts[0].view(NoHistoricalCopy)
+    tracker._value_counts[0] = original
+    tracker.update(np.arange(1000, 1017, dtype=np.float64)[:, None])
+    tracker._merge_pending()
+    np.testing.assert_array_equal(original, np.ones(1000, dtype=np.int64))
+    np.testing.assert_array_equal(tracker._value_counts[0], np.ones(1017, dtype=np.int64))
+    expected = np.quantile(np.arange(1017, dtype=np.float64), DEFAULT_QUANTILES, method="linear")
+    actual = tracker.get_statistics()
+    for index, key in enumerate(tracker._quantile_keys):
+        np.testing.assert_array_equal(actual[key], expected[index : index + 1], err_msg=key)
+
+
+def test_failed_mixed_insertion_does_not_mutate_published_distribution(monkeypatch):
+    tracker = ExactDistributionStats()
+    tracker.update(np.array([[0.0], [0.0], [2.0]]))
+    tracker.export_state()
+    previous_values, previous_counts = tracker._values[0], tracker._value_counts[0]
+    tracker.update(np.array([[0.0], [3.0]]))
+
+    def fail(*args, **kwargs):
+        raise MemoryError("injected allocation failure")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(np, "insert", fail)
+        with pytest.raises(MemoryError, match="injected"):
+            tracker._merge_pending()
+    np.testing.assert_array_equal(previous_values, [0.0, 2.0])
+    np.testing.assert_array_equal(previous_counts, [2, 1])
+    assert tracker._values[0] is previous_values and tracker._value_counts[0] is previous_counts
+    reference = ExactDistributionStats()
+    reference.update(np.array([[0.0], [0.0], [2.0]]))
+    reference.update(np.array([[0.0], [3.0]]))
+    assert_statistics(tracker.get_statistics(), reference.get_statistics())

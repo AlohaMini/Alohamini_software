@@ -1,5 +1,6 @@
 """Committed statistics resume without scanning historical rows or decoding video."""
 
+import errno
 import json
 import os
 import zipfile
@@ -32,8 +33,11 @@ def append(stats, start, count):
 def publish_metadata(root, stats):
     values = {
         "meta/info.json": {
-            "codebase_version": "v3.0", "total_frames": stats.frames,
-            "total_episodes": 1, "fps": 30, "features": stats.features,
+            "codebase_version": "v3.0",
+            "total_frames": stats.frames,
+            "total_episodes": 1,
+            "fps": 30,
+            "features": stats.features,
         },
         "meta/alohamini.json": {"source_info": {"fps": 30}},
         "meta/stats.json": stats.result(),
@@ -50,7 +54,8 @@ def recorded(tmp_path):
         "action": {"dtype": "float32", "shape": [2], "names": ["a", "b"]},
         "timestamp": {"dtype": "float32", "shape": [1], "names": None},
         CAMERA: {
-            "dtype": "video", "shape": [480, 640, 3],
+            "dtype": "video",
+            "shape": [480, 640, 3],
             "names": ["height", "width", "channels"],
         },
     }
@@ -164,11 +169,12 @@ def test_truncated_or_malformed_cache_falls_back(recorded, damage, caplog):
         with zipfile.ZipFile(path) as archive:
             header = archive.getinfo("manifest.npy").header_offset
         contents = bytearray(path.read_bytes())
-        name_size = int.from_bytes(contents[header + 26:header + 28], "little")
-        extra_size = int.from_bytes(contents[header + 28:header + 30], "little")
+        name_size = int.from_bytes(contents[header + 26 : header + 28], "little")
+        extra_size = int.from_bytes(contents[header + 28 : header + 30], "little")
         contents[header + 30 + name_size + extra_size] = 255
         path.write_bytes(contents)
     else:
+
         def corrupt(manifest, arrays):
             prefix = f"tracker_{manifest['trackers']['action']}__"
             if damage == "count":
@@ -181,6 +187,7 @@ def test_truncated_or_malformed_cache_falls_back(recorded, damage, caplog):
                 manifest["image_stats"]["cameras"][CAMERA]["histogram"][0][0] = -1
             else:
                 arrays["unexpected"] = np.array([1])
+
         rewrite_cache(root, corrupt)
     assert cache.load_recording_statistics(root) is None
     assert "Recording statistics cache ignored" in caplog.text
@@ -255,3 +262,62 @@ def test_archive_size_budget_grows_with_committed_frames_without_fixed_gib_limit
     arrays, size = cache._archive_limits(features, 10_000_000)
     assert arrays == 1 + 5 + 2 * 36
     assert size > 5 * 1024**3
+
+
+def test_incremental_restore_preserves_moments_and_signed_zero_bit_for_bit(recorded):
+    root, template = recorded
+    stats = _Stats(template.features, recording=True)
+    batches = (
+        [{"action": [0.0, -0.0], "timestamp": 0.0}, {"action": [2.0, 3.0], "timestamp": 1.0}],
+        [{"action": [-0.0, 0.0], "timestamp": 2.0}, {"action": [-2.0, -3.0], "timestamp": 3.0}],
+        [{"action": [0.0, -0.0], "timestamp": 4.0}],
+    )
+    for batch in batches:
+        stats.update(batch, {CAMERA: [np.zeros((2, 3, 3), np.uint8)]})
+        publish_metadata(root, stats)
+        cache.save_recording_statistics(root, stats)
+        restored = cache.load_recording_statistics(root)
+        assert restored is not None
+        assert_states(restored, stats)
+
+
+@pytest.mark.parametrize("damage", ["missing", "truncated", "outside", "cycle"])
+def test_broken_incremental_parent_is_rejected_without_returning_partial_stats(
+    recorded, damage, caplog
+):
+    root, stats = recorded
+    cache.save_recording_statistics(root, stats)
+    append(stats, 7, 3)
+    publish_metadata(root, stats)
+    cache.save_recording_statistics(root, stats)
+    with np.load(root / cache._CACHE, allow_pickle=False) as archive:
+        current = json.loads(archive["manifest"].tobytes())
+    parent = root / current["parent"]["path"]
+    if damage == "missing":
+        parent.unlink()
+    elif damage == "truncated":
+        parent.write_bytes(b"broken NPZ")
+    else:
+
+        def corrupt(manifest, arrays):
+            manifest["parent"]["path"] = "../outside.npz" if damage == "outside" else cache._CACHE
+
+        rewrite_cache(root, corrupt)
+    assert cache.load_recording_statistics(root) is None
+    assert "Recording statistics cache ignored" in caplog.text
+
+
+def test_filesystem_without_hardlinks_can_continue_incrementally(recorded, monkeypatch):
+    root, stats = recorded
+    cache.save_recording_statistics(root, stats)
+
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.EOPNOTSUPP, "hard links unsupported")
+
+    monkeypatch.setattr("alohamini.datasets.recording_stats_incremental.os.link", unsupported)
+    append(stats, 7, 3)
+    publish_metadata(root, stats)
+    cache.save_recording_statistics(root, stats)
+    restored = cache.load_recording_statistics(root)
+    assert restored is not None
+    assert_states(restored, stats)
