@@ -79,6 +79,14 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     recipe = algorithm(kind)
     if kind in ("act", "am_act"):
         options = model_options()
+    elif kind in ("cdp", "dit_policy"):
+        from test_cdp_dit_policy import small_options
+
+        options = small_options(kind)
+    elif kind == "multi_task_dit":
+        from test_multi_task_dit import dit_options
+
+        options = dit_options(tmp_path / "clip-assets")
     elif kind == "diffusion":
         options = diffusion_options()
     elif kind == "fastwam":

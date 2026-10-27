@@ -287,6 +287,11 @@ class AlohaMiniDataset(Dataset):
             if not offsets or any(type(i) is not int for i in offsets):
                 raise ValueError(f"{key}: offsets must be a nonempty sequence of integers")
             self.delta_indices[key] = offsets
+        history = self.delta_indices.get("past_action")
+        if history is not None and (
+            any(i >= 0 for i in history) or history != sorted(set(history))
+        ):
+            raise ValueError("past_action requires strictly increasing negative row offsets")
         if chunk_size is not None:
             if "action" in self.delta_indices:
                 raise ValueError("Specify either chunk_size or action delta_indices, not both")
@@ -334,6 +339,10 @@ class AlohaMiniDataset(Dataset):
             )
         self.sample_keys = [*self.input_features, *self.output_features]
         for key in self.delta_indices:
+            if key == "past_action":
+                if "action" not in self.output_features:
+                    raise ValueError("past_action requires recorded action")
+                continue
             if key in self.sample_keys:
                 continue
             feature = self.info["features"].get(key)
@@ -442,6 +451,8 @@ class AlohaMiniDataset(Dataset):
             self.sample_indices.append(i)
             for key, indices in requested.items():
                 self._used_rows[key].update(indices)
+            if "past_action" in windows:
+                self._used_rows["action"].update(windows["past_action"])
         self.excluded = len(self.rows) - len(self.sample_indices)
         if not self.sample_indices:
             raise ValueError("No samples for the selected episodes and window configuration")
@@ -545,6 +556,11 @@ class AlohaMiniDataset(Dataset):
             raise IndexError(index)
         index = self.sample_indices[index]
         indices, sample = self._get_query_indices(index)
+        if "past_action" in indices:
+            sample["past_action"] = torch.stack(
+                [self._value(i, "action") for i in indices["past_action"]]
+            )
+            sample["sequence_index"] = torch.tensor(index - self.segment_starts[index])
         if self.include_task:
             task = self.rows[index]["task"]
             if not isinstance(task, str) or not task.strip():

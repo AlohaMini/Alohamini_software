@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 ASSET_FIELDS = {
+    "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
     "smolvla": ("vlm_model_name",),
     "pi05": ("tokenizer_path", "fast_tokenizer_path"),
     "fastwam": ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id"),
@@ -180,6 +181,8 @@ def resolve_pretrained(settings, *, expected_kind=None):
         options["pretrained_backbone_weights"] = None
     if "load_vlm_weights" in options:
         options["load_vlm_weights"] = False
+    if "load_pretrained_encoders" in options:
+        options["load_pretrained_encoders"] = False
     cfg["model"] = options
     if cfg.get("state", "auto") == "auto":
         cfg["state"] = manifest["state"]

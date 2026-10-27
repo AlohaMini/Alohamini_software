@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "joint_names": ["left_shoulder_pan", "right_shoulder_pan"],
+  "times_s": [0.0, 2.0, 4.0],
+  "positions": [[0.0, 0.0], [0.1, -0.1], [0.0, 0.0]]
+}
