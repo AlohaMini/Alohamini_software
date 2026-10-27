@@ -1,5 +1,14 @@
 AlohaMini migrated components
 
+src/alohamini/policies/spirit adapts Spirit-AI-Team/spirit-v1.5 at
+6d67377f16f67d6575447a1f29fdd83a2e0099d9 (MIT, Copyright 2026 Spirit AI Team).
+Source: https://github.com/Spirit-AI-Team/spirit-v1.5
+Changes add native registration, local-only Qwen assets, explicit shared dataset
+field transformations, checkpoint packaging and training reduction contracts.
+The bundled LICENSE.spirit covers the adapted model and utility code.
+No pretrained model weights are included; published Spirit weights are separately
+labelled Apache-2.0 by the publisher.
+
 src/alohamini/policies/multi_task_dit adapts Hugging Face LeRobot at
 53feaef37b67e8f4c23b6953e880ff535e39d6fe, configuration_multi_task_dit.py and
 modeling_multi_task_dit.py (Apache-2.0, Copyright 2025 Bryson Jones and

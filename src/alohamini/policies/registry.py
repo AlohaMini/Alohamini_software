@@ -12,6 +12,7 @@ ALGORITHMS = {
     "am_act": ("alohamini.policies.act.adapter", "AMACTAlgorithm"),
     "smolvla": ("alohamini.policies.smolvla.adapter", "SmolVLAAlgorithm"),
     "pi05": ("alohamini.policies.pi05.adapter", "PI05Algorithm"),
+    "spirit": ("alohamini.policies.spirit.adapter", "SpiritAlgorithm"),
 }
 
 

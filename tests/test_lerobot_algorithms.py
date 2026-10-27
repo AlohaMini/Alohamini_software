@@ -101,6 +101,10 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     elif kind == "smolvla":
         options = smolvla_options(request.getfixturevalue("tiny_assets"))
         options.update(max_state_dim=32, max_action_dim=32)
+    elif kind == "spirit":
+        from test_spirit import tiny_spirit_options
+
+        options = tiny_spirit_options(tmp_path / "spirit-assets")
     else:
         options = small_pi05(tmp_path, monkeypatch)
     cfg = dict(

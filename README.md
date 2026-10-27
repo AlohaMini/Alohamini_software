@@ -12,6 +12,7 @@ AlohaMini 双臂移动机器人的控制、数据采集与算法开发平台。�
 - [LeRobot](docs/lerobot.md)：数据与模型兼容范围。
 - [训练与部署](docs/training.md)：数据编辑、策略训练、离线检查与真机评估。
 - [运动学派生字段](docs/kinematic-fields.md)：关节到 TCP 字段与绝对／相对目标转换。
+- [Spirit v1.5](docs/spirit.md)：预训练 VLA 适配、训练与部署接口。
 - [云端推理](deploy/remote-inference/README.md)：树莓派直连云端 PI05，SSH 隧道与 WireGuard 配置。
 - [Notebook](docs/notebook.md)：可选的数据分析与实验入口。
 - [贡献指南](CONTRIBUTING.md)：源码开发与测试。
