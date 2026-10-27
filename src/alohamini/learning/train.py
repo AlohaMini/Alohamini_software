@@ -252,8 +252,6 @@ def train(settings):
     if settings.get("deterministic_algorithms"):
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     backend = settings.get("distributed_backend", "ddp")
-    if backend == "fsdp2" and not components.fsdp_classes:
-        raise ValueError(f"{settings.get('policy')}: FSDP2 boundaries are not adapted yet")
     execution = Execution(
         settings.get("device", "cuda"), settings.get("mixed_precision", "none"), backend
     )
@@ -322,7 +320,18 @@ def _train(settings, execution):
     if eval_steps and not val_episodes:
         raise ValueError("--eval_steps requires held-out --dataset.eval_episodes")
     logger.info("Creating dataset")
-    inspection = DatasetInspection()
+    preparation_timeout = cfg.setdefault("dataset_preparation_timeout_s", 3600)
+
+    def inspect_dataset():
+        inspection = DatasetInspection()
+        if execution.world_size > 1:
+            with log_stage(f"Inspecting dataset on rank 0: {root}"):
+                inspection.check(root, allow_unused_video_tail=args["allow_unannotated"])
+        return inspection
+
+    inspection = execution.main_process_call(
+        inspect_dataset, label="Dataset inspection", timeout_s=preparation_timeout
+    )
     with log_stage(f"Creating training dataset ({len(train_episodes)} episodes)"):
         samples = AlohaMiniDataset(**args, episodes=train_episodes, inspection=inspection)
     validation = None
@@ -420,16 +429,25 @@ def _train(settings, execution):
                 if cfg.get("stats") or cfg.get("normalization") == "checkpoint"
                 else "Computing normalization statistics"
             ):
-                artifact = training_statistics(
-                    components,
-                    samples,
-                    options,
-                    cfg.get("policy", "act"),
-                    cfg.get("stats"),
-                    checkpoint=pretrained_manifest
-                    if cfg.get("normalization") == "checkpoint"
-                    else None,
+                artifact = execution.main_process_call(
+                    lambda: training_statistics(
+                        components,
+                        samples,
+                        options,
+                        cfg.get("policy", "act"),
+                        cfg.get("stats"),
+                        checkpoint=pretrained_manifest
+                        if cfg.get("normalization") == "checkpoint"
+                        else None,
+                    ),
+                    label="Normalization statistics",
+                    timeout_s=preparation_timeout,
                 )
+                if not execution.main:
+                    # Each rank verifies its own data/selection contract before reuse.
+                    training_statistics(
+                        components, samples, options, cfg.get("policy", "act"), artifact=artifact
+                    )
             stats = artifact["stats"]
             if execution.main:
                 write_statistics(output / "statistics.json", artifact)
@@ -542,9 +560,12 @@ def _train(settings, execution):
                 logger.debug("Validation loss reduction: algorithm denominators %s", eval_totals)
         with log_stage("Preparing execution backend"):
             wrapped, optimizer = execution.prepare(model, optimizer)
-        ema = EMAManager(model, ema_config) if ema_config.enable and execution.main else None
+        ema = (
+            EMAManager(model, ema_config)
+            if ema_config.enable and (execution.main or execution.sharded) else None
+        )
         if ema is not None:
-            if resume_state:
+            if resume_state and not execution.sharded:
                 ema.load_state_dict(resume_state["ema"])
             logger.info(
                 "Trainer EMA: %d updates; FP32 trainable parameters; copied buffers; eval=%s",
@@ -553,7 +574,7 @@ def _train(settings, execution):
             )
         if resume_state and execution.sharded:
             execution.distributed_checkpoint(
-                checkpoint_path / "distributed", wrapped, optimizer, load=True
+                checkpoint_path / "distributed", wrapped, optimizer, load=True, ema=ema
             )
         with log_stage("Starting dataloader workers"):
             iterator = iter(loader)

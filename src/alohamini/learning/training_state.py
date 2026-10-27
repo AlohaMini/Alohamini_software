@@ -247,19 +247,22 @@ def save_training_checkpoint(
     sharded = execution is not None and execution.sharded
     if EMAConfig.from_dict(cfg.get("ema")).enable != (ema is not None):
         raise ValueError("EMA configuration and checkpoint manager disagree")
-    if ema is not None and (sharded or ema.num_updates != step):
-        raise ValueError("EMA checkpoint requires unsharded weights and one EMA update per step")
+    if ema is not None and ema.num_updates != step:
+        raise ValueError("EMA checkpoint requires one EMA update per step")
     stage = None
     if not sharded or execution.main:
         if checkpoint.exists():
             raise FileExistsError(checkpoint)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         stage = str(tempfile.mkdtemp(prefix=name + ".pending-", dir=checkpoint.parent))
-    model_state = None
+    model_state = ema_model_state = None
     if sharded:
         stage = execution.gather(stage)[0]
-        execution.distributed_checkpoint(Path(stage) / "distributed", model, optimizer)
+        execution.distributed_checkpoint(Path(stage) / "distributed", model, optimizer, ema=ema)
         model_state = execution.accelerator.get_state_dict(model)
+        if ema is not None:
+            with ema.average_parameters(model):
+                ema_model_state = execution.accelerator.get_state_dict(model)
         if not execution.main:
             return checkpoint
     stage = Path(stage)
@@ -272,7 +275,10 @@ def save_training_checkpoint(
     if scheduler is not None:
         state["scheduler"] = scheduler.state_dict()
     if ema is not None:
-        state["ema"] = ema.state_dict()
+        state["ema"] = (
+            {"distributed": True, "num_updates": ema.num_updates}
+            if sharded else ema.state_dict()
+        )
     save_checkpoint(
         stage / "pretrained_model",
         model,
@@ -285,13 +291,16 @@ def save_training_checkpoint(
         json.dumps(cfg, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     )
     if ema is not None:
-        with ema.average_parameters(model):
+        from contextlib import nullcontext
+
+        with (nullcontext() if sharded else ema.average_parameters(model)):
             save_checkpoint(
                 stage / "ema_pretrained_model",
                 model,
                 stats,
                 samples,
                 training={**training, "weights": "ema", "ema_updates": ema.num_updates},
+                model_state=ema_model_state,
             )
     (stage / "training_state").mkdir()
     torch.save(state, stage / "training_state/state.pt")
@@ -344,6 +353,8 @@ def load_training_checkpoint(path, cfg, samples, validation):
         "num_workers",
         "prefetch_factor",
         "persistent_workers",
+        "dataloader_multiprocessing_context",
+        "dataset_preparation_timeout_s",
         "cpu_threads",
         "resume",
         "_checkpoint",

@@ -83,16 +83,13 @@ class Execution:
 
             plugin = FullyShardedDataParallelPlugin(
                 fsdp_version=2,
-                auto_wrap_policy="TRANSFORMER_BASED_WRAP",
-                transformer_cls_names_to_wrap=[],
+                auto_wrap_policy="NO_WRAP",
                 reshard_after_forward=True,
                 cpu_offload=False,
                 cpu_ram_efficient_loading=False,
                 activation_checkpointing=False,
-                # Keep labels, master parameters and reductions in FP32. Existing
-                # autocast controls compute precision without recasting batch targets.
                 mixed_precision_policy=MixedPrecisionPolicy(
-                    param_dtype=torch.float32, reduce_dtype=torch.float32
+                    reduce_dtype=torch.float32, cast_forward_inputs=False
                 ),
             )
         # Respect the explicit device, including cuda:N, instead of auto-selecting GPU 0.
@@ -138,12 +135,16 @@ class Execution:
                 "Accelerate runtime differs from this run; start a fresh training process"
             )
         self.scaler = self.accelerator.scaler
+        self._preparation_group = None
 
     @property
     def main(self):
         return self.accelerator.is_main_process
 
     def close(self):
+        if self._preparation_group is not None:
+            dist.destroy_process_group(self._preparation_group)
+            self._preparation_group = None
         if self.owns_group:
             self.accelerator.end_training()
         self.accelerator.free_memory()
@@ -159,6 +160,38 @@ class Execution:
     def gather(self, value):
         return gather_object([value])
 
+    def main_process_call(self, function, *, label, timeout_s=3600):
+        """Run startup work once; share its CPU result or failure with every rank.
+
+        Use a separate Gloo group: dataset scans can exceed the training group's
+        five-minute timeout, and inspection reports/statistics need no GPU memory.
+        Every rank must call this in the same order. Results are run-local only.
+        The first call sets the preparation group's timeout for this run.
+        """
+        if type(timeout_s) is not int or timeout_s < 1:
+            raise ValueError("dataset_preparation_timeout_s must be a positive integer")
+        if self.world_size == 1:
+            return function()
+        if self._preparation_group is None:
+            self._preparation_group = dist.new_group(
+                backend="gloo", timeout=timedelta(seconds=timeout_s)
+            )
+        payload = [None]
+        error = None
+        if self.main:
+            try:
+                payload[0] = (True, function())
+            except Exception as exc:
+                error = exc
+                payload[0] = (False, f"{type(exc).__name__}: {exc}")
+        dist.broadcast_object_list(payload, src=0, group=self._preparation_group)
+        success, value = payload[0]
+        if not success:
+            if error is not None:
+                raise error
+            raise RuntimeError(f"{label} failed on rank 0: {value}")
+        return value
+
     def prepare(self, model, optimizer):
         if self.sharded:
             from torch.distributed.checkpoint.state_dict import (
@@ -167,20 +200,15 @@ class Execution:
             )
             from torch.distributed.fsdp import register_fsdp_forward_method
 
+            from alohamini.learning.sharding import prepare_sharded_model
             from alohamini.policies.registry import algorithm
 
-            boundaries = algorithm(model.name).fsdp_classes
-            if not boundaries:
-                raise ValueError(f"{model.name}: FSDP2 boundaries are not adapted yet")
-            if any(p.device.type != "cpu" for p in model.parameters()):
-                raise ValueError("Construct the FSDP2 model on CPU before preparing it")
-            classes = {type(module).__name__ for module in model.modules()}
-            self.accelerator.state.fsdp_plugin.transformer_cls_names_to_wrap = sorted(
-                classes & set(boundaries)
-            )
             # All ranks construct on CPU; synchronize rank-zero initialization only
             # after sharding, without materializing the full model on a single GPU.
             initial = model.state_dict() if self.main else {}
+            model = prepare_sharded_model(
+                model, optimizer, preferred=getattr(algorithm(model.name), "fsdp_classes", ())
+            )
             model, optimizer = self.accelerator.prepare(model, optimizer)
             set_model_state_dict(
                 model,
@@ -195,22 +223,45 @@ class Execution:
         # non-capturable Adam step counters on CPU, just like a fresh optimizer.
         return self.accelerator.prepare(model, optimizer, device_placement=[True, False])
 
-    def distributed_checkpoint(self, path, model, optimizer, *, load=False):
+    def distributed_checkpoint(self, path, model, optimizer, *, load=False, ema=None):
         """Collective sharded model/optimizer I/O; platform RNG is saved separately."""
         import torch.distributed.checkpoint as dcp
-        from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+        from torch.distributed.checkpoint.state_dict import (
+            StateDictOptions,
+            get_state_dict,
+            set_model_state_dict,
+            set_optimizer_state_dict,
+        )
 
         raw_optimizer = optimizer.optimizer
         model_state, optimizer_state = get_state_dict(model, raw_optimizer)
         state = {"model": model_state, "optimizer": optimizer_state}
+        if ema is not None:
+            state["ema"] = ema.state_dict()
         if load:
-            dcp.load(state, checkpoint_id=path)
-            set_state_dict(
-                model,
-                raw_optimizer,
-                model_state_dict=state["model"],
+            reader = dcp.FileSystemReader(path)
+            metadata = reader.read_metadata()
+            # Optimizers allocate slots lazily. Trainable parameters outside the
+            # active loss graph legitimately have none (e.g. Flow's final VLM
+            # output projections). A fresh get_state_dict initializes all slots;
+            # load exactly the saved set and drop those dummy entries again.
+            saved = {
+                parts[2] for parts in metadata.planner_data.values()
+                if tuple(parts[:2]) == ("optimizer", "state") and len(parts) > 2
+            }
+            slots = state["optimizer"]["state"]
+            if not saved <= slots.keys():
+                raise ValueError("Checkpoint optimizer parameters differ from the current model")
+            state["optimizer"]["state"] = {name: slots[name] for name in slots if name in saved}
+            dcp.load(state, storage_reader=reader)
+            set_model_state_dict(model, state["model"])
+            set_optimizer_state_dict(
+                model, raw_optimizer,
                 optim_state_dict=state["optimizer"],
+                options=StateDictOptions(strict=False),
             )
+            if ema is not None:
+                ema.load_state_dict(state["ema"])
         else:
             dcp.save(state, checkpoint_id=path)
 

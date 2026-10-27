@@ -9,6 +9,8 @@ REVISION = "ba22ee3ff455f0423fc9cfa5658a1a1cdddc6e73"
 
 
 class DiTPolicyAlgorithm(DiffusionAlgorithm):
+    fsdp_classes = ("_SelfAttnEncoder", "_DiTDecoder", "BasicBlock", "Bottleneck")
+
     @property
     def config_class(self):
         from .configuration_dit_policy import DiTPolicyConfig
