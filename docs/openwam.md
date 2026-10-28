@@ -34,3 +34,5 @@ alohamini train --policy.type openwam \
 默认使用原始记录的 state/action 字段及单位，导入官方 80 维基座时重新初始化动作输入、动作输出和 state 投影；不凭维度推断官方末端、夹爪、灵巧手槽位。论文协议与平台适配随 checkpoint 保存。
 
 使用通用训练器的 DDP、FSDP2、EMA 和 checkpoint；支持普通远程动作块推理，未接入 RTC 引导。平台 checkpoint 包含冻结编码器权重及 tokenizer，可独立迁移。显存不足时使用通用多卡配置，见[训练说明](training.md)。
+
+`--keep_last_checkpoints=1` 仅保留最近一份完整训练 checkpoint；新 checkpoint 写入成功后才清理旧文件，保存时须预留两份的空间。未设置时保留全部。
