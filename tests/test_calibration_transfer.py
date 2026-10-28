@@ -93,6 +93,50 @@ def test_bind_updates_velocity_units_once_and_rejects_later_change():
         policy.bind_robot(snapshot)
 
 
+def test_cartesian_binding_rejects_normalized_transfer_before_mutating_policy():
+    from test_kinematic_fields import descriptor
+
+    from alohamini.policies.registry import algorithm
+
+    old, snapshot = changed_robot()
+    policy = policy_for(old)
+    spec = descriptor()
+    original_names = list(spec["source_names"])
+    spec["source_names"] = policy.source["features"]["action"]["names"]
+    names = dict(zip(original_names, spec["source_names"], strict=True))
+    spec["passthrough"] = [names[name] for name in spec["passthrough"]]
+    spec["source_calibration"] = {}
+    for arm in spec["arms"]:
+        arm["gripper"]["field"] = names[arm["gripper"]["field"]]
+        for coordinate in arm["coordinates"]:
+            field = names[coordinate["field"]]
+            motor = field.removesuffix(".pos")
+            coordinate.update(
+                field=field,
+                unit="host",
+                host_units={
+                    key: old["motors"][motor][key]
+                    for key in ("normalization", "range_min", "range_max", "drive_mode")
+                },
+                encoder=dict(
+                    ticks_per_revolution=4096,
+                    reference_tick=2048,
+                    reference_position_rad=0,
+                    direction=1,
+                ),
+            )
+            spec["source_calibration"][motor] = deepcopy(old["motors"][motor])
+    policy.algorithm = algorithm("spirit")
+    policy.config = SimpleNamespace(action_representation="eef_delta", kinematic_fields=spec)
+    saved_selection = policy.selection
+    with pytest.raises(ValueError, match="differ"):
+        policy.bind_robot(snapshot)
+    assert not policy._robot_bound and policy.robot_metadata == old
+    assert policy.selection is saved_selection
+    policy.config.action_representation = "recorded"
+    assert policy.bind_robot(snapshot)["mode"] == "normalized"
+
+
 def test_static_check_reused_but_nested_changes_and_context_revalidate():
     snapshot = replay_snapshot()
     policy = policy_for(snapshot.payload["_robot_metadata"], "strict")

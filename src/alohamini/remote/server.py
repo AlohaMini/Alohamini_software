@@ -118,7 +118,7 @@ class NativeChunkPolicy:
     def predict(self, snapshot):
         if not self._initialized:
             raise RuntimeError("Remote policy has not been initialized")
-        chunk = self.policy.predict_action_chunk(snapshot)
+        chunk = self.policy.predict_action_chunk(snapshot, max_steps=self.chunk_size)
         if chunk.shape[0] < self.chunk_size:
             raise ValueError("Policy returned fewer actions than the configured remote chunk")
         return chunk[: self.chunk_size]

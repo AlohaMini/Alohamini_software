@@ -4,13 +4,14 @@ import json
 import shutil
 from collections import deque
 from copy import deepcopy
-from dataclasses import asdict, fields
+from dataclasses import fields
 from pathlib import Path
 
 import numpy as np
 import torch
 from safetensors.torch import load_file, load_model
 
+from alohamini.datasets.kinematic_fields import KinematicFields
 from alohamini.learning.metrics import MetricSpec, loss_count
 
 from .configuration_spirit import SpiritConfig
@@ -55,13 +56,13 @@ class SpiritTrainModel(torch.nn.Module):
             n_action_steps=config.network["chunk_size"],
             action_horizon=config.network["chunk_size"],
             input_features={
-                "observation.state": asdict(config.robot_state_feature),
+                "observation.state": dict(type="STATE", shape=[config.encoded_state_dim]),
                 **{
                     f"observation.images.{slot}": dict(type="VISUAL", shape=[3, 240, 320])
                     for slot in ("cam_high", "cam_left_wrist", "cam_right_wrist")
                 },
             },
-            output_features={"action": asdict(config.action_feature)},
+            output_features={"action": dict(type="ACTION", shape=[config.encoded_action_dim])},
         )
         self.network = SpiritVLAPolicy(SpiritVLAConfig(**options))
         # The flow objective uses hidden states, not vocabulary logits. Exclude
@@ -102,6 +103,7 @@ class SpiritTrainModel(torch.nn.Module):
 
 
 class SpiritAlgorithm:
+    supports_field_transforms = True
     config_class = SpiritConfig
     include_task = True
     fsdp_classes = ("Qwen3VLTextDecoderLayer", "Qwen3VLVisionBlock", "BasicTransformerBlock")
@@ -114,14 +116,14 @@ class SpiritAlgorithm:
                 "loss_flow",
                 "flow_loss",
                 "valid_action_elements",
-                loss_count("_loss_weight"),
+                loss_count("_loss_weight", config.encoded_action_dim),
                 console="flow",
             )
         ]
 
     @staticmethod
     def loss_counts(batch):
-        return {"_loss_weight": int((~batch["action_is_pad"]).sum()) * batch["action"].shape[-1]}
+        return {"_loss_weight": int((~batch["action_is_pad"]).sum())}
 
     def options(self, settings, device):
         options = deepcopy(settings.get("model", {}))
@@ -185,8 +187,18 @@ class SpiritAlgorithm:
     def validate_statistics(stats, expected, names, *, manifest=None):
         if set(stats) != {"observation.state", "action"}:
             raise ValueError("Spirit requires separate state/action quantile statistics")
+        geometry = None
+        if manifest and manifest["config"].get("action_representation") == "eef_delta":
+            geometry = KinematicFields(manifest["config"]["kinematic_fields"])
+            geometry.validate_source(
+                manifest["source_info"], state_names=manifest["state_feature"]["names"]
+            )
         for key, values in stats.items():
-            shape = (len(names),) if key == "action" else expected["observation.state"][1]
+            shape = (
+                (geometry.width,)
+                if geometry
+                else ((len(names),) if key == "action" else expected["observation.state"][1])
+            )
             lo, hi = (np.asarray(values.get(k, [])) for k in ("min", "max"))
             if (
                 lo.shape != tuple(shape)
@@ -196,10 +208,6 @@ class SpiritAlgorithm:
                 or (hi < lo).any()
             ):
                 raise ValueError(f"Invalid Spirit quantile statistics: {key}")
-        if manifest and manifest["config"].get("action_representation") == "eef_delta":
-            descriptor = manifest["config"]["kinematic_fields"]
-            if descriptor["source_names"] != names or manifest["state_feature"]["names"] != names:
-                raise ValueError("Checkpoint kinematics field names/order mismatch")
 
     def build(self, options, stats=None):
         return SpiritTrainModel(self.config_class(**deepcopy(options)), stats)
@@ -209,6 +217,13 @@ class SpiritAlgorithm:
         processor = SpiritProcessor(model.config, stats, device)
         processor.is_training = lambda: model.training
         return processor
+
+    @staticmethod
+    def validate_robot_binding(config, source, metadata):
+        if config.action_representation == "eef_delta":
+            KinematicFields(config.kinematic_fields).validate_source(
+                {**source, "robot_metadata": metadata}
+            )
 
     def initialize(self, model, settings):
         path = Path(settings["pretrained_path"]).expanduser()

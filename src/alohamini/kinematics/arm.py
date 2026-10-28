@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from alohamini.model import get_robot_model
+from alohamini.model import RobotModel, get_robot_model
 
 ARM_SUFFIXES = (
     "shoulder_pan",
@@ -133,12 +134,8 @@ def matrix_to_quaternion(matrix: np.ndarray) -> list[float]:
     return quaternion.tolist()
 
 
-class AlohaMiniArmKinematics:
-    """Exact standard-DH FK plus bounded differential IK for one arm.
-
-    The packaged DH table is generated from the authoritative URDF. Both arms
-    have the same chain in their own ``{side}_Base`` frame; only limits differ.
-    """
+class SerialArmKinematics:
+    """Standard-DH revolute chain with explicit geometry, model radians and bounded IK."""
 
     def __init__(
         self,
@@ -148,6 +145,8 @@ class AlohaMiniArmKinematics:
     ) -> None:
         with Path(dh_path).open(encoding="utf-8") as stream:
             dh = yaml.safe_load(stream)
+        if dh.get("length_unit") != "m" or dh.get("angle_unit") != "rad":
+            raise ValueError("DH geometry must explicitly use m and rad")
         with Path(tool_path).open(encoding="utf-8") as stream:
             tool = yaml.safe_load(stream)["tool_frames"]
         rows = dh["standard_dh"]["rows"]
@@ -167,6 +166,7 @@ class AlohaMiniArmKinematics:
         fixed_to_tcp[:3, 3] = fixed_to_tcp[:3, :3] @ np.asarray(tool["tcp_tool_m"], dtype=float)
         self.tool_transform = self.tool_transform @ fixed_to_tcp
         self.joint_limits = joint_limits
+        self.from_parameters(self.parameters())
 
     def parameters(self):
         """Portable geometry snapshot independent of installed model files."""
@@ -174,22 +174,39 @@ class AlohaMiniArmKinematics:
             rows=[list(row) for row in self.rows],
             base_transform=self.base_transform.tolist(),
             tool_transform=self.tool_transform.tolist(),
-            joint_limits=self.joint_limits,
+            joint_limits=None
+            if self.joint_limits is None
+            else [list(row) for row in self.joint_limits],
         )
+
+    def with_joint_zero(self, reference):
+        """Use a known model posture as q=0, preserving the original physical FK."""
+        reference = np.asarray(reference, dtype=float)
+        if reference.shape != (len(self.rows),) or not np.isfinite(reference).all():
+            raise ValueError("Joint zero requires one finite reference angle per DH row")
+        parameters = self.parameters()
+        for row, angle in zip(parameters["rows"], reference, strict=True):
+            row[3] += float(angle)
+        if parameters["joint_limits"] is not None:
+            parameters["joint_limits"] = (
+                np.asarray(parameters["joint_limits"]) - reference[:, None]
+            ).tolist()
+        return type(self).from_parameters(parameters)
 
     @classmethod
     def from_parameters(cls, parameters):
         model = cls.__new__(cls)
         model.rows = tuple(tuple(float(v) for v in row) for row in parameters["rows"])
-        model.base_transform = np.asarray(parameters["base_transform"], dtype=float)
-        model.tool_transform = np.asarray(parameters["tool_transform"], dtype=float)
-        model.joint_limits = parameters.get("joint_limits")
+        model.base_transform = np.array(parameters["base_transform"], dtype=float, copy=True)
+        model.tool_transform = np.array(parameters["tool_transform"], dtype=float, copy=True)
+        limits = parameters.get("joint_limits")
+        model.joint_limits = None if limits is None else tuple(tuple(row) for row in limits)
         if (
-            len(model.rows) != 6
+            not model.rows
             or any(len(row) != 4 for row in model.rows)
             or not np.isfinite(model.rows).all()
         ):
-            raise ValueError("Expected six finite standard-DH rows")
+            raise ValueError("Expected nonempty finite standard-DH rows")
         for transform in (model.base_transform, model.tool_transform):
             if (
                 transform.shape != (4, 4)
@@ -200,12 +217,49 @@ class AlohaMiniArmKinematics:
             ):
                 raise ValueError("Expected a finite rigid transform")
         if model.joint_limits is not None and (
-            np.shape(model.joint_limits) != (6, 2)
+            np.shape(model.joint_limits) != (len(model.rows), 2)
             or not np.isfinite(model.joint_limits).all()
             or any(lo >= hi for lo, hi in model.joint_limits)
         ):
-            raise ValueError("Expected six finite ordered joint limits")
+            raise ValueError("Expected finite ordered limits for every joint")
         return model
+
+    @classmethod
+    def from_model(cls, model: str | RobotModel, chain: str, *, joint_limits=None):
+        """Resolve geometry through the model catalog; all file names belong to assets."""
+        model = get_robot_model(model) if isinstance(model, str) else model
+        if not isinstance(model, RobotModel):
+            raise TypeError("Expected a robot model ID or loaded RobotModel")
+        spec = json.loads(model.kinematic_chain_path(chain).read_text())
+        names = spec.get("joint_names", [])
+        if (
+            spec.get("schema_version") != 1
+            or not spec.get("frame")
+            or not names
+            or any(not isinstance(name, str) or not name for name in names)
+            or len(set(names)) != len(names)
+        ):
+            raise ValueError("Kinematic chain needs a frame and unique ordered joint names")
+        if joint_limits is None:
+            root = ET.parse(model.description_path(spec["limits_description"])).getroot()
+            joints = {joint.get("name"): joint for joint in root.findall("joint")}
+            joint_limits = []
+            for name in names:
+                joint = joints.get(name)
+                if joint is None or joint.get("type") != "revolute":
+                    raise ValueError(f"Standard-DH chain requires a bounded revolute joint: {name}")
+                limit = joint.find("limit")
+                if limit is None:
+                    raise ValueError(f"Kinematic joint has no limits: {name}")
+                joint_limits.append((float(limit.get("lower")), float(limit.get("upper"))))
+        result = cls(model.asset_path(spec["dh"]), model.asset_path(spec["tool"]), joint_limits)
+        if len(result.rows) != len(names):
+            raise ValueError("DH row count differs from the declared joint order")
+        result.frame, result.joint_names = spec["frame"], tuple(names)
+        result.model_reference = dict(
+            model_id=model.model_id, asset_revision=model.asset_revision, chain=chain
+        )
+        return result
 
     def inverse(
         self,
@@ -264,33 +318,10 @@ class AlohaMiniArmKinematics:
                 break
         raise ValueError("IK did not converge within the declared pose tolerances")
 
-    @classmethod
-    def from_description(
-        cls,
-        side: str = "right",
-        joint_limits: list[tuple[float, float]] | None = None,
-    ) -> AlohaMiniArmKinematics:
-        share = get_robot_model("alohamini2pro").directory
-        directory = share / "config" / "kinematics"
-        if side not in ("left", "right"):
-            raise ValueError("side must be left or right")
-        if joint_limits is None:
-            root = ET.parse(share / "urdf" / "alohamini2pro_kinematic.urdf").getroot()
-            joints = {joint.get("name"): joint for joint in root.findall("joint")}
-            joint_limits = []
-            for suffix in ARM_SUFFIXES:
-                limit = joints[f"{side}_{suffix}"].find("limit")
-                joint_limits.append((float(limit.get("lower")), float(limit.get("upper"))))
-        return cls(
-            directory / "right_arm_kinematics.yaml",
-            directory / "kinematics.yaml",
-            joint_limits,
-        )
-
     def forward(self, joints: list[float] | np.ndarray) -> np.ndarray:
         joints = np.asarray(joints, dtype=float)
-        if joints.shape != (6,) or not np.all(np.isfinite(joints)):
-            raise ValueError("joints must contain six finite values")
+        if joints.shape != (len(self.rows),) or not np.all(np.isfinite(joints)):
+            raise ValueError("joints must contain one finite model angle per DH row")
         transform = self.base_transform.copy()
         for q, (a, alpha, d, offset) in zip(joints, self.rows, strict=True):
             theta = float(q) + offset
@@ -307,10 +338,10 @@ class AlohaMiniArmKinematics:
         return transform @ self.tool_transform
 
     def link_transforms(self, joints: list[float] | np.ndarray) -> list[np.ndarray]:
-        """Return base, six DH joint frames, and TCP for visualization."""
+        """Return base, DH joint frames, and TCP for visualization."""
         joints = np.asarray(joints, dtype=float)
-        if joints.shape != (6,) or not np.all(np.isfinite(joints)):
-            raise ValueError("joints must contain six finite values")
+        if joints.shape != (len(self.rows),) or not np.all(np.isfinite(joints)):
+            raise ValueError("joints must contain one finite model angle per DH row")
         transform = self.base_transform.copy()
         transforms = [transform.copy()]
         for q, (a, alpha, d, offset) in zip(joints, self.rows, strict=True):
@@ -332,8 +363,8 @@ class AlohaMiniArmKinematics:
     def forward_batch(self, joints):
         """Batched FK for dataset fields; preserve arbitrary leading dimensions."""
         joints = np.asarray(joints, dtype=float)
-        if joints.shape[-1:] != (6,) or not np.isfinite(joints).all():
-            raise ValueError("joints must end in six finite values")
+        if joints.shape[-1:] != (len(self.rows),) or not np.isfinite(joints).all():
+            raise ValueError("joints must end in one finite model angle per DH row")
         shape = (*joints.shape[:-1], 4, 4)
         transform = np.broadcast_to(self.base_transform, shape).copy()
         for index, (a, alpha, d, offset) in enumerate(self.rows):
@@ -353,11 +384,19 @@ class AlohaMiniArmKinematics:
     def jacobian(self, joints: list[float] | np.ndarray, epsilon: float = 1.0e-6) -> np.ndarray:
         joints = np.asarray(joints, dtype=float)
         current = self.forward(joints)
-        jacobian = np.empty((6, 6), dtype=float)
-        for index in range(6):
+        jacobian = np.empty((6, len(self.rows)), dtype=float)
+        for index in range(len(self.rows)):
             shifted = joints.copy()
             shifted[index] += epsilon
             moved = self.forward(shifted)
             jacobian[:3, index] = (moved[:3, 3] - current[:3, 3]) / epsilon
             jacobian[3:, index] = _rotation_vector(moved[:3, :3] @ current[:3, :3].T) / epsilon
         return jacobian
+
+
+class AlohaMiniArmKinematics(SerialArmKinematics):
+    """AlohaMini/ROS convenience entry point over registered model geometry."""
+
+    @classmethod
+    def from_description(cls, side="right", joint_limits=None, *, robot_model="alohamini2pro"):
+        return cls.from_model(robot_model, side, joint_limits=joint_limits)

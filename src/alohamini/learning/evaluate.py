@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from alohamini.learning.data import AlohaMiniDataset
+from alohamini.learning.data_fields import prepare_fields
 from alohamini.learning.logging import training_logging
 from alohamini.learning.policy import NativePolicy
 from alohamini.learning.train import offline_evaluate
@@ -32,6 +33,8 @@ def evaluate_checkpoint(
     manifest = policy.manifest
     sample_spec = policy.algorithm.sample_spec(manifest["config"], cameras=manifest["cameras"])
     sample_spec["exclude_fixed_state"] = manifest.get("fixed_state_excluded", False)
+    if manifest.get("data_fields"):
+        sample_spec["context_fields"] = ["observation.state"]
     samples = AlohaMiniDataset(
         dataset,
         episodes=episodes,
@@ -45,6 +48,12 @@ def evaluate_checkpoint(
             if allow_unannotated is None
             else allow_unannotated
         ),
+    )
+    samples = prepare_fields(
+        samples,
+        {"data": manifest.get("data_fields", {})},
+        policy.algorithm,
+        options=manifest["config"],
     )
     return {
         "checkpoint": str(Path(checkpoint).expanduser().resolve()),

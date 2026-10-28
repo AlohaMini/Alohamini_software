@@ -32,6 +32,7 @@ from alohamini.learning.checkpoint import (
     validate_pretrained,
 )
 from alohamini.learning.data import AlohaMiniDataset, DatasetInspection
+from alohamini.learning.data_fields import prepare_fields
 from alohamini.learning.ema import EMAManager, validate_ema_setup
 from alohamini.learning.execution import Execution, RankBatchSampler, validate_local_workers
 from alohamini.learning.loading import loader_options, make_loader, resolve_data_pipeline
@@ -130,6 +131,12 @@ def offline_evaluate(
     Predicts independent chunks, not a closed-loop task success rate. Execution
     scaling is included so reported outputs match the checkpoint's action meaning.
     """
+    transform = getattr(samples, "field_transform", None)
+    if transform is not None and (
+        getattr(policy, "field_transform", None) is None
+        or transform.configuration != policy.field_transform.configuration
+    ):
+        raise ValueError("Offline dataset field transforms differ from checkpoint")
     if (
         samples.info.get("robot_metadata") != policy.source.get("robot_metadata")
         or samples.info.get("training_only") != policy.source.get("training_only")
@@ -203,9 +210,10 @@ def _offline_evaluate_chunks(
         if offsets is not None:
             mask = mask & (torch.tensor(offsets) >= 0)[None]
         predicted = predict(batch)
-        if predicted.shape != batch["action"].shape:
+        targets = batch.get("_recorded_action", batch["action"])
+        if predicted.shape != targets.shape:
             raise ValueError("Evaluation chunk_size must match checkpoint")
-        total += ((predicted - batch["action"]).abs() * mask[..., None]).sum((0, 1))
+        total += ((predicted - targets).abs() * mask[..., None]).sum((0, 1))
         count += int(mask.sum())
     return {
         "valid_action_steps": count,
@@ -340,6 +348,9 @@ def _train(settings, execution):
     if val_episodes:
         with log_stage(f"Creating validation dataset ({len(val_episodes)} episodes)"):
             validation = AlohaMiniDataset(**args, episodes=val_episodes, inspection=inspection)
+    samples = prepare_fields(samples, cfg, components, options=options)
+    if validation is not None:
+        validation = prepare_fields(validation, cfg, components, options=options)
     if cfg.get("drop_last", False) and len(samples) < batch_size:
         raise ValueError("drop_last would discard every sample; reduce batch_size")
     pretrained_manifest = validate_pretrained(cfg, samples)
@@ -421,7 +432,9 @@ def _train(settings, execution):
                 model = make_policy(cfg["policy"], restored_options, stats)
                 components.load(model_path, model)
                 model.to("cpu" if execution.sharded else device)
-                processor = make_processor(model, stats, device)
+                processor = make_processor(
+                    model, stats, device, data_fields=manifest.get("data_fields")
+                )
             else:
                 policy = NativePolicy(
                     checkpoint_path / "pretrained_model",
@@ -430,7 +443,9 @@ def _train(settings, execution):
                 model, processor, stats = policy.model, policy.processor, manifest["stats"]
                 del policy
             if execution.sharded:
-                processor = make_processor(model, stats, device)
+                processor = make_processor(
+                    model, stats, device, data_fields=manifest.get("data_fields")
+                )
         else:
             with log_stage(
                 "Loading normalization statistics"
@@ -466,7 +481,7 @@ def _train(settings, execution):
                 if cfg.get("pretrained_path"):
                     logger.debug("Loading initial policy weights: %s", cfg["pretrained_path"])
                 initialize_policy(components, model, cfg)
-                processor = make_processor(model, stats, device)
+                processor = make_processor(model, stats, device, data_fields=cfg.get("data"))
         attempt = time.time_ns()
         config_name = (
             "train.json"

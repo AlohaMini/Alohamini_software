@@ -22,6 +22,7 @@ def loss_counts(batch):
 
 
 class ACTAlgorithm:
+    supports_field_transforms = True
     fsdp_classes = ("ACTEncoderLayer", "ACTDecoderLayer", "BasicBlock", "Bottleneck")
     include_task = False
     loss_counts = staticmethod(loss_counts)
@@ -147,6 +148,7 @@ class ACTAlgorithm:
 
 
 class AMACTAlgorithm(ACTAlgorithm):
+    supports_field_transforms = False
     kind = "am_act"
 
     def processor(self, model, stats, device):

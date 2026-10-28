@@ -127,6 +127,15 @@ def load_robot_model(directory: str | Path) -> RobotModel:
     for name, relative in descriptions.items():
         identifier(name, "description name")
         asset_path(directory, relative)
+    kinematics = {}
+    for section in ("kinematic_chains", "kinematic_presets"):
+        entries = data.get(section, {})
+        if not isinstance(entries, dict):
+            raise ValueError(f"{section} must be an object")
+        for name, relative in entries.items():
+            identifier(name, section + " name")
+            asset_path(directory, relative)
+        kinematics[section] = MappingProxyType(dict(entries))
     return RobotModel(
         model_id=data["model_id"],
         actuators=tuple(actuators),
@@ -136,6 +145,7 @@ def load_robot_model(directory: str | Path) -> RobotModel:
         asset_revision=revision,
         descriptions=MappingProxyType(dict(descriptions)),
         directory=directory,
+        **kinematics,
     )
 
 

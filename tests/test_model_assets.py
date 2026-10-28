@@ -18,6 +18,8 @@ class ModelAssetTests(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.data = json.loads(self.model.asset_path("model.json").read_text())
         self.data["descriptions"] = {}
+        self.data.pop("kinematic_chains", None)
+        self.data.pop("kinematic_presets", None)
 
     def write_model(self):
         (self.directory / "model.json").write_text(json.dumps(self.data))
@@ -89,6 +91,25 @@ class ModelAssetTests(unittest.TestCase):
         self.assertEqual(loaded.wheel_radius_m, 0.07)
         self.assertEqual(loaded.directory, self.directory.resolve())
         self.assertEqual(self.model.wheel_radius_m, 0.063)
+
+    def test_kinematic_chains_are_optional_explicit_contained_assets(self):
+        self.write_model()
+        self.assertEqual(load_robot_model(self.directory).kinematic_chains, {})
+        with self.assertRaisesRegex(ValueError, "no kinematic chain"):
+            get_robot_model("alohamini1").kinematic_chain_path("left")
+        self.data["kinematic_chains"] = {"arm": "../outside.json"}
+        self.write_model()
+        with self.assertRaises(ValueError):
+            load_robot_model(self.directory)
+        self.data["kinematic_chains"] = {"arm": "chain.json"}
+        self.write_model()
+        with self.assertRaises(FileNotFoundError):
+            load_robot_model(self.directory)
+        (self.directory / "chain.json").write_text("{}")
+        loaded = load_robot_model(self.directory)
+        self.assertEqual(loaded.kinematic_chain_path("arm"), self.directory / "chain.json")
+        with self.assertRaises(TypeError):
+            loaded.kinematic_chains["other"] = "chain.json"
 
     def test_unsupported_version_or_missing_geometry_is_rejected(self):
         original = dict(self.data)

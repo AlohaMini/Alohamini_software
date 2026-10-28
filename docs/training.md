@@ -101,6 +101,153 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 平台字段按参数顺序组装。关节位置使用标定坐标，关节速度为对应坐标单位/秒，电流为 A；
 底盘速度为 m/s、deg/s，升降高度为 mm。action 为双臂绝对位置目标、底盘速度及升降高度目标。
 
+### 关节、TCP 与相对目标
+
+`observation.state` 描述当前观测，`action` 是对应记录中的控制目标。两者即使名称和维度相同，
+也不能互相替代。Host 的关节位置可以是归一化舵机坐标，不能直接作为 URDF／DH 的关节角。
+
+`--state` 选择送入模型的源字段；以下参数在同一数据处理层选择这些字段和 action 的表示，
+转换后才计算训练统计和归一化，不改写原数据集。目前 ACT、Spirit 接入此接口：
+
+| 参数 | 选项与用途 |
+| --- | --- |
+| `--data.state_representation` | `recorded` 保留所选字段；`tcp` 将完整臂关节位置组替换为 TCP 位姿，保留其他所选字段 |
+| `--data.action_representation` | `recorded` 原目标；`tcp_absolute` 绝对 TCP 目标；`tcp_delta` 相对当前观测的 TCP 目标 |
+| `--data.kinematics.reference_pose` | 按型号登记的标定姿态解析几何与编码器坐标，如 `upright_forward` |
+| `--data.kinematics.spec` | 自定义字段、坐标和几何的 JSON 文件 |
+| `--data.kinematics.path` | 已解析、包含完整几何快照的转换描述 JSON |
+
+三种 `kinematics` 来源选一。ACT 默认保留记录表示；Spirit 新训练默认使用 TCP state 和 TCP 增量动作，
+仍须显式提供一种几何来源。原始字段、模型字段、转换配置和归一化统计随 checkpoint 保存，续训无需原配置文件。
+
+state 与 action 表示可以独立选择。例如保留关节 state、只转换动作时，使用
+`--data.state_representation=recorded --data.action_representation=tcp_delta`。
+ACT 使用 `--state=none` 时仍可预测 TCP 动作：数据须保留原关节观测作为转换及 IK 的锚点，
+这些关节值不送入模型；已经移除数值观测的纯视觉副本无法提供此锚点。
+TCP 动作执行按窗口解码，不支持 ACT 时间融合；其他策略须完成对应适配后才能启用此接口。
+
+关节到 TCP 的转换依次使用以下参数：
+
+| 转换 | 所需参数 |
+| --- | --- |
+| Host 记录值 → 归零后编码器位置 | 数据集中的归一化方式、范围和方向 |
+| 归零后编码器位置 → 模型关节角（rad） | 对应设备的参考编码器值、参考关节角、正方向和传动比 |
+| 模型关节角 → TCP 位姿 | 机器人型号的 DH 几何、基坐标与工具变换 |
+
+`q_URDF` 表示 URDF 模型定义的关节角，零值对应模型的 CAD 零姿态，单位为 rad。
+采集关节角也可使用其他明确的零姿态；切换零姿态时，将对应模型角加到 DH 的 `theta_offset`，
+即可保持同一套物理 FK，不要求把模型 CAD 零位当成电机标定零位。
+
+**标准中位标定数据**：`alohamini2pro` 的 `upright_forward` 预设采用大臂向上平行 z 轴、
+小臂及夹爪沿机器人 x 轴前伸、夹爪开合平面水平，肩部转向与腕部偏转处于中位。
+`upright` 指大臂竖直，`forward` 指小臂及夹爪前伸；这是标定坐标预设的名称。
+仅在采集时按此姿态执行半圈归零的情况下，训练时选择：
+
+```bash
+pip install -e '.[kinematics]'
+alohamini train \
+  --policy.type=act \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --state=joint_position \
+  --data.state_representation=tcp \
+  --data.action_representation=tcp_delta \
+  --data.kinematics.reference_pose=upright_forward \
+  --output_dir="$HOME/Alohamini_workspace/runs/act_tcp_01" --background
+```
+
+此预设将上述姿态定义为六个关节角均为零，将与 CAD 零姿态的差值吸收到 DH 角偏移。
+该姿态对应原模型关节角 `[0°, -90°, 90°, 0°, 0°, 0°]`；方向按连杆主轴确定，
+不使用偏置安装的舵机轴心连线代替连杆方向。
+STS 半圈归零后的参考 tick 为 `2047`；当前数据的归一化、方向、范围及归零参数从记录元数据读取，
+不读取旧设备的关节映射文件。IK 关节范围由该记录的编码器范围换算，预设及解析后的参数随 checkpoint 保存。
+选择此预设是声明采集所用的标定协议，不会移动机器人或重新归零，也不从文件名或向量维度推断姿态。
+
+已经使用模型关节坐标的弧度或角度数据可直接进行 FK。编码器数据还需定义它与模型关节坐标的关系；
+电机范围和 `homing_offset` 本身不能唯一确定模型中的关节零位。计算不需要启动 ROS 或读取在线 TF。
+编码器值和参考编码器值均使用归零后坐标，不重复加减 `homing_offset`。
+每关节的模型角按 `q = q_ref + sign × wrap(tick - tick_ref) × 2π/N × ratio` 计算，
+其中 `N` 为一圈编码器计数，`wrap` 取单圈有符号差；限位用于选择明确的角度分支。
+
+需要单独检查或复用解析结果时，可选导出转换描述：
+
+```bash
+mkdir -p "$HOME/Alohamini_workspace/configs"
+python -m alohamini.datasets.kinematic_fields \
+  --dataset "$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --reference-pose upright_forward \
+  --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
+```
+
+此命令只将当前数据的字段、编码器坐标和型号几何解析为 JSON，不生成 TCP 数据列，也不训练。
+训练可通过 `--data.kinematics.path` 复用该文件；直接选择预设时无需先执行导出。
+
+自定义坐标使用 `--data.kinematics.spec=/完整路径/坐标配置.json`；导出命令也支持用 `--spec` 替代
+`--reference-pose`。JSON 不要求固定型号、左右臂名称或 ROS 标定文件，配置包括：
+
+| 字段 | 配置要求 |
+| --- | --- |
+| `version` | `1` |
+| `source_names` | 原 action 顺序；省略时读取数据集；原关节观测须包含这些命名坐标，所选模型 state 可以只取其中一部分 |
+| `arms` | 一个或多个命名运动链；关节数由几何确定，夹爪可省略 |
+| `arms[].model` | `{"id":"alohamini2pro","chain":"left"}`；自定义型号用 `directory` 替代 `id`；可用 `joint_zero` 声明新零姿态对应的模型关节角 |
+| `arms[].geometry` | 与 `model` 二选一；直接提供标准 DH 的 `rows`、`base_transform`、`tool_transform` 和 `joint_limits`，同时声明 `frame` |
+| `arms[].coordinates` | 按模型关节顺序列出 `field` 与 `unit`；支持模型 `rad`／`deg`、归零后 `encoder` tick、Host `host` 坐标 |
+| `arms[].gripper` | 声明源字段、源开闭端点、输出开闭端点及单位；不从数值范围推断实际开口 |
+| `passthrough`／`passthrough_units` | 按顺序透传的字段及单位；与运动链合计覆盖每个源字段一次 |
+| `source_calibration` | Host 数据所用电机的采集期参数，按电机名保存归一化、范围、方向、`homing_offset`，以及可用的 ID／型号 |
+
+`encoder`／`host` 坐标另需 `encoder` 映射：`ticks_per_revolution`、`reference_tick`、
+`reference_position_rad`、`direction`、`joint_per_encoder_ratio` 及弧度限位
+`position_min_rad`／`position_max_rad`。`host` 还需 `host_units` 中的
+`normalization`、`range_min`、`range_max`、`drive_mode`。这些参数必须对应采集期的坐标。
+
+关节已经是模型弧度时，可复制[单臂配置示例](../examples/datasets/kinematics-radians.json)，
+按数据修改字段名、运动链和夹爪端点后传给 `--data.kinematics.spec`。Host 的归一化值或中心角度不能直接标成模型 `rad`／`deg`。
+型号的 `model.json` 通过 `kinematic_chains` 登记几何文件；当前内置 `alohamini2pro` 左右臂，
+未登记的型号不会回退到其他机器人的几何。标准 DH 后端支持转动关节链，不支持移动关节。
+
+已有左右臂 Host YAML 时，可使用导入入口：
+
+```bash
+python -m alohamini.datasets.kinematic_fields \
+  --dataset "$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --left-map "$HOME/Alohamini_workspace/calibration/hardware_joint_map_left.yaml" \
+  --right-map "$HOME/Alohamini_workspace/calibration/hardware_joint_map_right.yaml" \
+  --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
+```
+
+此导入器处理双六关节臂格式，映射中每个关节须包含采集期的 `motor_calibration`：
+`homing_offset`、`range_min`、`range_max`、`drive_mode`。缺失或与数据不符时拒绝生成，不能用当前配置补填旧标定来源。
+生成的描述保存字段、单位、编码器映射、DH／TCP 几何、参考坐标、限位和夹爪映射；输出文件须尚不存在。
+训练统计及 checkpoint 加载均校验来源坐标，后续计算直接读取快照，不再访问原型号文件和标定路径。
+
+训练读取样本后调用共享转换，保留原始记录、时间配对和动作请求语义，不将动作请求替换为未来实测反馈。
+Spirit 的训练资源与命令见 [Spirit v1.5](#spirit-v15)。
+
+每条运动链生成 `[x, y, z, rx, ry, rz]`，配置夹爪时再追加 `gripper`：位置为 m，旋转向量为 rad。
+Host YAML 导入器将夹爪映射到 `canonical_0_0.1`，该数值不表示实际开口米数。
+`alohamini2pro` 两臂分别使用 `left_Base`、`right_Base`，不隐含世界坐标或底盘里程计。
+
+相对目标以当前观测为同一个锚点，对每个未来目标分别计算：
+
+```text
+T_anchor    = FK(current_model_joints)
+T_target[k] = FK(recorded_target_joints[k])
+delta_p[k]  = p_target[k] - p_anchor
+delta_r[k]  = rotvec(R_target[k] @ R_anchor.T)
+```
+
+这些值是各臂基坐标系下相对当前观测的目标，不是相邻两帧的差，也不逐步累积。
+旋转通过矩阵组合计算，不能直接相减旋转向量。
+夹爪保持绝对开合目标并按配置换算单位；底盘速度和升降高度保留记录值及声明单位。
+单纯计算关节坐标差不需要 FK；计算 TCP 差需要正确的模型关节角和几何。
+
+推理时还原 `p_target = p_anchor + delta_p`、`R_target = exp(delta_r) @ R_anchor`，
+再以当前观测关节为初值执行 IK，后续目标沿用上一步解。
+本地逐步评估先解码整个执行窗口，再逐步发送，沿用同一锚点和连续 IK 解；新窗口重新取观测。
+不可达、超出约束或未收敛的目标会报错。转换描述与处理顺序随 checkpoint 保存。
+部署时继续使用匹配的编码器坐标；普通 `normalized` 关节比例迁移不能替代 TCP 映射，来源坐标变化会拒绝绑定。
+
 ## 4. 训练
 
 以下命令留出 episode 1 做验证，其余回合训练。数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
@@ -458,6 +605,86 @@ KI 可通过 `--policy.vlm_data_path=/path/to/train.jsonl` 混入图文或规划
 
 SmolVLA／π0.5 的完整基座须按可用显存调整 batch 和精度。
 
+### Spirit v1.5
+
+使用本地 Spirit 基座及 Qwen 配置、tokenizer 和图像处理资源：
+
+```bash
+pip install -e '.[spirit]'
+hf download Spirit-AI-robotics/Spirit-v1.5 \
+  --revision 9886fa7552de70b097c4214b7e40e66ff937a6fd \
+  --local-dir "$HOME/Alohamini_workspace/pretrained/spirit-v1.5"
+python -m alohamini.policies.spirit.assets \
+  --revision ebb281ec70b05090aa6165b016eac8ec08e71b17 \
+  --output "$HOME/Alohamini_workspace/pretrained/spirit-qwen-assets"
+```
+
+Qwen 权重已包含在 Spirit 基座中，此资源命令只下载配置和处理器文件，记录版本及文件摘要；
+输出目录须为空。训练和 checkpoint 加载只读取本地资源。
+
+按[关节、TCP 与相对目标](#关节tcp-与相对目标)选择数据表示。以下命令适用于标准中位标定数据：
+
+```bash
+alohamini train \
+  --policy.type=spirit \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/spirit-v1.5" \
+  --policy.backbone_path="$HOME/Alohamini_workspace/pretrained/spirit-qwen-assets" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --state=joint_position,base_velocity,lift_height \
+  --data.state_representation=tcp \
+  --data.action_representation=tcp_delta \
+  --data.kinematics.reference_pose=upright_forward \
+  --dataset.eval_episodes='[1]' \
+  --cameras='["forward","wrist_left","wrist_right"]' \
+  --distributed_backend=fsdp2 --num_processes=4 \
+  --mixed_precision=bfloat16 --batch_size=1 --gradient_accumulation_steps=8 \
+  --steps=40000 --save_freq=5000 --log_freq=100 \
+  --output_dir="$HOME/Alohamini_workspace/runs/spirit_01" --background
+```
+
+`num_processes`、batch 和累积次数按可用显卡与显存调整。
+默认采用 16 层、1536 宽、32 头 DiT，交替自注意力与跨注意力；生成 60 步动作，推理执行 10 步 Euler 采样。
+训练采用 Flow Matching、全参 AdamW `2.5e-5`、betas `(0.9,0.95)`、weight decay `1e-10`、
+梯度裁剪 `1`、1000 步预热，调度器默认到 50000 步衰减至 `2.5e-6`。
+训练预设为 40000 步、每卡 batch=32、BF16；上例显式使用较小 batch 和梯度累积。
+梯度检查点默认开启，可用 `--policy.gradient_checkpointing=false` 关闭。
+
+| 数据表示 | 输入与执行 |
+| --- | --- |
+| state=`tcp`、action=`tcp_delta`（默认） | 共享数据层转换关节 state/action；预测相对当前 TCP 的位姿目标，执行前用 IK 恢复 Host 目标 |
+| state=`recorded`、action=`recorded` | 保留所选 state 和原 action；无需运动学配置 |
+
+保留记录表示时，将上例两个表示参数均改为 `recorded` 并省略 `--data.kinematics.reference_pose`。
+Spirit 需要数值 state 和非空任务文本，不支持 `--state=none`。
+原 action 的名称与顺序须匹配转换描述；所选 state 单独记录，FK 所需的完整关节观测由读取器提供。
+底盘和升降动作保持完整，不自动固定这些自由度。
+转换后的 state/action 宽度最多各 32 维，原始关节数与派生 TCP 维度分别记录。
+填充通道和 episode 尾部补齐目标不计入动作损失。
+归一化分别在转换后的训练 state/action 上计算 p1/p99 并映射到 `[-1,1]`，不复用基座机器人的统计。
+
+最多选择三路 RGB，相机映射须覆盖全部选中视角：
+
+| 记录相机 | Spirit 槽位 |
+| --- | --- |
+| `forward` | `cam_high` |
+| `wrist_left` | `cam_left_wrist` |
+| `wrist_right` | `cam_right_wrist` |
+
+其他名称通过 `--policy.camera_mapping='{"cam_high":"top","cam_left_wrist":"left","cam_right_wrist":"right"}'`
+显式映射，并用 `--cameras` 选择对应视角。未使用的槽位填黑图。
+图像先读取为 RGB 240×320，再由 Qwen processor 处理；训练使用 ColorJitter，验证和推理关闭增强。
+每行 `task` 用作任务文本，机器人提示类型默认为 `aloha`，用 `--policy.robot_type` 覆盖。
+
+预设参考实现固定到 [6d67377](https://github.com/Spirit-AI-Team/spirit-v1.5/tree/6d67377f16f67d6575447a1f29fdd83a2e0099d9)，
+基座固定到 [9886fa7](https://huggingface.co/Spirit-AI-robotics/Spirit-v1.5/tree/9886fa7552de70b097c4214b7e40e66ff937a6fd)。
+参考 Franka 数据使用前一帧末端状态及未来实测位姿；平台保留记录的观测／动作配对和数据 FPS，
+不重采样时间戳，使用共享训练调度器和完整训练窗口统计。这些协议差异、显式覆盖值和几何快照保存在 checkpoint 中。
+官方说明见 [Finetune Guide](https://github.com/Spirit-AI-Team/spirit-v1.5#finetune-guide)。
+
+原生 checkpoint 包含完整模型及 Qwen 配置、tokenizer、图像处理资源，可脱离原资源目录加载。
+`preprocessing.json` 列出原始执行字段、派生统计字段的名称／单位和转换顺序。
+支持单设备、DDP、FSDP2、离线评估和云端动作块推理；Spirit 不支持 RTC 前缀引导。
+
 ### 日志与配置
 
 ```bash
@@ -504,7 +731,7 @@ ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比�
 ```
 
 优化器支持 `adamw`、`adam`、`sgd`，默认沿用策略配置。
-ACT／AM-ACT 默认无调度，SmolVLA 使用 `cosine`，π0.5 使用 `warmup_cosine`，
+ACT／AM-ACT 默认无调度，SmolVLA 使用 `cosine`，π0.5／Spirit 使用 `warmup_cosine`，
 Diffusion／FastWAM 使用 `diffusers_cosine`；
 `--scheduler.type=none` 禁用调度。可覆盖 `warmup_steps`、`decay_steps`、`decay_lr`。
 
@@ -712,7 +939,7 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 ACT／AM-ACT 每步预测并融合时，使用 `--policy.n_action_steps 1 --policy.temporal_ensemble_coeff 0.01`；
 `none` 关闭融合，`0` 为等权融合。更换执行参数无需重新训练。
 
-SmolVLA／π0.5／FastWAM 评估须增加 `--task "拿起物体"`。Diffusion／FastWAM 不使用 ACT 时间融合。
+SmolVLA／π0.5／FastWAM／Spirit 评估须增加 `--task "拿起物体"`。Diffusion／FastWAM／Spirit 不使用 ACT 时间融合。
 `--dataset eval_01 --task "拿起物体"` 保存评估回合。Ctrl+C 结束。持续反馈中断或关节保护时暂停，恢复后清空旧策略缓存并继续；Host 重启、标定变化或其他客户端接管时结束评估。
 推理耗时限制实际执行频率。
 
@@ -745,18 +972,9 @@ RTC 使用完整预测块，重规划间隔由 `rtc.replan_steps` 控制，覆�
 RTC 需要对动作输入求梯度，使用 eager 采样，会增加计算和显存开销；不与 ACT 时间融合组合。
 评估数据的 `meta/evaluation.json` 保存 RTC 参数，帧元数据保存预测来源时间。
 
-远程推理在 GPU 服务端开启，Pi 根据握手配置执行：
-
-```bash
-# GPU 服务端
-alohamini inference serve --bind tcp://127.0.0.1:5560 \
-  --policy.path <checkpoint> --task "拿起物体" --rtc
-# Pi，经 VPN 或 SSH 隧道连接服务端
-alohamini inference run --server tcp://127.0.0.1:5560 \
-  --host 127.0.0.1 --robot_model alohamini2pro --fps 30
-```
-
-远程 `--chunk-size` 默认使用完整预测块；有效预测年龄上限取服务端 RTC 设置与 Pi 的
+云端推理时，在 GPU 服务端的 `alohamini inference serve` 命令后追加 `--rtc`；
+Pi 根据握手配置执行，连接步骤见[云端推理](#云端推理)。
+RTC 模式的 `--chunk-size` 默认使用完整预测块；有效预测年龄上限取服务端 RTC 设置与 Pi 的
 `--max-prediction-age-s`（默认 1 秒）的较小值。两端须使用支持 RTC 协议的版本。
 算法参考 [Physical Intelligence RTC](https://github.com/Physical-Intelligence/real-time-chunking-kinetix/tree/9296f31d62d5bfeb5779dcb2f9bcf71ca37f448b)，仅提供推理期引导模式。
 
@@ -801,6 +1019,164 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 
 使用 `--fixed-current` 前，先遥操摆好位置，再退出遥操并保持同一 Host 进程。
 绑定标定与固定目标报告保存在工作区 `logs/evaluation/`；运行中标定变化会结束评估。
+
+### 云端推理
+
+树莓派直接发送图像和 state 到云端 GPU，接收动作块并在本地执行；PC 用于登录管理。
+当前支持平台原生 PI05、SmolVLA 和 Spirit checkpoint。
+云端与树莓派使用相同版本的 Alohamini；树莓派先启动本地 Host，完成标定和升降归零，退出其他控制客户端。
+Host 地址保持 `127.0.0.1`。ZeroMQ 推理端口 `5560` 通过 SSH 隧道或 WireGuard 连接，不直接开放到公网。
+
+在各自已激活的环境、项目根目录安装。云端 PI05 环境执行：
+
+```bash
+pip install -e '.[pi05,zmq]'
+```
+
+SmolVLA／Spirit 云端环境分别使用 `.[smolvla,zmq]`、`.[spirit,zmq]`。
+树莓派复用运行 Host 的环境：
+
+```bash
+pip install -e '.[host]'
+```
+
+以下服务端命令以 `pi05_01/checkpoint` 为例，替换为实际模型目录和任务文本；
+SSH 命令中的 `PORT`、`USER`、`CLOUD` 分别替换为云端 SSH 端口、用户名和地址。
+更换租用实例时更新 SSH 地址和端口；WireGuard 还需更新云端公钥及树莓派的 `Endpoint`。
+
+#### SSH 隧道
+
+云端启动推理服务：
+
+```bash
+alohamini inference serve --bind tcp://127.0.0.1:5560 \
+  --policy.path "$HOME/Alohamini_workspace/runs/pi05_01/checkpoint" \
+  --device cuda --task "拿起物体"
+```
+
+等待显示 `Remote policy server listening on tcp://127.0.0.1:5560` 后，树莓派建立隧道并保持终端运行：
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+  -L 127.0.0.1:5560:127.0.0.1:5560 -p PORT USER@CLOUD
+```
+
+首次连接核对云端 SSH 主机指纹。SSH 服务须允许本地端口转发，且它所在的网络环境能访问
+云端 `127.0.0.1:5560` 上的推理服务。[OpenSSH 转发说明](https://man.openbsd.org/ssh.1)
+
+树莓派另开终端执行：
+
+```bash
+alohamini inference run --server tcp://127.0.0.1:5560 \
+  --host 127.0.0.1 --robot_model alohamini2pro --fps 30
+```
+
+`ExitOnForwardFailure` 只检查转发监听，SSH 保活不替代动作有效期和控制 watchdog。
+[OpenSSH 配置说明](https://man.openbsd.org/ssh_config.5)
+停止时先按 Ctrl+C 退出树莓派推理客户端，再关闭隧道和云端服务。
+若树莓派本地 `5560` 已占用，同时修改 `-L` 的第一个端口和 `--server` 端口，云端目标端口保持不变。
+
+#### WireGuard
+
+两端需能创建 WireGuard 接口，云端需提供可达 UDP 端口。租用容器可能缺少网络管理权限、
+WireGuard 内核支持或用户态实现所需的 `/dev/net/tun`；环境不满足时使用 SSH 隧道。
+按系统安装 [WireGuard 工具](https://www.wireguard.com/install/)。
+
+两端各生成一次密钥，以下命令拒绝覆盖已有文件：
+
+```bash
+(
+    umask 077
+    set -eC
+    mkdir -p "$HOME/.config/alohamini/wireguard"
+    chmod 700 "$HOME/.config/alohamini/wireguard"
+    wg genkey > "$HOME/.config/alohamini/wireguard/private.key"
+    wg pubkey < "$HOME/.config/alohamini/wireguard/private.key" > "$HOME/.config/alohamini/wireguard/public.key"
+)
+```
+
+只交换公钥。私钥和填好私钥的配置存放在各自机器的仓库之外，权限为 `600`。
+[密钥生成说明](https://www.wireguard.com/quickstart/)
+树莓派密钥可在更换云端实例后继续使用，新云端配置填入该树莓派公钥。
+
+云端复制[云端模板](../deploy/remote-inference/wireguard-cloud.conf.example)：
+
+```bash
+cp -n deploy/remote-inference/wireguard-cloud.conf.example "$HOME/.config/alohamini/wireguard/wg-infer.conf"
+chmod 600 "$HOME/.config/alohamini/wireguard/wg-infer.conf"
+```
+
+树莓派复制[树莓派模板](../deploy/remote-inference/wireguard-pi.conf.example)：
+
+```bash
+cp -n deploy/remote-inference/wireguard-pi.conf.example "$HOME/.config/alohamini/wireguard/wg-infer.conf"
+chmod 600 "$HOME/.config/alohamini/wireguard/wg-infer.conf"
+```
+
+在各自本机编辑 `wg-infer.conf`，填入本机私钥及对端公钥；树莓派将 `CLOUD_PUBLIC_HOST` 改为云端公网地址。
+模板使用云端 `10.88.0.1/32`、树莓派 `10.88.0.2/32`，仅路由对端 `/32`，不设置 NAT、转发或互联网默认路由。
+若地址冲突，先更换两端地址并同步修改配置及命令。
+[路由说明](https://git.zx2c4.com/wireguard-tools/about/src/man/wg-quick.8)
+
+云端安全组和防火墙允许 UDP `51820`，推理 TCP `5560` 仅允许 WireGuard 接口上的树莓派访问。
+若平台映射了其他外部 UDP 端口，修改树莓派 `Endpoint`，云端 `ListenPort` 保持内部端口。
+`PersistentKeepalive = 25` 用于维持 NAT 映射。
+[WireGuard 配置说明](https://git.zx2c4.com/wireguard-tools/about/src/man/wg.8)
+
+两端分别启动：
+
+```bash
+sudo wg-quick up "$HOME/.config/alohamini/wireguard/wg-infer.conf"
+sudo wg show wg-infer
+```
+
+树莓派可用 `ping -c 3 10.88.0.1` 检查目标连通性。ICMP 被禁用时仍需检查握手、路由和服务监听。
+云端启动：
+
+```bash
+alohamini inference serve --bind tcp://10.88.0.1:5560 \
+  --policy.path "$HOME/Alohamini_workspace/runs/pi05_01/checkpoint" \
+  --device cuda --task "拿起物体"
+```
+
+等待服务就绪后，树莓派执行：
+
+```bash
+alohamini inference run --server tcp://10.88.0.1:5560 \
+  --host 127.0.0.1 --robot_model alohamini2pro --fps 30
+```
+
+停止推理客户端和服务后，两端按需关闭隧道：
+
+```bash
+sudo wg-quick down "$HOME/.config/alohamini/wireguard/wg-infer.conf"
+```
+
+#### 连接与执行参数
+
+SSH 隧道连接失败时，检查云端推理进程及 SSH 转发目标是否处于同一网络环境。
+WireGuard 没有握手时检查公钥、UDP 入口和 `Endpoint`；已有握手时检查 `/32` 路由、绑定地址和接口防火墙。
+云端查看推理监听地址：
+
+```bash
+ss -ltn '( sport = :5560 )'
+```
+
+`--fps` 必须与 checkpoint 数据频率一致。服务端 `--chunk-size` 省略时使用 checkpoint 的可执行窗口，
+可用 `--chunk-size 32` 请求更短动作块，但不能超过该窗口；RTC 使用完整预测块并单独校验重叠区。
+这些参数不保证云端持续按执行频率返回结果。迟到结果跳过过期前缀，动作耗尽或 Host 会话、控制参考变化时停止，需显式重新运行。
+
+| 树莓派 `run` 参数 | 默认值 | 用途 |
+| --- | --- | --- |
+| `--episode_time` | 90 秒 | 每回合运行时长 |
+| `--rpc-timeout-s` | 10 秒 | 云端请求超时 |
+| `--max-prediction-age-s` | 1 秒 | 预测源观测的最大年龄 |
+| `--ack-timeout-s` | 0.5 秒 | Host 确认超时 |
+
+固定当前关节时，在云端 `serve` 和树莓派 `run` 两端传入相同的 `--fixed-current FIELD ...`。
+支持 `base`、`lift_axis`、`arm_left`、`arm_right` 或具名 Host 字段；树莓派从新鲜反馈捕获固定目标。
+PI05／SmolVLA 可在服务端开启[RTC](#rtc-异步推理)，仅提供推理期引导，不包含 RTC 训练。
+Spirit 使用普通动作块推理。实际链路时延与真机成功率须分别评估，不通过放宽控制 watchdog 补偿网络延迟。
 
 ## 8. 对比评估与训练示范
 

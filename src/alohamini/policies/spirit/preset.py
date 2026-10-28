@@ -9,6 +9,14 @@ SOURCE = (
 
 def apply_preset(settings):
     cfg = deepcopy(settings)
+    legacy = {"action_representation", "kinematics_path", "kinematic_fields"}
+    if "data" in cfg or not legacy.intersection(cfg.get("model", {})):
+        data = cfg.setdefault("data", {})
+        data.setdefault("state_representation", "tcp")
+        data.setdefault("action_representation", "tcp_delta")
+        cfg.setdefault("model", {})["action_representation"] = "recorded"
+        for key in ("kinematics_path", "kinematic_fields"):
+            cfg["model"].pop(key, None)
     for key, value in dict(
         state="joint_position,base_velocity,lift_height",
         image_size=[240, 320],
@@ -31,7 +39,10 @@ def apply_preset(settings):
             optimizer="full AdamW lr 2.5e-5, betas [0.9,0.95], warmup 1000, cosine decay",
         ),
         adaptation=dict(
-            action_representation=cfg.get("model", {}).get("action_representation", "eef_delta"),
+            action_representation=cfg.get("data", {}).get(
+                "action_representation",
+                cfg.get("model", {}).get("action_representation", "eef_delta"),
+            ),
             source="recorded action requests; observation/action/image pairing preserved",
             coordinates="explicit kinematic descriptor or explicitly declared recorded fields",
             extra_axes="retain all named base/lift action fields as absolute recorded values",

@@ -67,6 +67,18 @@ class SpiritConfig(PolicyConfig):
             raise ValueError("action_representation must be recorded or eef_delta")
         if self.action_representation == "eef_delta" and not self.kinematic_fields:
             raise ValueError("eef_delta requires an explicit kinematic-fields descriptor")
+        self.encoded_state_dim = self.robot_state_feature.shape[0]
+        self.encoded_action_dim = self.action_feature.shape[0]
+        if self.action_representation == "eef_delta":
+            from alohamini.datasets.kinematic_fields import KinematicFields
+
+            geometry = KinematicFields(self.kinematic_fields)
+            if any(
+                width != len(geometry.names)
+                for width in (self.encoded_state_dim, self.encoded_action_dim)
+            ):
+                raise ValueError("Kinematic source width must match original state/action features")
+            self.encoded_state_dim = self.encoded_action_dim = geometry.width
         if any(type(v) is not bool for v in (self.gradient_checkpointing, self.image_augmentation)):
             raise ValueError("gradient_checkpointing and image_augmentation must be boolean")
         for name in (
@@ -90,10 +102,10 @@ class SpiritConfig(PolicyConfig):
         if self.network["dit_hidden_size"] % self.network["dit_num_heads"]:
             raise ValueError("DiT hidden size must be divisible by attention heads")
         if (
-            self.action_feature.shape[0] > self.network["max_action_dim"]
-            or self.robot_state_feature.shape[0] > self.network["max_state_dim"]
+            self.encoded_action_dim > self.network["max_action_dim"]
+            or self.encoded_state_dim > self.network["max_state_dim"]
         ):
-            raise ValueError("Recorded feature width exceeds the Spirit padded dimensions")
+            raise ValueError("Encoded feature width exceeds the Spirit padded dimensions")
         cameras = {k.removeprefix("observation.images.") for k in self.image_features}
         if not self.camera_mapping:
             self.camera_mapping = {

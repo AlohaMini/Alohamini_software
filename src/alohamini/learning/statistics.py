@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from alohamini.learning.checkpoint import resolve_pretrained, validate_pretrained
 from alohamini.learning.data import AlohaMiniDataset
+from alohamini.learning.data_fields import active, prepare_fields
 from alohamini.learning.processor import DEFAULT_IMAGE_SIZE
 from alohamini.policies.registry import algorithm
 
@@ -54,6 +55,9 @@ def sample_arguments(cfg, components, options):
         return_uint8=cfg.get("return_uint8", False),
         allow_unannotated=cfg.get("allow_unannotated", False),
     )
+    if active(cfg.get("data", {})):
+        args["exclude_fixed_state"] = False
+        args["context_fields"] = ["observation.state"]
     validation = cfg.get("val_episodes", [])
     episodes = cfg.get("train_episodes")
     if episodes is None:
@@ -75,25 +79,26 @@ def _contract(components, samples, options, kind):
     # Device and execution cadence do not change the fitted training population.
     for key in ("device", "n_action_steps", "temporal_ensemble_coeff"):
         model.pop(key, None)
-    return _canonical(
-        dict(
-            policy=kind,
-            model=model,
-            source_info=samples.info,
-            source_sha256=samples.table_sha256,
-            episodes=samples.episodes,
-            state=samples.state,
-            state_units=samples.selection.units if samples.selection else [],
-            cameras=samples.cameras,
-            image_size=samples.image_size,
-            windows=samples.delta_indices,
-            sample_boundary="episode",
-            sample_filter=samples.sample_filter,
-            sample_indices_sha256=hashlib.sha256(
-                json.dumps(samples.sample_indices, separators=(",", ":")).encode()
-            ).hexdigest(),
-        )
+    contract = dict(
+        policy=kind,
+        model=model,
+        source_info=samples.info,
+        source_sha256=samples.table_sha256,
+        episodes=samples.episodes,
+        state=samples.state,
+        state_units=samples.selection.units if samples.selection else [],
+        cameras=samples.cameras,
+        image_size=samples.image_size,
+        windows=samples.delta_indices,
+        sample_boundary="episode",
+        sample_filter=samples.sample_filter,
+        sample_indices_sha256=hashlib.sha256(
+            json.dumps(samples.sample_indices, separators=(",", ":")).encode()
+        ).hexdigest(),
     )
+    if getattr(samples, "field_transform", None) is not None:
+        contract["data_fields"] = samples.field_transform.configuration
+    return _canonical(contract)
 
 
 def write_statistics(path, artifact):
@@ -135,7 +140,18 @@ def training_statistics(
         stats = components.statistics(samples, options)
     # Policy-specific layouts (including PI0.5 delta statistics) remain with the algorithm.
     expected = {k: (v.type, v.shape) for k, v in samples.input_features.items()}
-    components.validate_statistics(stats, expected, samples.info["features"]["action"]["names"])
+    components.validate_statistics(
+        stats,
+        expected,
+        samples.model_features["action"]["names"]
+        if getattr(samples, "field_transform", None)
+        else samples.info["features"]["action"]["names"],
+        manifest={
+            "config": contract["model"],
+            "source_info": samples.info,
+            "state_feature": samples.selection.feature if samples.selection else None,
+        },
+    )
     return _canonical(
         dict(
             format="alohamini-training-statistics",
@@ -199,6 +215,7 @@ def prepare_statistics(root, output, *, config=None):
         options = components.options(cfg, "cpu")
         args, episodes, _ = sample_arguments(cfg, components, options)
         samples = AlohaMiniDataset(**args, episodes=episodes)
+        samples = prepare_fields(samples, cfg, components, options=options)
         options.update(
             input_features=samples.input_features, output_features=samples.output_features
         )

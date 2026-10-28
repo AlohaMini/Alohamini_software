@@ -192,6 +192,8 @@ class AlohaMiniDataset(Dataset):
     ``chunk_size`` is shorthand for action offsets range(chunk_size), retained
     for existing ACT/AM-ACT callers. Numeric stored fields can also be selected
     through delta_indices; absent fields such as rewards are never synthesized.
+    ``context_fields`` loads and validates additional recorded fields for data
+    transforms, without adding them to model inputs or temporal windows.
     """
 
     sample_filter = "episode_windows_v2"
@@ -216,6 +218,7 @@ class AlohaMiniDataset(Dataset):
         return_uint8=False,
         inspection=None,
         allow_unannotated=False,
+        context_fields=(),
     ):
         self.root = Path(root).expanduser().resolve()
         if type(camera_workers) is not int or camera_workers < 0:
@@ -371,6 +374,10 @@ class AlohaMiniDataset(Dataset):
         if not self.sample_keys:
             raise ValueError("Select at least one recorded field")
         columns = [k for k in self.sample_keys if k != "observation.state"]
+        self.context_fields = tuple(context_fields)
+        if any(key not in self.info["features"] for key in self.context_fields):
+            raise ValueError("Required context field is absent from the recording")
+        columns.extend(self.context_fields)
         if include_task:
             columns.append("task")
         if self.selection:
@@ -432,7 +439,7 @@ class AlohaMiniDataset(Dataset):
                 )
         logging.getLogger(__name__).info("Validating selected fields in every selected episode")
         for i in range(len(self.rows)):
-            for key in self.sample_keys:
+            for key in dict.fromkeys([*self.sample_keys, *self.context_fields]):
                 self._validate_field(i, key)
             if self.include_task:
                 self._validate_field(i, "task")
@@ -483,9 +490,21 @@ class AlohaMiniDataset(Dataset):
                     raise ValueError("expected nonempty task text")
                 return
             if key == "observation.state":
-                self.selection.frame(row)
-                if not (self._v3 and self._v3.unannotated) and any(
-                    k == "observation.state" for k, _, _, _ in self.selection.columns
+                if self.selection is not None:
+                    self.selection.frame(row)
+                if key in self.context_fields:
+                    values = np.asarray(row[key], dtype=np.float64)
+                    if (
+                        values.shape != tuple(self.info["features"][key]["shape"])
+                        or not np.isfinite(values).all()
+                    ):
+                        raise ValueError("Invalid numeric observation context")
+                if not (self._v3 and self._v3.unannotated) and (
+                    key in self.context_fields
+                    or any(
+                        k == "observation.state"
+                        for k, _, _, _ in (self.selection.columns if self.selection else [])
+                    )
                 ):
                     if (record["safety"] or {}).get("feedback_valid") is not True:
                         raise ValueError("recorded observation.state feedback_valid is not true")

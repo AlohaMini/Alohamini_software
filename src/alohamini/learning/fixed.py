@@ -146,6 +146,8 @@ def configure(policy, selection=None, dataset=None, current=None):
         component = getattr(policy, "algorithm", None)
         state_key = getattr(component, "state_stats_key", "observation.state")
         stats = manifest["stats"].get(state_key, {})
+        if manifest.get("data_fields"):
+            stats = manifest.get("recorded_state_stats") or {}
         means = stats.get("mean")
         for j, name in enumerate(policy.selection.feature["names"]):
             joint = name.rsplit(".", 1)[0] + ".pos"

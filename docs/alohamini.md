@@ -122,7 +122,7 @@ conda activate alohamini_host
 alohamini calibrate robot --robot_model alohamini2pro
 ```
 
-按终端提示将关节放到中位，再手动移动至完整活动范围。依次完成左右臂；`wrist_roll`、底盘和升降无需手动采集范围。已有标定时按 Enter 复用，输入 `c` 重做。
+按终端提示将关节放到中位，再手动移动至完整活动范围。`alohamini2pro` 的中位姿态为大臂向上平行 z 轴、小臂和夹爪沿 x 轴前伸且平行地面、夹爪开合平面水平，1 号肩部转向与 5 号腕部偏转处于中位。依次完成左右臂；`wrist_roll`、底盘和升降无需手动采集范围。已有标定时按 Enter 复用，输入 `c` 重做。
 
 标定保存在 `~/Alohamini_workspace/calibration/`。可复用同一台机器的完整标定，不能套用另一台机器的数据。自定义标定目录用 `--calibration_dir`；Host 的整机 JSON 用 `--calibration` 指定。重做会保留 `*.backup.json` 备份；标定失败或恢复失败时先排查，不要直接启动运动。
 

@@ -46,6 +46,8 @@ class RobotModel:
     asset_revision: int
     descriptions: Mapping[str, str]
     directory: Path = field(repr=False, compare=False)
+    kinematic_chains: Mapping[str, str] = field(default_factory=dict)
+    kinematic_presets: Mapping[str, str] = field(default_factory=dict)
 
     def asset_path(self, relative: str) -> Path:
         return asset_path(self.directory, relative)
@@ -55,6 +57,18 @@ class RobotModel:
         if name not in self.descriptions:
             raise ValueError(f"Model {self.model_id!r} has no description {name!r}")
         return self.asset_path(self.descriptions[name])
+
+    def kinematic_chain_path(self, name: str) -> Path:
+        """Resolve an explicitly registered chain; never borrow another model's geometry."""
+        if name not in self.kinematic_chains:
+            raise ValueError(f"Model {self.model_id!r} has no kinematic chain {name!r}")
+        return self.asset_path(self.kinematic_chains[name])
+
+    def kinematic_preset_path(self, name: str) -> Path:
+        """Resolve a named recording-coordinate protocol independently of device files."""
+        if name not in self.kinematic_presets:
+            raise ValueError(f"Model {self.model_id!r} has no kinematic preset {name!r}")
+        return self.asset_path(self.kinematic_presets[name])
 
     def description_xml(self, name: str) -> str:
         """Render a description with contained mesh file URIs; leave assets unchanged."""

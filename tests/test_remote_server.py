@@ -267,6 +267,16 @@ def test_native_chunk_uses_current_context_absolute_conversion_scaling_and_fixed
     policy.model.predict_action_chunk.assert_called_once_with(batch)
 
 
+def test_execution_window_is_trimmed_before_absolute_decoding_and_validity_checks():
+    policy, _ = native_policy_stub()
+    policy.model.predict_action_chunk.return_value[0, 1] = float("inf")
+    result = policy.predict_action_chunk(snapshot(), max_steps=1)
+    torch.testing.assert_close(result, torch.tensor([[22.0, 7.0]]))
+    for invalid in (0, -1, True, 3):
+        with pytest.raises(ValueError, match="Execution window"):
+            policy.predict_action_chunk(snapshot(), max_steps=invalid)
+
+
 def test_live_batch_keeps_rgb_task_and_shared_preprocessing_without_mutating_snapshot():
     from alohamini.learning.policy import NativePolicy
 
@@ -364,6 +374,7 @@ def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkey
     capture = policy.fixed_deployment["current_capture"]
     assert (capture["request_started_s"], capture["received_s"]) == (100.0, 100.02)
     assert backend.predict(live).shape == (3, 18)
+    policy.predict_action_chunk.assert_called_once_with(live, max_steps=3)
     with pytest.raises(ValueError, match="exactly match"):
         backend.initialize(live, "pi-client", 20, fixed=fixed)
     with pytest.raises(ValueError, match="selection differs"):

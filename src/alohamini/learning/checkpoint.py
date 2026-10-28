@@ -105,7 +105,7 @@ def checkpoint_sidecars(manifest):
         "action_feature": manifest["source_info"]["features"]["action"],
         "normalization_mapping": manifest["config"].get("normalization_mapping"),
     }
-    for key in ("field_transforms", "statistics_features"):
+    for key in ("field_transforms", "statistics_features", "data_fields", "recorded_state_stats"):
         if key in manifest:
             processor[key] = manifest[key]
     return {"config.json": config, "preprocessing.json": processor}
@@ -185,6 +185,8 @@ def resolve_pretrained(settings, *, expected_kind=None):
     if "load_pretrained_encoders" in options:
         options["load_pretrained_encoders"] = False
     cfg["model"] = options
+    if "data" not in cfg and manifest.get("data_fields"):
+        cfg["data"] = deepcopy(manifest["data_fields"])
     if cfg.get("state", "auto") == "auto":
         cfg["state"] = manifest["state"]
     for key in ("cameras", "image_size"):
@@ -227,6 +229,11 @@ def validate_pretrained(settings, samples):
             if old != new:
                 raise ValueError(f"Pretrained checkpoint action units differ: {name}")
     if settings.get("normalization") == "checkpoint":
+        if manifest.get("data_fields", {}) != settings.get("data", {}):
+            from alohamini.learning.data_fields import active
+
+            if active(manifest.get("data_fields", {})) or active(settings.get("data", {})):
+                raise ValueError("Checkpoint statistics require unchanged data field transforms")
         for key in ("delta_dims", "normalization_mapping"):
             old = manifest["config"].get(key)
             new = settings.get("model", {}).get(key, old)

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "asset_revision": 2,
+  "asset_revision": 4,
   "model_id": "alohamini2pro",
   "actuators": [
     {
@@ -123,6 +123,13 @@
     "kinematic": "urdf/alohamini2pro_kinematic.urdf",
     "left_kinematic": "urdf/alohamini2pro_left_kinematic.urdf",
     "right_kinematic": "urdf/alohamini2pro_right_kinematic.urdf"
+  },
+  "kinematic_chains": {
+    "left": "config/kinematics/left_chain.json",
+    "right": "config/kinematics/right_chain.json"
+  },
+  "kinematic_presets": {
+    "upright_forward": "config/kinematics/upright_forward.json"
   },
   "validation": {
     "geometry": "inherited_ros_description",

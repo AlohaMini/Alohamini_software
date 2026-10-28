@@ -1,5 +1,6 @@
 """Local policy checkpoints and the adapter to the shared protected evaluator."""
 
+from collections import deque
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
@@ -10,9 +11,11 @@ import numpy as np
 import torch
 
 from alohamini.apps.replay import check_calibration
+from alohamini.datasets.field_transforms import FieldTransforms
 from alohamini.datasets.images import decode_host_image
 from alohamini.datasets.record import StateSelection, motor_feedback_frame, state_names
 from alohamini.learning.checkpoint import read_checkpoint, write_checkpoint_metadata
+from alohamini.learning.data_fields import FieldProcessor, active
 from alohamini.learning.processor import image_tensor, scale_action
 from alohamini.policies.registry import algorithm
 
@@ -22,8 +25,11 @@ def make_policy(kind, options, stats=None):
     return algorithm(kind).build(options, stats)
 
 
-def make_processor(model, stats, device):
-    return algorithm(model.name).processor(model, stats, device)
+def make_processor(model, stats, device, *, data_fields=None):
+    processor = algorithm(model.name).processor(model, stats, device)
+    if data_fields and active(data_fields):
+        return FieldProcessor(processor, FieldTransforms(data_fields), device)
+    return processor
 
 
 def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
@@ -57,10 +63,26 @@ def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
     from alohamini.learning.fixed import action_summary
 
     manifest["fixed_state_excluded"] = getattr(samples, "fixed_state_excluded", True)
-    summary = action_summary(samples)
+    summary = action_summary(getattr(samples, "source", samples))
     if summary is not None:
         manifest["physical_action_summary"] = summary
     algorithm(model.name).save(staging, model, manifest, model_state)
+    transform = getattr(samples, "field_transform", None)
+    if transform is not None:
+        algorithm_operations = manifest.get("field_transforms", [])
+        manifest.update(
+            transform.manifest(
+                samples.selection.feature if samples.selection else None,
+                samples.selection.units if samples.selection else [],
+                samples.info["features"]["action"],
+            )
+        )
+        manifest["field_transforms"] += [
+            op
+            for op in algorithm_operations
+            if op["operation"] not in ("forward_kinematics", "relative_actions")
+        ]
+        manifest["recorded_state_stats"] = samples.recorded_state_statistics()
     write_checkpoint_metadata(staging, manifest)
     staging.rename(path)
 
@@ -142,6 +164,11 @@ class NativePolicy:
         ):
             raise ValueError("Checkpoint state names/units mismatch")
         self.algorithm = algorithm(manifest["kind"])
+        self.field_transform = (
+            FieldTransforms(manifest["data_fields"]) if manifest.get("data_fields") else None
+        )
+        if self.field_transform:
+            self.field_transform.validate_source(self.source, manifest["state_feature"])
         self.task = task
         options = self.algorithm.checkpoint_options(
             path, manifest["config"], device, n_action_steps, temporal_ensemble_coeff
@@ -154,15 +181,32 @@ class NativePolicy:
         }
         if self.selection:
             expected["observation.state"] = ("STATE", tuple(self.selection.feature["shape"]))
+        action_names = self.names
+        action_width = len(self.names)
+        if self.field_transform:
+            features = self.field_transform.features(
+                manifest["state_feature"],
+                manifest["state_units"],
+                self.source["features"]["action"],
+            )
+            if "observation.state" in features:
+                expected["observation.state"] = (
+                    "STATE",
+                    tuple(features["observation.state"]["shape"]),
+                )
+            action_names = features["action"]["names"]
+            action_width = len(action_names)
         actual = {k: (v.type, v.shape) for k, v in self.config.input_features.items()}
-        if actual != expected or self.config.action_feature.shape != (len(self.names),):
+        if actual != expected or self.config.action_feature.shape != (action_width,):
             raise ValueError("Checkpoint feature dimensions/order do not match its data contract")
         self.algorithm.validate_statistics(
-            manifest["stats"], expected, self.names, manifest=manifest
+            manifest["stats"], expected, action_names, manifest=manifest
         )
         self.algorithm.load(path, self.model)
         self.model.to(device).eval()
-        self.processor = make_processor(self.model, manifest["stats"], device)
+        self.processor = make_processor(
+            self.model, manifest["stats"], device, data_fields=manifest.get("data_fields")
+        )
         from alohamini.learning.fixed import configure
 
         if offline and self.robot_metadata is None:
@@ -194,6 +238,13 @@ class NativePolicy:
             )
         else:
             metadata, report = normalized_transfer(self.source["robot_metadata"], snapshot)
+        if getattr(self, "field_transform", None) is not None:
+            self.field_transform.validate_source(
+                {**self.source, "robot_metadata": metadata}, self.manifest["state_feature"]
+            )
+        validate_binding = getattr(getattr(self, "algorithm", None), "validate_robot_binding", None)
+        if validate_binding is not None:
+            validate_binding(self.config, self.source, metadata)
         if self.selection and self.calibration_mode != "legacy_normalized":
             live_source = {**self.source, "robot_metadata": metadata}
             self.selection = StateSelection(
@@ -244,6 +295,7 @@ class NativePolicy:
 
     def reset(self):
         self.model.reset()
+        self._execution_actions = deque()
 
     def refresh_latent(self):
         """Notify AM-ACT of a task phase boundary before its next observation."""
@@ -269,6 +321,11 @@ class NativePolicy:
         self._require_fixed_current()
         if self.fixed_state_references and "observation.state" in sample:
             sample = dict(sample)
+            if "_fields_encoded" in sample:
+                sample["observation.state"] = sample["_recorded_state"]
+                if "action" in sample:
+                    sample["action"] = sample["_recorded_action"]
+                sample.pop("_fields_encoded")
             state = sample["observation.state"].clone()
             for index, value in self.fixed_state_references.items():
                 state[..., index] = value
@@ -306,6 +363,11 @@ class NativePolicy:
         """Prepare one live Host snapshot with the checkpoint's original input contract."""
         self._check_calibration(snapshot)
         observation = {}
+        if getattr(self, "field_transform", None) is not None:
+            observation["_action_context"] = torch.tensor(
+                [snapshot.payload[n] for n in self.field_transform.geometry.names],
+                dtype=torch.float32,
+            )
         if self.selection:
             row = {
                 "observation.state": [snapshot.payload[n] for n in self.selection.source_names],
@@ -349,21 +411,27 @@ class NativePolicy:
         return horizon
 
     def predict_action_chunk(
-        self, snapshot, *, rtc=None, previous_actions=None, inference_delay=0
+        self, snapshot, *, rtc=None, previous_actions=None, inference_delay=0, max_steps=None
     ):
-        """Return one absolute CPU action chunk without using the model's action queue."""
+        """Return absolute CPU targets; optionally trim before trajectory decoding."""
         guided = rtc is not None and rtc.enabled
         if guided:
             self.validate_rtc(rtc)
         # Prefix caches must be ordinary tensors for the later denoiser VJP.
         with torch.inference_mode(not guided), torch.no_grad():
             return self._predict_action_chunk(
-                snapshot, rtc=rtc if guided else None,
-                previous_actions=previous_actions, inference_delay=inference_delay,
+                snapshot,
+                rtc=rtc if guided else None,
+                previous_actions=previous_actions,
+                inference_delay=inference_delay,
+                max_steps=max_steps,
             )
 
-    def _predict_action_chunk(self, snapshot, *, rtc, previous_actions, inference_delay):
-        batch = self._observation_batch(snapshot)
+    def _predict_action_chunk(
+        self, snapshot, *, rtc, previous_actions, inference_delay, batch=None, max_steps=None
+    ):
+        if batch is None:
+            batch = self._observation_batch(snapshot)
         kwargs = {}
         if rtc is not None:
             from alohamini.policies.rtc import RTCGuidance
@@ -401,6 +469,10 @@ class NativePolicy:
                 or action.shape[2] < 1
             ):
                 raise ValueError("Policy returned invalid action chunk dimensions or values")
+            if max_steps is not None:
+                if type(max_steps) is not int or not 1 <= max_steps <= action.shape[1]:
+                    raise ValueError("Execution window must fit the predicted action chunk")
+                action = action[:, :max_steps]
             raw_finite = torch.isfinite(action).all()
             values = self.execution_action(action, context=batch.get("_action_context"))
         if not isinstance(values, torch.Tensor) or values.shape != (
@@ -418,16 +490,29 @@ class NativePolicy:
     def select_action(self, snapshot):
         batch = self._observation_batch(snapshot)
         with torch.inference_mode(), self.inference_context():
-            action = self.model.select_action(batch)
-            values = (
-                self.execution_action(
-                    action,
-                    context=getattr(self.model, "action_context", batch.get("_action_context")),
+            if getattr(self.processor, "decode_before_queue", False) is True:
+                if not self._execution_actions:
+                    actions = self._predict_action_chunk(
+                        snapshot,
+                        rtc=None,
+                        previous_actions=None,
+                        inference_delay=0,
+                        batch=batch,
+                        max_steps=self.config.n_action_steps,
+                    )
+                    self._execution_actions.extend(actions.numpy())
+                values = self._execution_actions.popleft()[None]
+            else:
+                action = self.model.select_action(batch)
+                values = (
+                    self.execution_action(
+                        action,
+                        context=getattr(self.model, "action_context", batch.get("_action_context")),
+                    )
+                    .float()
+                    .cpu()
+                    .numpy()
                 )
-                .float()
-                .cpu()
-                .numpy()
-            )
         if values.shape != (1, len(self.names)) or not np.isfinite(values).all():
             raise ValueError("Policy returned invalid absolute targets")
         return dict(zip(self.names, map(float, values[0]), strict=True))

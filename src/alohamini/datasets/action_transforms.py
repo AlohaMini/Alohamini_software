@@ -28,8 +28,8 @@ class RelativeActions:
             raise ValueError("Relative action coordinates must be distinct valid dimensions")
         self.descriptor = dict(
             width=width,
-            linear_dims=list(linear_dims),
-            rotation_groups=[list(g) for g in rotation_groups],
+            linear_dims=list(self.linear_dims),
+            rotation_groups=[list(g) for g in self.rotation_groups],
             reference=reference,
         )
 
@@ -46,13 +46,16 @@ class RelativeActions:
         ):
             raise ValueError("Relative action windows must match finite anchor coordinates")
         result = np.array(actions, copy=True)
+        if not result.size:
+            return result
         dims = list(self.linear_dims)
         if dims:
             result[..., dims] += (1 if inverse else -1) * reference[..., None, dims]
         for group in self.rotation_groups:
             dims = list(group)
             anchor = np.broadcast_to(reference[..., None, dims], actions[..., dims].shape)
-            a = Rotation.from_rotvec(anchor.reshape(-1, 3))
+            # SciPy versions used by Python 3.10 require a writable buffer.
+            a = Rotation.from_rotvec(anchor.reshape(-1, 3).copy())
             b = Rotation.from_rotvec(actions[..., dims].reshape(-1, 3))
             rotation = b * a if inverse else b * a.inv()
             result[..., dims] = rotation.as_rotvec().reshape(actions[..., dims].shape)

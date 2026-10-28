@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "arms": [
+    {
+      "name": "manipulator",
+      "model": {"id": "alohamini2pro", "chain": "left"},
+      "coordinates": [
+        {"field": "q0", "unit": "rad"},
+        {"field": "q1", "unit": "rad"},
+        {"field": "q2", "unit": "rad"},
+        {"field": "q3", "unit": "rad"},
+        {"field": "q4", "unit": "rad"},
+        {"field": "q5", "unit": "rad"}
+      ],
+      "gripper": {
+        "field": "gripper",
+        "source_closed": 0,
+        "source_open": 100,
+        "closed": 0,
+        "open": 0.1,
+        "unit": "canonical_0_0.1"
+      }
+    }
+  ],
+  "passthrough": [],
+  "passthrough_units": []
+}

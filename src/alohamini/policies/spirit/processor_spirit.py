@@ -3,8 +3,7 @@
 import numpy as np
 import torch
 
-from alohamini.datasets.action_transforms import RelativeActions
-from alohamini.datasets.kinematic_fields import KinematicFields
+from alohamini.datasets.kinematic_fields import KinematicActions
 from alohamini.datasets.statistics import ExactQuantileStats
 
 from .image_transforms import ColorJitter
@@ -12,47 +11,35 @@ from .image_transforms import ColorJitter
 
 class SpiritFields:
     def __init__(self, config):
-        self.geometry = (
-            KinematicFields(config.kinematic_fields)
+        self.codec = (
+            KinematicActions(config.kinematic_fields)
             if config.action_representation == "eef_delta"
             else None
         )
-        self.relative = None
-        if self.geometry:
-            linear, rotations = [], []
-            for a in range(len(self.geometry.arms)):
-                linear.extend(range(7 * a, 7 * a + 3))
-                rotations.append(list(range(7 * a + 3, 7 * a + 6)))
-            self.relative = RelativeActions(
-                self.geometry.width, linear_dims=linear, rotation_groups=rotations
-            )
+        self.geometry = self.codec.geometry if self.codec else None
+        self.relative = self.codec.relative if self.codec else None
 
     def encode(self, state, actions=None):
         state = np.asarray(state, dtype=np.float64)
         if not self.geometry:
             return state, actions
-        observation = self.geometry.absolute(state)
-        targets = (
-            None
-            if actions is None
-            else self.relative.encode(observation, self.geometry.absolute(actions))
-        )
-        return observation, targets
+        return self.codec.encode(state, actions)
 
     def decode(self, state, actions):
         if not self.geometry:
             return actions
-        anchor = self.geometry.absolute(state)
-        return self.geometry.restore_absolute(self.relative.decode(anchor, actions), state)
+        return self.codec.decode(state, actions)
 
 
 def fit_statistics(samples, config):
+    if getattr(samples, "field_transform", None) is not None:
+        values = samples.numeric_statistics()
+        return {key: {"min": stats["q01"], "max": stats["q99"]} for key, stats in values.items()}
     fields = SpiritFields(config)
-    if fields.geometry and (
-        samples.selection.feature["names"] != fields.geometry.names
-        or samples.info["features"]["action"]["names"] != fields.geometry.names
-    ):
-        raise ValueError("Kinematic source field names/order differ from selected state/actions")
+    if fields.geometry:
+        fields.geometry.validate_source(
+            samples.info, state_names=samples.selection.feature["names"]
+        )
     trackers = {key: ExactQuantileStats() for key in ("observation.state", "action")}
     anchors = samples.sample_indices
     action_indices = sorted(samples._used_rows["action"])
@@ -82,6 +69,7 @@ class SpiritProcessor:
     def __init__(self, config, stats, device):
         self.config, self.stats, self.device = config, stats, device
         self.fields = SpiritFields(config)
+        self.decode_before_queue = self.fields.geometry is not None
         self.is_training = lambda: False
         self.jitter = ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.1, p=0.5)
         self.image_divisor = torch.tensor(255.0, dtype=torch.float32, device=device)

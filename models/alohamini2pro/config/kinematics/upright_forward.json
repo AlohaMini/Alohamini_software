@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "robot_model": "alohamini2pro",
+  "reference_pose": {
+    "name": "upright_forward",
+    "version": 1,
+    "description": "Upper arm vertical up; forearm and gripper forward; gripper opening plane horizontal; shoulder pan and wrist yaw neutral.",
+    "axes_frame": "base_link",
+    "upper_arm_direction": [0, 0, 1],
+    "forearm_direction": [1, 0, 0],
+    "upper_arm_body_axis": [0, 1, 0],
+    "forearm_body_axis": [0, -1, 0],
+    "tool_forward_direction": [1, 0, 0],
+    "gripper_opening_plane_normal": [0, 0, 1],
+    "homing_protocol": "sts_half_turn_post_offset_2047",
+    "joint_zero": "reference_pose"
+  },
+  "arms": [
+    {
+      "name": "left",
+      "model": {"id": "alohamini2pro", "chain": "left", "joint_zero": [0, -1.5707963267948966, 1.5707963267948966, 0, 0, 0]},
+      "coordinates": [
+        {"field": "arm_left_shoulder_pan.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": 1}},
+        {"field": "arm_left_shoulder_lift.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": -1}},
+        {"field": "arm_left_elbow_flex.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": -1}},
+        {"field": "arm_left_wrist_flex.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": 1}},
+        {"field": "arm_left_wrist_yaw.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": 1}},
+        {"field": "arm_left_wrist_roll.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": -1}}
+      ],
+      "gripper": {"field": "arm_left_gripper.pos", "source_normalization": "range_0_100", "source_closed": 0, "source_open": 100, "closed": 0, "open": 0.1, "unit": "canonical_0_0.1"}
+    },
+    {
+      "name": "right",
+      "model": {"id": "alohamini2pro", "chain": "right", "joint_zero": [0, -1.5707963267948966, 1.5707963267948966, 0, 0, 0]},
+      "coordinates": [
+        {"field": "arm_right_shoulder_pan.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": 1}},
+        {"field": "arm_right_shoulder_lift.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": -1}},
+        {"field": "arm_right_elbow_flex.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": -1}},
+        {"field": "arm_right_wrist_flex.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": 1}},
+        {"field": "arm_right_wrist_yaw.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": 1}},
+        {"field": "arm_right_wrist_roll.pos", "unit": "host", "encoder": {"ticks_per_revolution": 4096, "reference_tick": 2047, "reference_position_rad": 0, "direction": -1}}
+      ],
+      "gripper": {"field": "arm_right_gripper.pos", "source_normalization": "range_0_100", "source_closed": 0, "source_open": 100, "closed": 0, "open": 0.1, "unit": "canonical_0_0.1"}
+    }
+  ],
+  "passthrough": ["x.vel", "y.vel", "theta.vel", "lift_axis.height_mm"],
+  "passthrough_units": ["m/s", "m/s", "deg/s", "mm"]
+}

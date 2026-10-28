@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 import torch
-from test_kinematic_fields import descriptor, joint_state
+from test_kinematic_fields import descriptor, joint_state, planar_spec
 from test_native_learning import recording as recording
 
 from alohamini.learning.data import AlohaMiniDataset
@@ -284,8 +284,9 @@ def test_external_base_loading_preserves_target_statistics(recording, tmp_path):
         recipe.initialize(model, {"pretrained_path": str(base)})
 
 
+@pytest.mark.parametrize("planar", [False, True])
 def test_cartesian_native_checkpoint_keeps_geometry_and_restores_host_field_order(
-    recording, tmp_path
+    recording, tmp_path, planar, monkeypatch
 ):
     import shutil
 
@@ -293,28 +294,39 @@ def test_cartesian_native_checkpoint_keeps_geometry_and_restores_host_field_orde
     import pyarrow.parquet as pq
 
     from alohamini.datasets.lerobotv3 import export_lerobot
+    from alohamini.learning.statistics import training_statistics
 
     root = tmp_path / "explicit-radian-v3"
     export_lerobot(recording, root)
     (root / "meta/alohamini.json").unlink()
     for path in (root / "meta/safety").glob("*.jsonl"):
         path.unlink()
-    spec = json.loads(json.dumps(descriptor()))
+    spec = json.loads(json.dumps(planar_spec() if planar else descriptor()))
+    width = len(spec["source_names"])
+    state_template = np.array([250, -0.6, np.rad2deg(0.25)]) if planar else joint_state()
+    move_index = 2 if planar else 0
     info_path = root / "meta/info.json"
     info = json.loads(info_path.read_text())
     for key in ("observation.state", "action"):
         info["features"][key]["names"] = spec["source_names"]
+        info["features"][key]["shape"] = [width]
     info_path.write_text(json.dumps(info))
     for path in (root / "data").rglob("*.parquet"):
         table = pq.read_table(path)
         rows = table.to_pylist()
         for row in rows:
-            state = joint_state()
-            state[0] += 0.002 * row["frame_index"]
+            state = state_template.copy()
+            state[move_index] += 0.002 * row["frame_index"]
             target = state.copy()
-            target[0] += 0.005
+            target[move_index] += 0.005
             row["observation.state"], row["action"] = state.tolist(), target.tolist()
-        pq.write_table(pa.Table.from_pylist(rows, schema=table.schema), path)
+        for key in ("observation.state", "action"):
+            table = table.set_column(
+                table.schema.get_field_index(key),
+                key,
+                pa.array([row[key] for row in rows], type=pa.list_(pa.float32(), width)),
+            )
+        pq.write_table(table, path)
     data = AlohaMiniDataset(
         root,
         episodes=[0],
@@ -333,7 +345,9 @@ def test_cartesian_native_checkpoint_keeps_geometry_and_restores_host_field_orde
         output_features=data.output_features,
     )
     recipe = algorithm("spirit")
-    stats = recipe.statistics(data, options)
+    artifact = training_statistics(recipe, data, options, "spirit")
+    stats = artifact["stats"]
+    assert training_statistics(recipe, data, options, "spirit", artifact=artifact)["stats"] == stats
     model = recipe.build(options, stats)
     batch = next(iter(torch.utils.data.DataLoader(data, batch_size=2)))
     loss, _ = model(recipe.processor(model, stats, "cpu")(batch))
@@ -346,10 +360,15 @@ def test_cartesian_native_checkpoint_keeps_geometry_and_restores_host_field_orde
     assert loaded.config.kinematic_fields == spec
     preprocessing = json.loads((checkpoint / "preprocessing.json").read_text())
     derived = preprocessing["statistics_features"]
-    assert derived["action"]["names"][0] == "delta.left.x"
+    assert derived["action"]["names"][0] == ("delta.manipulator.x" if planar else "delta.left.x")
     assert derived["action"]["units"][0] == "m"
-    assert derived["action"]["names"][6] == "left.gripper"
-    assert derived["action"]["units"][-4:] == spec["passthrough_units"]
+    if not planar:
+        assert derived["action"]["names"][6] == "left.gripper"
+    assert (
+        derived["action"]["units"][-len(spec["passthrough_units"]) :] == spec["passthrough_units"]
+    )
+    assert loaded.config.encoded_action_dim == (7 if planar else 18)
+    assert loaded.config.action_feature.shape == (width,)
     assert preprocessing["field_transforms"][1]["anchor"] == "observation.state"
     resumed = recipe.options(
         {
@@ -375,10 +394,52 @@ def test_cartesian_native_checkpoint_keeps_geometry_and_restores_host_field_orde
         )
     # An independently specified zero displacement must preserve the observation
     # joints; gripper and base/lift predictions are absolute, not increments.
-    target = torch.zeros(1, 3, 18)
-    target[..., 6], target[..., 13] = 0.04, 0.06
-    target[..., -4:] = torch.tensor([0.1, -0.2, 10.0, 250.0])
+    target = torch.zeros(1, 3, loaded.config.encoded_action_dim)
+    if planar:
+        target[..., -1] = 250
+    else:
+        target[..., 6], target[..., 13] = 0.04, 0.06
+        target[..., -4:] = torch.tensor([0.1, -0.2, 10.0, 250.0])
     loaded.model.predict_action_chunk = lambda batch: target
     actual = loaded.predict(data[0])
     expected = data[0]["observation.state"].expand(3, -1)
     torch.testing.assert_close(actual, expected)
+
+    # Sequential deployment decodes just the execution window once, keeping its
+    # original anchor even while the next observations change. The unused tail
+    # is deliberately unreachable and must never enter the IK execution path.
+    from unittest.mock import Mock
+
+    loaded.reset()
+    target[:, 2, :3] = 1000
+    predictor = Mock(return_value=target)
+    loaded.model.predict_action_chunk = predictor
+    decode = Mock(wraps=loaded.processor.fields.decode)
+    monkeypatch.setattr(loaded.processor.fields, "decode", decode)
+    sample = data[0]
+
+    def observation(_):
+        return loaded.processor(
+            {
+                key: [value] if key == "task" else value[None]
+                for key, value in sample.items()
+                if key not in ("action", "action_is_pad")
+            }
+        )
+
+    monkeypatch.setattr(loaded, "_observation_batch", observation)
+    first = loaded.select_action(object())
+    initial = sample["observation.state"].clone()
+    sample["observation.state"] = initial.clone()
+    sample["observation.state"][move_index] += 0.01
+    second = loaded.select_action(object())
+    assert predictor.call_count == decode.call_count == 1
+    assert decode.call_args.args[1].shape[1] == loaded.config.n_action_steps == 2
+    np.testing.assert_allclose(list(first.values()), initial.numpy(), atol=1e-5)
+    np.testing.assert_allclose(list(second.values()), initial.numpy(), atol=1e-5)
+    third = loaded.select_action(object())
+    assert predictor.call_count == decode.call_count == 2
+    np.testing.assert_allclose(list(third.values()), sample["observation.state"].numpy(), atol=1e-5)
+    loaded.reset()
+    loaded.select_action(object())
+    assert predictor.call_count == 3

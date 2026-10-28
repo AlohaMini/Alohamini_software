@@ -56,6 +56,16 @@ def parse_training_args(argv=None):
     parser.add_argument("--run_name")
     parser.add_argument("--state", help="auto (default), none, recorded, or named state groups")
     parser.add_argument(
+        "--data.state_representation", choices=("recorded", "tcp"), default=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--data.action_representation",
+        choices=("recorded", "tcp_absolute", "tcp_delta"),
+        default=argparse.SUPPRESS,
+    )
+    for name in ("reference_pose", "path", "spec"):
+        parser.add_argument(f"--data.kinematics.{name}", default=argparse.SUPPRESS)
+    parser.add_argument(
         "--stats", help="Prepared policy statistics JSON; omitted: fit once before training"
     )
     parser.add_argument("--normalization", choices=("dataset", "checkpoint"))
@@ -149,6 +159,12 @@ def parse_training_args(argv=None):
     for name, setting in args.items():
         if name.startswith("policy."):
             model[name.removeprefix("policy.")] = setting
+        elif name.startswith("data."):
+            parts = name.split(".")[1:]
+            section = cfg.setdefault("data", {})
+            for part in parts[:-1]:
+                section = section.setdefault(part, {})
+            section[parts[-1]] = setting
         elif name.startswith(("optimizer.", "scheduler.", "ema.")):
             section, key = name.split(".", 1)
             cfg[section] = {**(cfg.get(section) or {}), key: setting}
