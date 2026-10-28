@@ -7,6 +7,7 @@ import io
 import os
 import re
 import tarfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +46,8 @@ def image_type(image_format: str):
     )
 
 
-def _shape(data: bytes, expected: str, *, decode=False) -> tuple[int, int, int]:
+@contextmanager
+def _open_image(data: bytes, expected: str):
     from PIL import Image
 
     try:
@@ -56,14 +58,13 @@ def _shape(data: bytes, expected: str, *, decode=False) -> tuple[int, int, int]:
                 or image.width * image.height > MAX_IMAGE_PIXELS
             ):
                 raise ValueError("Invalid image format, mode or dimensions")
-            if decode:
-                image.load()
-            return image.height, image.width, 3
+            yield image
     except Image.DecompressionBombError as exc:
         raise ValueError("Image dimensions exceed the pixel limit") from exc
 
 
-def _host_image_shape(jpeg: bytes, *, decode=False) -> tuple[int, int, int]:
+@contextmanager
+def _open_host_image(jpeg: bytes):
     if (
         not 4 <= len(jpeg) <= MAX_IMAGE_BYTES
         or not jpeg.startswith(b"\xff\xd8")
@@ -71,20 +72,50 @@ def _host_image_shape(jpeg: bytes, *, decode=False) -> tuple[int, int, int]:
     ):
         raise ValueError("Invalid or oversized Host JPEG")
     try:
-        return _shape(jpeg, "JPEG", decode=decode)
+        with _open_image(jpeg, "JPEG") as image:
+            yield image
     except OSError as exc:
         raise ValueError("Invalid Host JPEG") from exc
 
 
-def decode_host_image(jpeg: bytes) -> np.ndarray:
-    """Decode a 5556 Host snapshot JPEG to RGB (not the standard 5557 stream)."""
-    import cv2
+def _shape(data: bytes, expected: str, *, decode=False) -> tuple[int, int, int]:
+    with _open_image(data, expected) as image:
+        if decode:
+            image.load()
+        return image.height, image.width, 3
 
-    shape = _host_image_shape(jpeg, decode=True)
-    rgb = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if rgb is None or rgb.shape != shape:
-        raise ValueError("Invalid Host JPEG")
-    return rgb
+
+def _host_image_shape(jpeg: bytes, *, decode=False) -> tuple[int, int, int]:
+    with _open_host_image(jpeg) as image:
+        if decode:
+            image.load()
+        return image.height, image.width, 3
+
+
+def decode_host_image(jpeg: bytes) -> np.ndarray:
+    """Decode the 5556 wire convention, reusing strict Pillow decoding when possible."""
+    with _open_host_image(jpeg) as image:
+        shape = image.height, image.width, 3
+        image.load()
+        ordinary = (
+            getattr(image, "bits", None) == 8
+            and [part[0] for part in getattr(image, "layer", ())] == [1, 2, 3]
+            and not {"exif", "icc_profile", "adobe", "adobe_transform"}.intersection(image.info)
+        )
+        if ordinary:
+            # Host feeds RGB into OpenCV's BGR encoder. Preserve the deployed
+            # imdecode result by reversing Pillow's standard JPEG RGB channels.
+            # Pack BGR directly in Pillow rather than copying RGB and swapping
+            # strided NumPy channels, which cancels the single-decode savings.
+            rgb = np.frombuffer(image.tobytes("raw", "BGR"), dtype=np.uint8).reshape(shape).copy()
+        else:
+            # Keep OpenCV orientation and uncommon JPEG color handling intact.
+            import cv2
+
+            rgb = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if rgb is None or rgb.shape != shape:
+            raise ValueError("Invalid Host JPEG")
+        return rgb
 
 
 def validate_wire_image(jpeg: bytes) -> tuple[int, int, int]:

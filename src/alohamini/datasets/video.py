@@ -96,6 +96,7 @@ def finalize_recording_video(
     """
     from concurrent.futures import ThreadPoolExecutor
 
+    from alohamini.datasets.image_statistics import ImageStatistics, sample_indices
     from alohamini.datasets.images import VIDEO_FORMAT
     from alohamini.datasets.record import dataset_schema
 
@@ -103,27 +104,32 @@ def finalize_recording_video(
         raise ValueError("Video encoding workers must be a positive integer")
     cameras = tuple(cameras)
     summary = json.loads((episode / "episode.json").read_text())
-    from alohamini.datasets.image_statistics import sample_recording_images
-
-    started = time.perf_counter()
-    image_stats = sample_recording_images(episode, cameras, summary["length"])
-    _write_json(episode / "image_stats.json", image_stats.payload())
-    if timings is not None:
-        timings["image_statistics"] = time.perf_counter() - started
+    indices = set(sample_indices(summary["length"]))
     (episode / "videos").mkdir(exist_ok=True)
 
     def encode_camera(camera):
+        image_stats = ImageStatistics()
+        key = f"observation.images.{camera}"
         shape = summary["image_shapes"][camera]
         path = episode / "videos" / f"{camera}.mp4"
 
         def frames():
+            index = 0
             for batch in pq.ParquetFile(episode / "frames.parquet").iter_batches(
-                batch_size=8, columns=[f"observation.images.{camera}"]
+                batch_size=8, columns=[key]
             ):
                 for reference in batch.column(0).to_pylist():
-                    yield av.VideoFrame.from_ndarray(
-                        image_rgb(episode, camera, reference), format="rgb24"
-                    )
+                    rgb = image_rgb(episode, camera, reference)
+                    if index in indices:
+                        image_stats.update(
+                            key,
+                            rgb,
+                            source=(
+                                "host_jpeg" if reference.endswith(".jpg") else "pre_encoding_png"
+                            ),
+                        )
+                    yield av.VideoFrame.from_ndarray(rgb, format="rgb24")
+                    index += 1
 
         count = _encode_frames(
             frames(),
@@ -138,18 +144,32 @@ def finalize_recording_video(
         # second decode pass. Full decoding is available via dataset check.
         if count != summary["length"] or inspect_video(path) != expected:
             raise ValueError(f"Encoded video does not match recording: {path}")
-        return camera, {"path": f"videos/{camera}.mp4", "sha256": file_sha256(path)}
+        reference = {"path": f"videos/{camera}.mp4", "sha256": file_sha256(path)}
+        return camera, reference, image_stats
 
     started = time.perf_counter()
-    references = {}
+    encoded = []
     if cameras:
         max_workers = len(cameras) if workers is None else min(workers, len(cameras))
         with ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="AlohaMiniVideo"
         ) as pool:
-            references = dict(pool.map(encode_camera, cameras))
+            encoded = list(pool.map(encode_camera, cameras))
     if timings is not None:
+        # Sampled histograms reuse the encoder's RGB pixels, so their collection
+        # is included here; only merging/writing is timed as image_statistics.
         timings["video_encode_headers_hash"] = time.perf_counter() - started
+    started = time.perf_counter()
+    references = {}
+    image_stats = ImageStatistics()
+    for camera, reference, camera_stats in encoded:
+        references[camera] = reference
+        image_stats.merge(camera_stats)
+    # Publish a complete summary only after every encoder succeeds, while the
+    # original image index still permits recovery if this write fails.
+    _write_json(episode / "image_stats.json", image_stats.payload())
+    if timings is not None:
+        timings["image_statistics"] = time.perf_counter() - started
     started = time.perf_counter()
     schema = dataset_schema(features, cameras, VIDEO_FORMAT)
     target = episode / "frames.video.parquet"

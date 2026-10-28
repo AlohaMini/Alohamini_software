@@ -77,6 +77,7 @@ def test_worker_counts_preserve_data_statistics_and_report_wall_time(tmp_path):
                 "image_decode",
                 "image_statistics",
                 "statistics_update",
+                "statistics_cache",
                 "episode_statistics",
                 "global_statistics",
                 "v3_data_metadata",
