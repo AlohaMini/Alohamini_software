@@ -372,6 +372,8 @@ def load_training_checkpoint(path, cfg, samples, validation):
 
     def comparable(config, key):
         value = config.get(key)
+        if key == "output_dir" and value is not None:
+            return str(Path(value).expanduser().resolve())
         if key == "ema":
             return asdict(EMAConfig.from_dict(value))
         if key == "paper_preset" and isinstance(value, dict):
