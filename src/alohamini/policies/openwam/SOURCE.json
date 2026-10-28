@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/OpenWAM-Official/OpenWAM",
+  "revision": "3dfc9a7d9230f0e1382e6b22639278f1a86e5eb5",
+  "paper": "https://arxiv.org/abs/2609.07398v1",
+  "model": "OpenWAM/OpenWAM-Alpha-Pretrain-Foundation-Model",
+  "model_revision": "52df4e66c82c5c8b480adcc8d01f4db7415dfb56",
+  "license": "Apache-2.0",
+  "scope": "Wan2.2 dual-system joint self-attention tensor network; platform trainer/data/checkpoint"
+}

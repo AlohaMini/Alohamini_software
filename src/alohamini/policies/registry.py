@@ -3,6 +3,8 @@
 from importlib import import_module
 
 ALGORITHMS = {
+    "hyvla05": ("alohamini.policies.hyvla05.adapter", "HyVLA05Algorithm"),
+    "openwam": ("alohamini.policies.openwam.adapter", "OpenWAMAlgorithm"),
     "cdp": ("alohamini.policies.cdp.adapter", "CDPAlgorithm"),
     "dit_policy": ("alohamini.policies.dit_policy.adapter", "DiTPolicyAlgorithm"),
     "multi_task_dit": ("alohamini.policies.multi_task_dit.adapter", "MultiTaskDiTAlgorithm"),

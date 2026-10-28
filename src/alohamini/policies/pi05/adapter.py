@@ -295,6 +295,12 @@ class PI05TrainModel(torch.nn.Module):
 
 
 class PI05Algorithm:
+    supports_remote_chunks = True
+
+    @staticmethod
+    def action_horizon(config):
+        return config.network["action_horizon"]
+
     config_class = PI05TrainingConfig
     state_stats_key = "state"
     include_task = True

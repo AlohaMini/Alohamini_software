@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA",
+  "revision": "af57e7507ec5964b52fdf6296741e553cbcd3288",
+  "paper": "https://arxiv.org/abs/2606.14409v2",
+  "model": "tencent/Hy-Embodied-0.5-VLA-RoboTwin",
+  "model_revision": "bd7bba6f5934ad62293a2a34f74760c6a3ef2ff8",
+  "license": "Apache-2.0"
+}

@@ -329,18 +329,22 @@ def test_pi05_padded_model_chunk_restores_18_absolute_coordinates_from_original_
         policy.predict_action_chunk(snapshot())
 
 
-def test_remote_backend_rejects_non_pi05_before_loading_model(monkeypatch):
+def test_remote_backend_rejects_unsupported_capability_before_loading_model(monkeypatch):
+    from alohamini.policies.registry import algorithm
+
+    # Resolve the lazy adapter before replacing its imported checkpoint function.
+    assert not getattr(algorithm("act"), "supports_remote_chunks", False)
     monkeypatch.setattr(
         "alohamini.learning.checkpoint.read_checkpoint", lambda _: (None, {"kind": "act"})
     )
     constructor = Mock(side_effect=AssertionError("Model must not load"))
     monkeypatch.setattr("alohamini.learning.policy.NativePolicy", constructor)
-    with pytest.raises(ValueError, match="pi05, smolvla and spirit"):
+    with pytest.raises(ValueError, match="does not declare remote action-chunk support"):
         NativeChunkPolicy("checkpoint")
     constructor.assert_not_called()
 
 
-@pytest.mark.parametrize("kind", ["pi05", "smolvla", "spirit"])
+@pytest.mark.parametrize("kind", ["pi05", "smolvla", "spirit", "hyvla05", "openwam"])
 def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkeypatch, kind):
     live = snapshot()
     policy = SimpleNamespace(

@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 
 ASSET_FIELDS = {
+    "hyvla05": ("assets_path",),
+    "openwam": ("assets_path",),
     "spirit": ("backbone_path",),
     "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
     "smolvla": ("vlm_model_name",),

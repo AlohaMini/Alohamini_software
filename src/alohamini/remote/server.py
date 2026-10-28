@@ -29,11 +29,13 @@ class NativeChunkPolicy:
         rtc=None,
     ):
         from alohamini.learning.checkpoint import read_checkpoint
+        from alohamini.policies.registry import algorithm
 
         _, manifest = read_checkpoint(checkpoint)
-        if manifest["kind"] not in ("pi05", "smolvla", "spirit"):
+        component = algorithm(manifest["kind"])
+        if not getattr(component, "supports_remote_chunks", False):
             raise ValueError(
-                "Remote inference currently supports pi05, smolvla and spirit checkpoints"
+                f"{manifest['kind']} does not declare remote action-chunk support"
             )
         if chunk_size is not None and (type(chunk_size) is not int or not 1 <= chunk_size <= 512):
             raise ValueError("chunk_size must be an integer in [1, 512]")
@@ -49,10 +51,7 @@ class NativeChunkPolicy:
 
         self.rtc_config = rtc or RTCConfig()
         self.rtc = self.rtc_config.to_dict() if self.rtc_config.enabled else None
-        horizon = (
-            self.policy.config.network["action_horizon"] if manifest["kind"] == "pi05"
-            else self.policy.config.chunk_size
-        )
+        horizon = component.action_horizon(self.policy.config)
         available = horizon if self.rtc else min(horizon, self.policy.config.n_action_steps)
         self.chunk_size = available if chunk_size is None else chunk_size
         if not 1 <= self.chunk_size <= 512:

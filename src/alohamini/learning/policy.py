@@ -244,6 +244,7 @@ class NativePolicy:
 
     def reset(self):
         self.model.reset()
+        self._observation_history = None
 
     def refresh_latent(self):
         """Notify AM-ACT of a task phase boundary before its next observation."""
@@ -332,6 +333,15 @@ class NativePolicy:
                 self.manifest["image_size"],
             )
         batch = {k: v[None] for k, v in observation.items()}
+        history_spec = getattr(self.algorithm, "live_history_spec", None)
+        if history_spec is not None:
+            from alohamini.learning.observation_history import ObservationHistory
+
+            if self._observation_history is None:
+                self._observation_history = ObservationHistory(
+                    history_spec(asdict(self.config), cameras=self.manifest["cameras"]), self.fps
+                )
+            batch = self._observation_history.append(batch, snapshot.received_s)
         if self.algorithm.include_task:
             batch["task"] = [self.task]
         return self.processor(self.fixed_input(batch))

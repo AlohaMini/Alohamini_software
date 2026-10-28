@@ -102,6 +102,12 @@ class SpiritTrainModel(torch.nn.Module):
 
 
 class SpiritAlgorithm:
+    supports_remote_chunks = True
+
+    @staticmethod
+    def action_horizon(config):
+        return config.chunk_size
+
     config_class = SpiritConfig
     include_task = True
     fsdp_classes = ("Qwen3VLTextDecoderLayer", "Qwen3VLVisionBlock", "BasicTransformerBlock")
