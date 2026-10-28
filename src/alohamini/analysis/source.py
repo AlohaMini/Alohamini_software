@@ -62,7 +62,7 @@ def _dataset_path(root, template, **values):
     return path
 
 
-def load_episode(root: Path, episode: int, *, all_numeric=False) -> Episode:
+def load_episode(root: Path, episode: int, *, all_numeric=False, include_task=False) -> Episode:
     root = root.expanduser().resolve()
     info_path = root / "meta/info.json"
     signatures = {info_path: file_signature(info_path)}
@@ -70,7 +70,7 @@ def load_episode(root: Path, episode: int, *, all_numeric=False) -> Episode:
     source_info = info
     cameras = [key[len(IMAGE_PREFIX) :] for key in info["features"] if key.startswith(IMAGE_PREFIX)]
     if info.get("format") == "alohamini-episodes":
-        cameras = list(info.get("cameras", cameras))
+        cameras = list(info.get("cameras", info.get("robot_metadata", {}).get("cameras", cameras)))
     # Named, reproducible display order; unknown camera names retain metadata order.
     preferred = ["forward", "chest", "wrist_left", "wrist_right"]
     cameras = [c for c in preferred if c in cameras] + [c for c in cameras if c not in preferred]
@@ -132,6 +132,9 @@ def load_episode(root: Path, episode: int, *, all_numeric=False) -> Episode:
                 and k in file.schema_arrow.names
                 and info["features"][k].get("dtype") not in ("string", "image", "video")
             ]
+        if include_task:
+            columns += [key for key in ("task", "task_index") if key in file.schema_arrow.names]
+        columns = list(dict.fromkeys(columns))
         if native:
             columns += [
                 IMAGE_PREFIX + c for c in cameras if IMAGE_PREFIX + c in file.schema_arrow.names
@@ -179,6 +182,20 @@ def load_episode(root: Path, episode: int, *, all_numeric=False) -> Episode:
                     media[camera].append(ref)
     if not rows:
         raise ValueError(f"Episode {episode} 没有数据")
+    if include_task and any(not isinstance(row.get("task"), str) for row in rows):
+        tasks_path = root / "meta/tasks.parquet"
+        tasks = {}
+        if tasks_path.is_file():
+            signatures[tasks_path] = file_signature(tasks_path)
+            table = pq.read_table(tasks_path).to_pandas()
+            # LeRobot stores task text as the pandas index, keyed by task_index.
+            texts = table["task"] if "task" in table else table.index
+            tasks = dict(zip(table["task_index"], texts, strict=True))
+        for row in rows:
+            if not isinstance(row.get("task"), str):
+                text = tasks.get(row.get("task_index"), info.get("task") if native else None)
+                if text is not None:
+                    row["task"] = text
     frames = [r["frame_index"] for r in rows]
     if frames != sorted(set(frames)):
         raise ValueError("frame_index 重复或乱序，不能可靠对齐画面和动作")
@@ -222,10 +239,15 @@ def feature_names(data: Episode, column: str, width: int) -> list[str]:
     return names
 
 
-def unit(data: Episode, name: str) -> str:
-    declared = data.info["features"].get("action", {}).get("units", {})
+def unit(data: Episode, name: str, *, column="action") -> str:
+    feature = data.info["features"].get(column, {})
+    declared = feature.get("units", {})
     if isinstance(declared, dict) and isinstance(declared.get(name), str):
         return declared[name]
+    if isinstance(declared, list):
+        names = feature_names(data, column, len(declared))
+        if name in names and isinstance(declared[names.index(name)], str):
+            return declared[names.index(name)]
     metadata = data.source_info.get("robot_metadata", {})
     motor = metadata.get("motors", {}).get(name.removesuffix(".pos"), {})
     if name.endswith(".pos") and motor.get("normalization"):

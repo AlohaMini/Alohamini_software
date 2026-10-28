@@ -5,11 +5,99 @@ from __future__ import annotations
 import csv
 import html
 import json
+import math
 import shutil
 
 import numpy as np
 
 from .provenance import display_config
+
+
+def _probe_metric(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return "不可用"
+    return f"{value:.4g}"
+
+
+def _probe_html(probe, checkpoint, output):
+    if not probe:
+        return ""
+    esc = html.escape
+
+    def text(value):
+        return esc(str(value)) if value is not None else "不可用"
+
+    def counts(metric):
+        model = text(metric.get("valid_action_steps"))
+        if "persistence_valid_action_steps" in metric:
+            return f"模型{model} / 基线{text(metric['persistence_valid_action_steps'])}"
+        return model
+
+    facts = {
+        "算法": probe.get("kind") or checkpoint.get("kind", "未知"),
+        "示范划分": probe.get("split"),
+        "Episode": probe.get("episode"),
+        "采样观测数": probe.get("samples"),
+    }
+    window = probe.get("window") or {}
+    if window:
+        facts.update(
+            {
+                "预测窗口（步）": window.get("predicted_steps"),
+                "执行窗口（步）": window.get("executed_steps"),
+                "数据集帧率（Hz）": window.get("fps"),
+            }
+        )
+    details = " · ".join(f"{esc(label)}：{text(value)}" for label, value in facts.items())
+    metrics = probe["metrics"]
+    names = [name for name in probe.get("action_names", []) if name in metrics]
+    names.extend(name for name in metrics if name not in names)
+    fields = (
+        "first_action_mae",
+        "chunk_mae",
+        "persistence_first_action_mae",
+        "persistence_chunk_mae",
+    )
+    rows = "".join(
+        f"<tr><td>{esc(name)}</td><td>{text(metrics[name].get('unit'))}</td>"
+        + "".join(f"<td>{_probe_metric(metrics[name].get(field))}</td>" for field in fields)
+        + f"<td>{counts(metrics[name])}</td></tr>"
+        for name in names
+    )
+    defaults = {
+        "predictions_npz": "demonstration_predictions.npz",
+        "probe_json": "demonstration_probe.json",
+    }
+    artifacts = probe.get("artifacts") or defaults
+    links = []
+    root = output.resolve()
+    for key, label in (("predictions_npz", "预测与标签 NPZ"), ("probe_json", "探针结果 JSON")):
+        relative = artifacts.get(key)
+        if not isinstance(relative, str):
+            continue
+        path = (output / relative).resolve()
+        if path.is_relative_to(root) and path.is_file():
+            links.append(
+                f'<a href="{esc(path.relative_to(root).as_posix(), quote=True)}">{label}</a>'
+            )
+    downloads = f"<p>{' · '.join(links)}</p>" if links else ""
+    excluded = probe.get("excluded_fixed_dimensions") or []
+    fixed = f"<p>不计入误差的固定维度：{esc('、'.join(excluded))}</p>" if excluded else ""
+    notes = "".join(f"<li>{esc(note)}</li>" for note in probe.get("notes", []))
+    notes = f"<ul>{notes}</ul>" if notes else ""
+    return (
+        "<h2>模型在示范上的预测误差</h2>"
+        f"<p>{details}</p><p>{esc(probe.get('interpretation', ''))}</p>"
+        "<p>MAE 是平均绝对误差，沿用各动作的记录单位，不跨单位合并。"
+        "首步对应当前动作；动作段统计有效的当前及未来步骤，历史前缀与无效尾部不计入。"
+        "保持当前动作基线在整个窗口重复当前同名观测值，用于对照模型是否优于保持现状。"
+        "不可用表示缺少可比较数据或指标，不代表零误差。</p>"
+        f"{notes}{fixed}{downloads}"
+        "<table><tr><th>动作</th><th>单位</th><th>模型首步 MAE</th><th>模型动作段 MAE</th>"
+        "<th>保持当前动作首步 MAE</th><th>保持当前动作段 MAE</th>"
+        "<th>有效步数（模型 / 基线）</th></tr>"
+        f"{rows}</table>"
+    )
 
 
 def write_summary(analysis, output):
@@ -183,20 +271,7 @@ def export_html(analysis, output, reader, *, keyframe_times=(), cameras=None):
         "</figcaption></figure>"
         for f in keyframes
     )
-    probe = s.get("demonstration_probe")
-    probe_html = ""
-    if probe:
-        probe_rows = "".join(
-            f"<tr><td>{esc(name)}</td><td>{esc(m['unit'])}</td>"
-            f"<td>{m['first_action_mae']}</td><td>{m['chunk_mae']}</td></tr>"
-            for name, m in probe["metrics"].items()
-        )
-        probe_html = (
-            f"<h2>模型在示范上的预测误差</h2><p>{esc(probe['interpretation'])}</p>"
-            f"<p>{esc(probe['split'])} / episode {probe['episode']} · {probe['samples']} 个观测</p>"
-            "<table><tr><th>动作</th><th>单位</th><th>首步 MAE</th><th>Chunk MAE</th></tr>"
-            f"{probe_rows}</table>"
-        )
+    probe_html = _probe_html(s.get("demonstration_probe"), checkpoint, output)
     page = f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <title>评估记录分析 · {esc(analysis.data.root.name)}</title>
 <style>body{{font:15px system-ui;max-width:1400px;margin:32px auto;padding:0 24px;color:#203040}}

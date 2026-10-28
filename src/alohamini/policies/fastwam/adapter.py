@@ -131,6 +131,15 @@ class FastWAMAlgorithm:
             include_task=True,
         )
 
+    def inference_spec(self, options, *, cameras=()):
+        """Condition on current images; future video frames are training supervision."""
+        if not cameras:
+            raise ValueError("FastWAM requires recorded cameras")
+        return dict(
+            delta_indices={"action": list(range(options.get("action_horizon", 32)))},
+            include_task=True,
+        )
+
     @staticmethod
     def loss_counts(batch):
         # Each sample averages its own valid action/video targets before weighting.

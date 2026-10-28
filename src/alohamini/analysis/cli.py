@@ -47,7 +47,7 @@ def parser():
         "--probe-samples",
         type=int,
         default=0,
-        help="显式加载 ACT/AM-ACT 模型，抽取若干示范观测预测 Chunk 并计算误差",
+        help="显式加载 checkpoint，按策略输入窗口抽取示范观测预测动作段并计算误差",
     )
     command.add_argument("--probe-device", default="cpu", choices=("cpu", "cuda"))
     command.add_argument("--probe-seed", type=int, default=0)
@@ -167,7 +167,10 @@ def main(argv=None):
                 reference_lock = stack.enter_context((reference_root / "recording.lock").open("rb"))
                 fcntl.flock(reference_lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
             reference_data = load_episode(
-                reference_root, reference_index, all_numeric=args.probe_samples > 0
+                reference_root,
+                reference_index,
+                all_numeric=args.probe_samples > 0,
+                include_task=args.probe_samples > 0,
             )
             verify_reference(context, reference_data)
             reference = analyze(

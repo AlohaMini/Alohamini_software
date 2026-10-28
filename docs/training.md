@@ -809,7 +809,7 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 | 功能 | 支持算法 |
 | --- | --- |
 | Rerun 画面与动作曲线、示范对比、报告导出 | 平台各算法，包括 ACT、AM-ACT、Diffusion Policy、FastWAM、SmolVLA、π0.5 |
-| 加 `--probe-samples`，重新预测示范动作并计算误差 | 目前仅 ACT／AM-ACT |
+| 加 `--probe-samples`，重新预测示范动作并计算误差 | 平台策略，按各自声明的推理输入和动作窗口检查 |
 
 以下以评估数据集 `eval_01` 为例。请替换数据集路径、episode 编号和时间点；episode 编号从 0 开始。
 
@@ -876,7 +876,7 @@ alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
 `~/Alohamini_workspace/reports/<数据集>/episode_<编号>/<时间编号>/`。
 每次分析都会保存 `summary.json` 和 `events.csv`，HTML 报告的图表另存于 `plots/`。
 
-### 检查模型在示范上的预测（仅 ACT／AM-ACT）
+### 检查模型在示范上的预测
 
 以下命令加载评估对应的 checkpoint，从其验证划分的首条示范中均匀抽取最多 8 个观测，重新预测动作：
 
@@ -892,9 +892,14 @@ alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
 `--training-root` 只指定数据位置，不会创建验证划分。
 `--probe-device cuda` 使用 GPU，改为 `cpu` 可在 CPU 上运行。
 
-报告逐个动作维度显示首步预测和整个动作块的平均绝对误差（MAE），单位与示范动作一致。
+报告逐个动作维度显示首步预测和有效动作段的平均绝对误差（MAE），单位与示范动作一致。
+首步对应当前动作（行偏移 0）；动作段只统计当前及未来标签，排除历史前缀和回合末尾 padding。
 预测使用示范中的观测，对照的是**同一条示范的后续真实动作**，不是评估回合的动作。
-预测数据保存为 `demonstration_predictions.npz`。这项误差用于检查模型预测，不代表真机成功率。
+输入包含策略所需的任务文本和历史观测；CDP 还使用示范中严格过去的动作，不读取当前或未来动作标签。
+每个查询独立重置模型，不复现在线动作队列、时序融合或 RTC。FastWAM 只读取当前图像，不输入训练用未来图像。
+保持基线重复当前同名、同单位的观测值；无法确认坐标单位时该维基线不可用。模型与基线分别报告有效步数。
+`demonstration_probe.json` 保存指标、模型指纹和采样配置；`demonstration_predictions.npz`
+保存预测、标签、字段单位、行偏移和有效掩码。这项误差用于检查模型预测，不代表真机成功率。
 改用 `--reference-split train` 可检查训练拟合；检查泛化优先使用验证示范。
 不加 `--probe-samples` 就不会加载模型。
 
