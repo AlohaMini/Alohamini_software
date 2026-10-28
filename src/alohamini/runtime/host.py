@@ -25,6 +25,7 @@ from alohamini.runtime.lifecycle import CycleResult, HostPhase, HostStatus, Host
 from alohamini.runtime.lift_control import LiftAxisSpec
 from alohamini.runtime.robot_control import RobotController
 from alohamini.schema import BodyVelocity, RobotCommand
+from alohamini.software_version import software_identity
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,7 @@ class NativeHost:
                 }
         for name, profile in profiles.items():
             self._metadata["motors"][name]["motion_profile"] = asdict(profile)
+        self._software = dict(software_identity())
         self._target_source = "startup"
 
     def _check_thread(self) -> None:
@@ -508,6 +510,7 @@ class NativeHost:
                 )
             },
             "_robot_metadata": self._metadata,
+            "_software": self._software,
             "_motor_feedback": {"version": 1, "motors": motors},
             "_host_timing": {
                 "state_sequence": self._sequence,

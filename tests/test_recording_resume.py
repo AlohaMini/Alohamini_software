@@ -92,7 +92,14 @@ def test_failed_lazy_statistics_retains_episode_for_recovery(tmp_path):
     assert (root / "meta/stats.json").read_bytes() == committed_stats
     assert (root / ".recording/episodes/episode_000001/frames.parquet").exists()
     with pytest.raises(RuntimeError, match="Interrupted recording retained"):
-        resume(root)
+        LocalDataset(
+            root,
+            fps=30,
+            task="pick",
+            robot_metadata=metadata(),
+            resume=True,
+            discard_interrupted=False,
+        )
     recovered = tmp_path / "recovered"
     assert recover_recording(root, recovered)["valid"]
     assert len(rows(recovered)) == 5

@@ -65,6 +65,7 @@ Host 对有效且获准的命令完成控制器硬件写入后，才更新命令
 | `_host_timing` | Host 提供的采样时间及其时钟域 |
 | `_safety` | Host 保护、命令来源、控制权和会话信息 |
 | `_motor_feedback` | 可选电机反馈，可能只有部分字段 |
+| `_software` | 可选软件标识：`schema_version=1`、安装版本、Git 提交及实际 Python 源码 SHA256 |
 | `*.pos` | 现有 Host 的关节位置值，单位由相应电机的 normalization 决定 |
 | `lift_axis.height_mm` | 现有 Host 的升降高度，毫米 |
 | `lift_axis.homed` | 连续编码器高度参考是否有效；不表示存在高度传感器或下限位开关 |

@@ -68,7 +68,7 @@ def _index_files(root):
             yield (chunk_number, file_number), _path(root, path.relative_to(root), required=True)
 
 
-def read_recording_index(root, source_info) -> tuple[dict, dict]:
+def read_recording_index(root, source_info, *, _interrupted_episode=None) -> tuple[dict, dict]:
     """Validate resume counters, references and schemas from indexes and footers.
 
     This is a startup check, not a full integrity scan: no numeric frame rows,
@@ -87,12 +87,18 @@ def read_recording_index(root, source_info) -> tuple[dict, dict]:
         raise ValueError(f"Missing recording directory: {root}")
     for relative, pattern in (("meta/recovery", "*.json"), (".recording/episodes", "*")):
         directory = _path(root, relative, directory=True)
-        if any(directory.glob(pattern)):
+        if any(directory.glob(pattern)) and not (
+            relative == ".recording/episodes" and _interrupted_episode is not None
+        ):
             raise ValueError("Interrupted recording retained; recover before resuming")
     info = json.loads(_path(root, "meta/info.json", required=True).read_text())
     if not isinstance(info, dict) or info.get("codebase_version") != "v3.0":
         raise ValueError("Recording resume requires LeRobot v3 metadata")
     count = _integer(info.get("total_episodes"), "total_episodes", positive=True)
+    if _interrupted_episode is not None and (
+        type(_interrupted_episode) is not int or _interrupted_episode not in (count - 1, count)
+    ):
+        raise ValueError("Interrupted episode must be the current recording transaction")
     frames = _integer(info.get("total_frames"), "total_frames", positive=True)
     fps = info.get("fps")
     try:
@@ -164,7 +170,29 @@ def read_recording_index(root, source_info) -> tuple[dict, dict]:
     expected_episode = offset = 0
     data_lengths = defaultdict(int)
     video_ends = {}
+    interrupted_location = (
+        divmod(_interrupted_episode, 1000) if _interrupted_episode == count else None
+    )
+    forbidden = (
+        {
+            DATA_PATH.format(
+                chunk_index=interrupted_location[0], file_index=interrupted_location[1]
+            ),
+            *(
+                VIDEO_PATH.format(
+                    video_key=f"observation.images.{camera}",
+                    chunk_index=interrupted_location[0],
+                    file_index=interrupted_location[1],
+                )
+                for camera in cameras
+            ),
+        }
+        if interrupted_location is not None
+        else set()
+    )
     for location, path in _index_files(root):
+        if location == interrupted_location:
+            continue
         with pq.ParquetFile(path) as index:
             if any(index.schema_arrow.names.count(name) != 1 for name in columns):
                 raise ValueError(f"Recording index is missing required columns: {path}")
@@ -184,11 +212,15 @@ def read_recording_index(root, source_info) -> tuple[dict, dict]:
             if tuple(metadata_location.values()) != location:
                 raise ValueError("Recording episode index path disagrees with its metadata")
             relative = DATA_PATH.format(**_coordinate(row, "data"))
+            if relative in forbidden:
+                raise ValueError("Interrupted publication overlaps a committed data reference")
             data_lengths[relative] += length
             _path(root, f"meta/safety/episode_{episode:06d}.jsonl", required=True)
             for camera in cameras:
                 key = f"observation.images.{camera}"
                 relative = VIDEO_PATH.format(video_key=key, **_coordinate(row, f"videos/{key}"))
+                if relative in forbidden:
+                    raise ValueError("Interrupted publication overlaps a committed video reference")
                 _path(root, relative, required=True)
                 first, last = (
                     row[f"videos/{key}/{field}"] for field in ("from_timestamp", "to_timestamp")

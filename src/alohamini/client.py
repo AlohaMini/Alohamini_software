@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
@@ -28,6 +29,42 @@ from alohamini.protocol import (
     encode_request,
 )
 from alohamini.schema import CommandIdentity
+from alohamini.software_version import software_identity
+
+logger = logging.getLogger(__name__)
+
+
+def _source_digest(identity):
+    if (
+        not isinstance(identity, Mapping)
+        or type(identity.get("schema_version")) is not int
+        or identity["schema_version"] != 1
+    ):
+        return None
+    value = identity.get("source_sha256")
+    if isinstance(value, str) and len(value) == 64:
+        value = value.lower()
+        if all(char in "0123456789abcdef" for char in value):
+            return value
+    return None
+
+
+def _software_label(identity):
+    if not isinstance(identity, Mapping):
+        return "unavailable"
+
+    def label(key, limit):
+        value = identity.get(key)
+        return (
+            value[:limit].replace("\n", " ").replace("\r", " ")
+            if isinstance(value, str)
+            else "unknown"
+        )
+
+    return (
+        f"{label('package_version', 40)} "
+        f"(git {label('git_revision', 12)}, source {(_source_digest(identity) or 'unknown')[:12]})"
+    )
 
 
 def control_feedback_valid(snapshot: HostSnapshot | None) -> bool:
@@ -86,6 +123,10 @@ class HostClient:
         self._endpoint = f"tcp://{host}:{port}"
         self._command_endpoint = f"tcp://{host}:{command_port}"
         self._expected_model = expected_model
+        # Capture once before the first request deadline; no filesystem or Git
+        # work belongs in the observation/control loop.
+        self._software = dict(software_identity())
+        self._software_check_key = object()
         self._timeout_s = float(timeout_s)
         self._context = None
         self._socket = None
@@ -264,6 +305,7 @@ class HostClient:
             raise ConnectionError(f"Host transport failed: {exc}") from exc
 
     def _bind_command_context(self, snapshot: HostSnapshot) -> None:
+        self._check_software_version(snapshot)
         self._last_snapshot = snapshot
         self._command_context = None
         self._command_keys = frozenset()
@@ -278,6 +320,29 @@ class HostClient:
         self._command_keys = self._model_keys[snapshot.robot_model]
         self._command_context = context
         snapshot._command_context = context
+
+    def _check_software_version(self, snapshot: HostSnapshot) -> None:
+        remote = snapshot.payload.get("_software")
+        remote_digest = _source_digest(remote)
+        key = (snapshot.payload.get("_safety", {}).get("host_session_id"), remote_digest)
+        if key == self._software_check_key:
+            return
+        self._software_check_key = key
+        local_digest = _source_digest(self._software)
+        if local_digest is None or remote_digest is None:
+            logger.warning(
+                "Cannot verify PC/Host code versions: PC %s; Host %s. "
+                "Use updated installations on both sides to enable this check.",
+                _software_label(self._software),
+                _software_label(remote),
+            )
+        elif local_digest != remote_digest:
+            logger.warning(
+                "PC/Host code mismatch: PC %s; Host %s. "
+                "Sync both installations and restart Host and client.",
+                _software_label(self._software),
+                _software_label(remote),
+            )
 
     def read(self, *, include_images: bool = False) -> HostSnapshot:
         """Return the newest matching reply in a bounded ready batch, or raise.

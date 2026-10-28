@@ -35,7 +35,13 @@ from alohamini.datasets.images import (
     image_path,
     image_shape,
 )
-from alohamini.datasets.record import _json, _write_json, dataset_features, dataset_schema
+from alohamini.datasets.record import (
+    _json,
+    _recording_contract,
+    _write_json,
+    dataset_features,
+    dataset_schema,
+)
 
 
 @dataclass(frozen=True)
@@ -373,10 +379,10 @@ class IntegrityChecker:
                         self.error(
                             "SAFETY_ACTION_MISMATCH", f"{episode.name}: requested action mismatch"
                         )
-                if (
-                    record.get("robot_metadata", self.info["robot_metadata"])
-                    != self.info["robot_metadata"]
-                ):
+                metadata = record.get("robot_metadata", self.info["robot_metadata"])
+                if metadata != self.info["robot_metadata"] and _recording_contract(
+                    {"robot_metadata": metadata}
+                ) != _recording_contract({"robot_metadata": self.info["robot_metadata"]}):
                     self.error(
                         "SAFETY_MODEL_MISMATCH", f"{episode.name}: model/calibration changed"
                     )

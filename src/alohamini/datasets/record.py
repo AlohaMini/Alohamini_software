@@ -162,6 +162,25 @@ def dataset_schema(features: dict, cameras: Sequence[str], image_format=IMAGE_FO
     )
 
 
+def _recording_contract(info):
+    """Exclude runtime motion profiles while retaining the recorded coordinate contract."""
+    result = dict(info)
+    metadata = result.get("robot_metadata")
+    if isinstance(metadata, dict):
+        metadata = dict(metadata)
+        metadata.pop("arm_profile", None)
+        motors = metadata.get("motors")
+        if isinstance(motors, dict):
+            metadata["motors"] = {
+                name: {key: value for key, value in motor.items() if key != "motion_profile"}
+                if isinstance(motor, dict)
+                else motor
+                for name, motor in motors.items()
+            }
+        result["robot_metadata"] = metadata
+    return result
+
+
 class StateSelection:
     """Select training inputs without deleting recorded fields or changing action semantics."""
 
@@ -331,6 +350,8 @@ class _EpisodeWriter:
         resume=False,
         fixed_dimensions=None,
         video_encoding_workers=None,
+        _source_info=None,
+        _discard_interrupted=False,
     ):
         import fcntl
 
@@ -394,22 +415,37 @@ class _EpisodeWriter:
 
         validate(fixed_dimensions, robot_metadata["robot_model"])
         self.fixed_dimensions = deepcopy(fixed_dimensions)
+        if fixed_dimensions is not None:
+            info["fixed_dimensions"] = deepcopy(fixed_dimensions)
+        if _source_info is not None:
+            if _recording_contract(_source_info) != _recording_contract(info):
+                raise ValueError(
+                    "Dataset schema, task, fps or robot calibration changed; use a new dataset"
+                )
+            # Keep the initial manifest for publication and interrupted-save recovery.
+            # Per-frame metadata above remains the current Host configuration.
+            info = deepcopy(_source_info)
         if resume:
             if not self.root.is_dir():
                 raise FileNotFoundError(self.root)
         else:
             self.root.mkdir(parents=True, exist_ok=False)
-        if fixed_dimensions is not None:
-            info["fixed_dimensions"] = deepcopy(fixed_dimensions)
         self._file_lock = (self.root / "recording.lock").open("a")
         try:
             fcntl.flock(self._file_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             meta = self.root / "meta"
             if resume:
-                if json.loads((meta / "info.json").read_text()) != info:
+                stored_info = json.loads((meta / "info.json").read_text())
+                if _recording_contract(stored_info) != _recording_contract(info):
                     raise ValueError(
                         "Dataset schema, task, fps or robot calibration changed; use a new dataset"
                     )
+                if _discard_interrupted:
+                    from alohamini.datasets.recording_cleanup import discard_interrupted_recording
+
+                    discard_interrupted_recording(self.root.parent, info)
+                if _source_info is not None and stored_info != info:
+                    _write_json(meta / "info.json", info)
             else:
                 meta.mkdir()
                 _write_json(meta / "info.json", info)
@@ -494,8 +530,8 @@ class _EpisodeWriter:
         writer_fields = {"episode_index", "frame_index", "feedback_phase", "event"}
         _json({key: value for key, value in record.items() if key in writer_fields})
         record = {key: value for key, value in record.items() if key not in writer_fields}
-        if record.get("robot_metadata") == self._record_metadata:
-            del record["robot_metadata"]
+        if record.get("robot_metadata", self._record_metadata) == self._record_metadata:
+            record.pop("robot_metadata", None)
             record = _merge_json_objects(_json(record), self._record_metadata_json)
         else:
             record = _json(record)
@@ -781,9 +817,12 @@ class LocalDataset:
         resume=False,
         fixed_dimensions=None,
         video_encoding_workers=None,
+        discard_interrupted=True,
     ):
         import fcntl
 
+        if type(discard_interrupted) is not bool:
+            raise ValueError("discard_interrupted must be a bool")
         if video_encoding_workers is not None and (
             type(video_encoding_workers) is not int or video_encoding_workers < 1
         ):
@@ -800,6 +839,9 @@ class LocalDataset:
                 raise FileNotFoundError(self.root)
         else:
             self.root.mkdir(parents=True, exist_ok=False)
+        from alohamini.datasets.recording_index import _path
+
+        _path(self.root.resolve(), "recording.lock")
         self._lock = (self.root / "recording.lock").open("a")
         self._failed = False
         self._v3_stats = None
@@ -807,10 +849,18 @@ class LocalDataset:
         try:
             fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             staging = self.root / ".recording"
-            if any((staging / "episodes").glob("*")):
+            _path(self.root.resolve(), ".recording/meta/info.json")
+            _path(self.root.resolve(), ".recording/recording.lock")
+            _path(self.root.resolve(), ".recording/episodes", directory=True)
+            if any((staging / "episodes").glob("*")) and not (resume and discard_interrupted):
                 raise RuntimeError(
                     "Interrupted recording retained; run dataset recover to a new directory"
                 )
+            source_info = None
+            if resume:
+                from alohamini.datasets.recording_cleanup import resume_source_info
+
+                source_info = resume_source_info(self.root)
             self._writer = _EpisodeWriter(
                 staging,
                 fps=fps,
@@ -819,21 +869,23 @@ class LocalDataset:
                 resume=staging.exists(),
                 fixed_dimensions=fixed_dimensions,
                 video_encoding_workers=video_encoding_workers,
+                _source_info=source_info,
+                _discard_interrupted=resume and discard_interrupted,
             )
             self._recording_info = json.loads((staging / "meta/info.json").read_text())
             if resume:
                 from alohamini.datasets.recording_index import read_recording_index
 
-                source = json.loads((self.root / "meta/alohamini.json").read_text())
-                if source["source_info"] != self._recording_info:
+                if _recording_contract(source_info) != _recording_contract(self._recording_info):
                     raise ValueError(
                         "Dataset schema, task, fps or robot calibration changed; use a new dataset"
                     )
-                info, shapes = read_recording_index(self.root, self._recording_info)
-                self._writer.num_episodes = info["total_episodes"]
-                self._writer.total_frames = info["total_frames"]
-                self._writer._image_shapes = shapes
-                self._resume_statistics = True
+                if (self.root / "meta/info.json").is_file():
+                    info, shapes = read_recording_index(self.root, self._recording_info)
+                    self._writer.num_episodes = info["total_episodes"]
+                    self._writer.total_frames = info["total_frames"]
+                    self._writer._image_shapes = shapes
+                    self._resume_statistics = True
         except BaseException:
             writer = self.__dict__.get("_writer")
             if writer is not None:
