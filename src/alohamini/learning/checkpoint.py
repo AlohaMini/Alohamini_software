@@ -10,6 +10,8 @@ from pathlib import Path
 
 ASSET_FIELDS = {
     "acdit": ("assets_path",),
+    "hyvla05": ("assets_path",),
+    "openwam": ("assets_path",),
     "spirit": ("backbone_path",),
     "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
     "smolvla": ("vlm_model_name",),

@@ -103,6 +103,14 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
         from test_acdit import tiny_options
 
         options = tiny_options(request.getfixturevalue("siglip_assets"), stage="full", points=False)
+    elif kind in ("hyvla05", "openwam"):
+        from test_hyvla_openwam import tiny_options, tokenizer_assets
+
+        assets = tmp_path / "assets"
+        tokenizer_assets(assets)
+        options = tiny_options(kind, assets)
+        if kind == "hyvla05":
+            options["network"].update(max_state_dim=32, max_action_dim=32)
     elif kind == "smolvla":
         options = smolvla_options(request.getfixturevalue("tiny_assets"))
         options.update(max_state_dim=32, max_action_dim=32)
@@ -131,12 +139,16 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     processor = recipe.processor(model, stats, "cpu")
     batch = next(iter(torch.utils.data.DataLoader(data, batch_size=1)))
     prepared = processor(batch)
-    loss, _ = model(prepared)
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=kind == "hyvla05"):
+        loss, _ = model(prepared)
     loss.backward()
     assert torch.isfinite(loss)
     assert any(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters())
     checkpoint = tmp_path / "checkpoint"
-    save_checkpoint(checkpoint, model, stats, data, training={})
+    save_checkpoint(
+        checkpoint, model, stats, data,
+        training={"mixed_precision": "bfloat16"} if kind == "hyvla05" else {},
+    )
     saved = (checkpoint / "policy.json").read_bytes()
     loaded = NativePolicy(checkpoint, offline=True)
     predicted = loaded.predict(data[0])

@@ -382,6 +382,18 @@ and the platform's existing LeRobot policy adapter. Dataset views, local trainer
 and checkpoint format are native platform implementations, not a migration of
 the complete LeRobot training framework.
 
+HyVLA-0.5 model sources under src/alohamini/policies/hyvla05/_vendor derive from
+Tencent-Hunyuan/Hy-Embodied-0.5-VLA af57e7507ec5964b52fdf6296741e553cbcd3288,
+Apache-2.0 (Tencent and Hugging Face). LICENSE.hyvla05 retains the license.
+Native changes provide local assets, PyTorch attention, configurable vision geometry,
+valid-target reduction, and the shared trainer/checkpoint/observation interfaces.
+
+OpenWAM-alpha model sources under src/alohamini/policies/openwam/_vendor derive from
+OpenWAM-Official/OpenWAM 3dfc9a7d9230f0e1382e6b22639278f1a86e5eb5, Apache-2.0.
+LICENSE.openwam and licenses/wan retain the upstream and Wan/DiffSynth notices.
+Native changes isolate the tensor network, construct local components, and connect
+the shared data, optimizer, normalization, checkpoint and deployment interfaces.
+
 src/alohamini/datasets/edit.py adapts the nine operations in
 src/lerobot/scripts/lerobot_edit_dataset.py and datasets/dataset_tools.py
 from lerobot_alohamini_pr_50hz_fix (Apache-2.0, Copyright 2025 HuggingFace).

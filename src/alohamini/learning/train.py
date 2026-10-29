@@ -312,6 +312,9 @@ def _train(settings, execution):
     torch.backends.cuda.matmul.allow_tf32 = not deterministic
     torch.use_deterministic_algorithms(cfg.get("deterministic_algorithms", False))
     save_freq = cfg.get("save_freq", 20_000)
+    keep = cfg.get("keep_last_checkpoints")
+    if keep is not None and (type(keep) is not int or keep < 1):
+        raise ValueError("keep_last_checkpoints must be a positive integer or null")
     log_freq = cfg.get("log_freq", cfg.get("log_every", 200))
     eval_steps = cfg.get("eval_steps", 0)
     eval_batch_size = cfg.get("eval_batch_size", batch_size)

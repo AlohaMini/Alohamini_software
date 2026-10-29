@@ -91,6 +91,7 @@ def parse_training_args(argv=None):
         "steps",
         "batch_size",
         "save_freq",
+        "keep_last_checkpoints",
         "log_freq",
         "eval_steps",
         "eval_batch_size",

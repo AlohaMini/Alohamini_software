@@ -16,6 +16,8 @@ analysis = ["numpy>=2,<3", "pyarrow>=18", "pillow>=11", "rerun-sdk==0.26.2", "av
 kinematics = ["numpy>=2,<3", "scipy>=1.14,<2", "pyyaml>=6"]
 smolvla = ["alohamini-platform[learning]"]
 spirit = ["alohamini-platform[learning,kinematics]"]
+hyvla05 = ["alohamini-platform[learning]", "timm==1.0.21"]
+openwam = ["alohamini-platform[learning]", "ftfy==6.3.1"]
 pi05 = ["alohamini-platform[learning]"]
 multi_task_dit = ["alohamini-platform[learning]"]
 cdp = ["alohamini-platform[learning]"]
@@ -63,6 +65,8 @@ alohamini = "alohamini.cli:main"
 "alohamini.policies.dit_policy" = ["LICENSE.dit-policy"]
 "alohamini.policies.acdit" = ["LICENSE.acdit", "LICENSE.lift3d", "SOURCE.json"]
 "alohamini.policies.spirit" = ["LICENSE.spirit", "SOURCE.json"]
+"alohamini.policies.hyvla05" = ["LICENSE.hyvla05", "SOURCE.json"]
+"alohamini.policies.openwam" = ["LICENSE.openwam", "SOURCE.json", "licenses/wan/*"]
 
 [tool.ruff]
 target-version = "py310"
@@ -81,3 +85,7 @@ select = ["E", "F", "I", "UP", "B"]
 "src/alohamini/policies/diffusion/*.py" = ["E501"]
 "src/alohamini/policies/fastwam/**/*.py" = ["E501"]
 "src/alohamini/policies/fastwam/*.py" = ["E501"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"src/alohamini/policies/hyvla05/_vendor/**/*.py" = ["ALL"]
+"src/alohamini/policies/openwam/_vendor/**/*.py" = ["ALL"]

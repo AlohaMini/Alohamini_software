@@ -10,6 +10,12 @@ from .processor_smolvla import SmolVLAProcessor, fit_statistics
 
 
 class SmolVLAAlgorithm:
+    supports_remote_chunks = True
+
+    @staticmethod
+    def action_horizon(config):
+        return config.chunk_size
+
     fsdp_classes = ("LlamaRMSNorm",)
     include_task = True
     apply_preset = staticmethod(apply_preset)

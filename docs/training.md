@@ -611,6 +611,11 @@ KI 可通过 `--policy.vlm_data_path=/path/to/train.jsonl` 混入图文或规划
 
 SmolVLA／π0.5 的完整基座须按可用显存调整 batch 和精度。
 
+### HyVLA-0.5 与 OpenWAM-α
+
+策略名为 `hyvla05`、`openwam`。本地基座、历史图像／未来视频窗口与动作表示见
+[HyVLA-0.5](hyvla05.md) 和 [OpenWAM-α](openwam.md)。两者共用本章的训练、验证、多卡和 checkpoint 配置。
+
 ### Spirit v1.5
 
 使用本地 Spirit 基座及 Qwen 配置、tokenizer 和图像处理资源：

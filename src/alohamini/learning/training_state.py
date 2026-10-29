@@ -18,6 +18,7 @@ import logging
 import math
 import os
 import random
+import shutil
 import tempfile
 import time
 from collections.abc import Iterator
@@ -309,7 +310,43 @@ def save_training_checkpoint(
     _link(checkpoint / "pretrained_model", output / "checkpoint")
     if ema is not None:
         _link(checkpoint / "ema_pretrained_model", output / "checkpoint-ema")
+    prune_checkpoints(output, cfg.get("keep_last_checkpoints"))
     return checkpoint
+
+
+def prune_checkpoints(output, keep):
+    """Remove old completed snapshots only after the new snapshot is published."""
+    if keep is None:
+        return
+    if type(keep) is not int or keep < 1:
+        raise ValueError("keep_last_checkpoints must be a positive integer or null")
+    directory = output / "checkpoints"
+    completed = sorted(
+        (
+            path
+            for path in directory.iterdir()
+            if path.name.isdecimal()
+            and path.is_dir()
+            and not path.is_symlink()
+            and (path / "training_state/state.pt").is_file()
+            and (path / "pretrained_model/policy.json").is_file()
+        ),
+        key=lambda path: int(path.name),
+        reverse=True,
+    )
+    protected = {
+        path.resolve()
+        for path in (directory / "last", output / "checkpoint", output / "checkpoint-ema")
+        if path.is_symlink()
+    }
+    for path in completed[keep:]:
+        absolute = path.resolve()
+        if any(target == absolute or absolute in target.parents for target in protected):
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            logging.getLogger(__name__).exception("Could not remove old checkpoint: %s", path)
 
 
 def load_training_checkpoint(path, cfg, samples, validation):
@@ -348,6 +385,7 @@ def load_training_checkpoint(path, cfg, samples, validation):
     mutable = {
         "steps",
         "save_freq",
+        "keep_last_checkpoints",
         "log_freq",
         "log_every",
         "num_workers",
