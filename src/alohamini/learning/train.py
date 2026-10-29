@@ -46,6 +46,7 @@ from alohamini.learning.logging import (
 from alohamini.learning.metrics import MetricAccumulator, format_metrics
 from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optimization
 from alohamini.learning.policy import NativePolicy, make_policy, make_processor
+from alohamini.learning.precision import validate_trainable_dtype
 from alohamini.learning.statistics import sample_arguments, training_statistics, write_statistics
 from alohamini.learning.training_state import (
     load_training_checkpoint,
@@ -64,6 +65,7 @@ logger = logging.getLogger("alohamini.learning.train")
 def launch_training(settings):
     """Launch a detached local trainer with exclusive config/log/PID files."""
     validate_ema_setup(settings)
+    validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
     paths = WorkspacePaths()
     processes = settings.get("num_processes", 1)
     validate_local_workers(processes, settings.get("device", "cuda"))
@@ -255,6 +257,7 @@ def update_policy(model, batch, optimizer, grad_clip_norm, *, mixed_precision="n
 
 def train(settings):
     settings = resolve_pretrained(settings)
+    validate_trainable_dtype(settings.setdefault("trainable_dtype", "preserve"))
     components = algorithm(settings.get("policy", "act"))
     settings = components.apply_preset(settings)
     settings = resolve_data_pipeline(settings)
@@ -283,6 +286,7 @@ def _train(settings, execution):
     ema_config = validate_ema_setup(cfg)
     cfg["ema"] = asdict(ema_config)
     cfg.setdefault("distributed_backend", "ddp")
+    trainable_dtype = validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
     precision = cfg.get("mixed_precision", "none")
     accumulation = cfg.setdefault("gradient_accumulation_steps", 1)
     if type(accumulation) is not int or accumulation < 1:
@@ -429,7 +433,9 @@ def _train(settings, execution):
                     model_path, manifest["config"], device, None, "checkpoint"
                 )
                 stats = manifest["stats"]
-                model = make_policy(cfg["policy"], restored_options, stats)
+                model = make_policy(
+                    cfg["policy"], restored_options, stats, trainable_dtype=trainable_dtype
+                )
                 components.load(model_path, model)
                 model.to("cpu" if execution.sharded else device)
                 processor = make_processor(
@@ -475,7 +481,9 @@ def _train(settings, execution):
             if execution.main:
                 write_statistics(output / "statistics.json", artifact)
             with log_stage("Creating policy and processors"):
-                model = make_policy(cfg.get("policy", "act"), options, stats)
+                model = make_policy(
+                    cfg.get("policy", "act"), options, stats, trainable_dtype=trainable_dtype
+                )
                 if not execution.sharded:
                     model = model.to(device)
                 if cfg.get("pretrained_path"):
@@ -492,6 +500,9 @@ def _train(settings, execution):
             with (output / config_name).open("x") as stream:
                 json.dump(cfg, stream, ensure_ascii=False, indent=2)
         logger.info("Creating optimizer and scheduler")
+        logger.info(
+            "Trainable weight storage: %s; compute mixed_precision: %s", trainable_dtype, precision
+        )
         optimizer, scheduler = make_optimizer_and_scheduler(cfg, model)
         logger.info("Output dir: %s", output)
         logger.info("cfg.steps=%d (%s)", steps, format_big_number(steps))
@@ -623,6 +634,7 @@ def _train(settings, execution):
             "distributed_backend": cfg["distributed_backend"],
             "accelerate": accelerate_version,
             "mixed_precision": precision,
+            "trainable_dtype": trainable_dtype,
             "world_size": execution.world_size,
             "gradient_accumulation_steps": accumulation,
             "optimizer": cfg["optimizer"],

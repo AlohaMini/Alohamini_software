@@ -735,6 +735,22 @@ ACT／AM-ACT 默认无调度，SmolVLA 使用 `cosine`，π0.5／Spirit 使用 `
 Diffusion／FastWAM 使用 `diffusers_cosine`；
 `--scheduler.type=none` 禁用调度。可覆盖 `warmup_steps`、`decay_steps`、`decay_lr`。
 
+`--mixed_precision=none|bfloat16|float16` 控制 autocast 计算精度；
+`--trainable_dtype=preserve|float32` 独立控制可训练参数的存储类型。
+默认 `preserve` 沿用模型类型；`float32` 在加载权重、创建优化器前将可训练参数设为 FP32，
+冻结参数与 buffer 保留原类型。Adam／AdamW 的动量随参数采用 FP32。
+需要保留低于 BF16 间距的小更新时，追加：
+
+```text
+--trainable_dtype=float32 --mixed_precision=bfloat16
+```
+
+该组合采用 FP32 权重更新与 BF16 混合精度计算，实现
+[FP32 主权重方案](https://arxiv.org/html/2610.31859#S6)，适用于各原生策略及单设备、DDP、FSDP2。
+相较 BF16 参数，FP32 参数与优化器动量占用更多内存；已有配置的学习率可能需要重新调整。
+选项随 checkpoint 保存并在加载时恢复，从原生 checkpoint 微调时默认继承，显式参数可覆盖。
+精确续训须保持原值；旧 checkpoint 按 `preserve` 处理。改变存储类型时，使用 `--policy.path` 开始新训练。
+
 | 配置 | 追加参数 |
 | --- | --- |
 | 单卡 | 默认 |
@@ -752,7 +768,7 @@ DataLoader 默认使用 `spawn`；可用 `--dataloader_multiprocessing_context=f
 `--stats` 可跨训练复用统计；启动结果同步默认最多等待 3600 秒，可用 `--dataset_preparation_timeout_s` 调整。
 多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
 
-FSDP2 由通用训练器管理参数、梯度和优化器分片，保留模型原有的 BF16／FP32 精度与冻结设置。
+FSDP2 由通用训练器管理参数、梯度和优化器分片，保留所选参数存储精度与冻结设置。
 每个进程需要足够 CPU 内存构建模型；保存时同时导出分片训练状态和完整推理权重，主进程需留出完整权重的 CPU 内存。
 FSDP2 不分摊输入激活；单卡仍需容纳当前计算模块及其激活。不支持 ZeRO 或张量并行。
 FastWAM 的外置冻结 VAE／文本编码器仍在每张卡保留一份。

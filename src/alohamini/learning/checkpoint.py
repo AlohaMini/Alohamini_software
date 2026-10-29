@@ -159,6 +159,9 @@ def resolve_pretrained(settings, *, expected_kind=None):
         raise ValueError(f"--policy.path contains {manifest['kind']}, not a {kind} checkpoint")
     cfg["policy"] = manifest["kind"]
     cfg["pretrained_path"] = str(path)
+    cfg.setdefault(
+        "trainable_dtype", manifest.get("training", {}).get("trainable_dtype", "preserve")
+    )
     overrides = cfg.get("model", {})
     options = _merge(manifest["config"], overrides)
     if manifest["kind"] in ("act", "am_act"):

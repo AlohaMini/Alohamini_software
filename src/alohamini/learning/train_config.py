@@ -9,6 +9,7 @@ from pathlib import Path
 from alohamini.learning.checkpoint import resolve_pretrained
 from alohamini.learning.ema import EMAConfig, validate_ema_setup
 from alohamini.learning.loading import resolve_data_pipeline
+from alohamini.learning.precision import TRAINABLE_DTYPES, validate_trainable_dtype
 from alohamini.policies.registry import ALGORITHMS, algorithm
 
 
@@ -70,6 +71,11 @@ def parse_training_args(argv=None):
     )
     parser.add_argument("--normalization", choices=("dataset", "checkpoint"))
     parser.add_argument("--mixed_precision", choices=("none", "bfloat16", "float16"))
+    parser.add_argument(
+        "--trainable_dtype",
+        choices=TRAINABLE_DTYPES,
+        help="Trainable weight storage, independent of mixed_precision (default: preserve)",
+    )
     parser.add_argument("--distributed_backend", choices=("ddp", "fsdp2"))
     parser.add_argument("--drop_last", type=boolean)
     parser.add_argument("--cameras", type=json.loads)
@@ -172,6 +178,7 @@ def parse_training_args(argv=None):
             cfg[name] = setting
     cfg["model"] = model
     cfg = resolve_pretrained(cfg)
+    validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
     cfg = algorithm(cfg.get("policy", "act")).apply_preset(cfg)
     validate_ema_setup(cfg)
     defaults = dict(

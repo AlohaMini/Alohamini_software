@@ -16,13 +16,15 @@ from alohamini.datasets.images import decode_host_image
 from alohamini.datasets.record import StateSelection, motor_feedback_frame, state_names
 from alohamini.learning.checkpoint import read_checkpoint, write_checkpoint_metadata
 from alohamini.learning.data_fields import FieldProcessor, active
+from alohamini.learning.precision import apply_trainable_dtype, validate_trainable_dtype
 from alohamini.learning.processor import image_tensor, scale_action
 from alohamini.policies.registry import algorithm
 
 
-def make_policy(kind, options, stats=None):
+def make_policy(kind, options, stats=None, *, trainable_dtype="preserve"):
     """Instantiate the configured policy model."""
-    return algorithm(kind).build(options, stats)
+    validate_trainable_dtype(trainable_dtype)
+    return apply_trainable_dtype(algorithm(kind).build(options, stats), trainable_dtype)
 
 
 def make_processor(model, stats, device, *, data_fields=None):
@@ -34,6 +36,10 @@ def make_processor(model, stats, device, *, data_fields=None):
 
 def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
     """Commit a new checkpoint directory; never overwrite an existing checkpoint."""
+    trainable_dtype = getattr(model, "_trainable_dtype", "preserve")
+    if training.get("trainable_dtype", trainable_dtype) != trainable_dtype:
+        raise ValueError("Checkpoint trainable_dtype differs from the model's storage mode")
+    training = {**training, "trainable_dtype": trainable_dtype}
     path = Path(path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     staging = path.with_name(path.name + ".pending")
@@ -173,7 +179,11 @@ class NativePolicy:
         options = self.algorithm.checkpoint_options(
             path, manifest["config"], device, n_action_steps, temporal_ensemble_coeff
         )
-        self.model = make_policy(manifest["kind"], options)
+        self.model = make_policy(
+            manifest["kind"],
+            options,
+            trainable_dtype=manifest.get("training", {}).get("trainable_dtype", "preserve"),
+        )
         self.config = self.model.config
         expected = {
             f"observation.images.{c}": ("VISUAL", (3, *manifest["image_size"]))
