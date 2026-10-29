@@ -209,6 +209,8 @@ class AlohaMiniDataset(Dataset):
         exclude_fixed_state=True,
         cameras=None,
         image_size=DEFAULT_IMAGE_SIZE,
+        image_resize_mode="stretch",
+        image_pad_value=0.0,
         drop_n_last_frames=0,
         review_note="",
         include_task=False,
@@ -323,6 +325,9 @@ class AlohaMiniDataset(Dataset):
         if len(image_size) != 2 or any(type(n) is not int or n < 32 for n in image_size):
             raise ValueError("image_size must contain height/width >= 32")
         self.image_size = tuple(image_size)
+        if image_resize_mode not in ("stretch", "pad") or not 0 <= image_pad_value <= 1:
+            raise ValueError("Invalid image resize mode or padding value")
+        self.image_resize_mode, self.image_pad_value = image_resize_mode, image_pad_value
         self.rows, self.records, self.locations = [], [], []
         self.segment_starts, self.segment_ends = [], []
         self.excluded = 0
@@ -541,7 +546,10 @@ class AlohaMiniDataset(Dataset):
                 )
             else:
                 rgb = image_rgb(episode, camera, reference)
-            return image_tensor(rgb, self.image_size, return_uint8=self.return_uint8)
+            return image_tensor(
+                rgb, self.image_size, return_uint8=self.return_uint8,
+                resize_mode=self.image_resize_mode, pad_value=self.image_pad_value,
+            )
         if key == "observation.state":
             return torch.from_numpy(self.selection.frame(row))
         # Preserve integer/bool labels; policy preprocessing owns normalization.

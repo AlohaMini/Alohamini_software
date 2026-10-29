@@ -50,6 +50,18 @@ def make_processor(kind, shape):
         options.update(
             backbone_path="unused-tokenizer-free-processor", action_representation="recorded"
         )
+    if kind == "acdit":
+        from alohamini.datasets.record import state_names
+
+        names = state_names("alohamini2pro")
+        slots = {name: i for i, name in enumerate(names)}
+        options.update(
+            use_pointcloud=False,
+            action_names=names,
+            state_names=names,
+            action_slot_map=slots,
+            state_slot_map=slots,
+        )
     config = algorithm(kind).config_class(**options)
     stats = {}
     for key, feature in {**config.input_features, **config.output_features}.items():
@@ -62,6 +74,10 @@ def make_processor(kind, shape):
         from alohamini.policies.spirit.processor_spirit import SpiritProcessor
 
         processor = SpiritProcessor(config, {}, "cpu")
+    elif kind == "acdit":
+        from alohamini.policies.acdit.processor_acdit import ACDiTProcessor
+
+        processor = ACDiTProcessor(config, stats, Tokenizer(), "cpu")
     elif kind == "smolvla":
         from alohamini.policies.smolvla.processor_smolvla import SmolVLAProcessor
 
@@ -110,7 +126,7 @@ def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, si
         "action": torch.ones(2, 3, 18),
         "action_is_pad": torch.tensor([[False, False, True]] * 2),
     }
-    if kind in ("smolvla", "fastwam", "pi05", "multi_task_dit", "spirit"):
+    if kind in ("smolvla", "fastwam", "pi05", "multi_task_dit", "spirit", "acdit"):
         extras["task"] = ["pick", "pick"]
     if kind in ("diffusion", "fastwam", "multi_task_dit"):
         extras[key + "_is_pad"] = torch.tensor([[True, False, False]] * 2)

@@ -20,6 +20,7 @@ pi05 = ["alohamini-platform[learning]"]
 multi_task_dit = ["alohamini-platform[learning]"]
 cdp = ["alohamini-platform[learning]"]
 dit_policy = ["alohamini-platform[learning]"]
+acdit = ["alohamini-platform[learning]", "timm>=1.0,<2"]
 learning = [
     "diffusers==0.39.0",
     "transformers==5.0.0",
@@ -60,6 +61,7 @@ alohamini = "alohamini.cli:main"
 
 [tool.setuptools.package-data]
 "alohamini.policies.dit_policy" = ["LICENSE.dit-policy"]
+"alohamini.policies.acdit" = ["LICENSE.acdit", "LICENSE.lift3d", "SOURCE.json"]
 "alohamini.policies.spirit" = ["LICENSE.spirit", "SOURCE.json"]
 
 [tool.ruff]

@@ -42,7 +42,9 @@ def act_statistics(samples):
     return stats
 
 
-def image_tensor(rgb, size=DEFAULT_IMAGE_SIZE, *, return_uint8=False):
+def image_tensor(
+    rgb, size=DEFAULT_IMAGE_SIZE, *, return_uint8=False, resize_mode="stretch", pad_value=0.0
+):
     """Convert decoded HWC uint8 RGB to CHW float32 in [0, 1]."""
     # Keep snapshot ownership while avoiding Tensor -> NumPy -> Tensor for video.
     tensor = (
@@ -51,15 +53,27 @@ def image_tensor(rgb, size=DEFAULT_IMAGE_SIZE, *, return_uint8=False):
         else torch.from_numpy(np.array(rgb, copy=True))
     )
     tensor = tensor.permute(2, 0, 1)
+    if resize_mode not in ("stretch", "pad") or not 0 <= pad_value <= 1:
+        raise ValueError("image_resize_mode must be stretch/pad; image_pad_value must be in [0,1]")
     if return_uint8 and tuple(tensor.shape[1:]) == tuple(size):
         return tensor
     # Resizing stays on the existing float path: uint8 interpolation/requantizing
     # would change model inputs and the empirical image statistics.
     tensor = tensor.float() / 255
     if tuple(tensor.shape[1:]) != tuple(size):
+        target = size
+        if resize_mode == "pad":
+            ratio = min(size[0] / tensor.shape[1], size[1] / tensor.shape[2])
+            target = (max(1, int(tensor.shape[1] * ratio)), max(1, int(tensor.shape[2] * ratio)))
         tensor = F.interpolate(
-            tensor[None], size=size, mode="bilinear", align_corners=False, antialias=True
+            tensor[None], size=target, mode="bilinear", align_corners=False, antialias=True
         )[0]
+        if resize_mode == "pad":
+            height, width = size[0] - target[0], size[1] - target[1]
+            tensor = F.pad(
+                tensor, (width // 2, width - width // 2, height // 2, height - height // 2),
+                value=pad_value,
+            )
     return tensor
 
 

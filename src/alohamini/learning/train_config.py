@@ -80,6 +80,8 @@ def parse_training_args(argv=None):
     parser.add_argument("--drop_last", type=boolean)
     parser.add_argument("--cameras", type=json.loads)
     parser.add_argument("--image_size", type=json.loads)
+    parser.add_argument("--image_resize_mode", choices=("stretch", "pad"))
+    parser.add_argument("--image_pad_value", type=float)
     parser.add_argument("--video_backend", choices=("pyav", "torchcodec"))
     parser.add_argument("--return_uint8", type=boolean)
     parser.add_argument(

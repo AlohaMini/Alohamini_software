@@ -14,6 +14,7 @@ from alohamini.apps.replay import check_calibration
 from alohamini.datasets.field_transforms import FieldTransforms
 from alohamini.datasets.images import decode_host_image
 from alohamini.datasets.record import StateSelection, motor_feedback_frame, state_names
+from alohamini.learning.auxiliary import auxiliary_features, snapshot_auxiliary
 from alohamini.learning.checkpoint import read_checkpoint, write_checkpoint_metadata
 from alohamini.learning.data_fields import FieldProcessor, active
 from alohamini.learning.precision import apply_trainable_dtype, validate_trainable_dtype
@@ -58,6 +59,8 @@ def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
         "state_units": samples.selection.units if samples.selection else [],
         "cameras": samples.cameras,
         "image_size": samples.image_size,
+        "image_resize_mode": getattr(samples, "image_resize_mode", "stretch"),
+        "image_pad_value": getattr(samples, "image_pad_value", 0.0),
         "training": training,
         "review_note": samples.review_note,
         "dataset_check": samples.report,
@@ -191,6 +194,9 @@ class NativePolicy:
         }
         if self.selection:
             expected["observation.state"] = ("STATE", tuple(self.selection.feature["shape"]))
+        expected.update(
+            auxiliary_features(self.source, manifest.get("sample_windows", {}), expected)
+        )
         action_names = self.names
         action_width = len(self.names)
         if self.field_transform:
@@ -305,6 +311,7 @@ class NativePolicy:
 
     def reset(self):
         self.model.reset()
+        self._observation_history = None
         self._execution_actions = deque()
 
     def refresh_latent(self):
@@ -402,8 +409,22 @@ class NativePolicy:
             observation[f"observation.images.{camera}"] = image_tensor(
                 decode_host_image(snapshot.images[camera]),
                 self.manifest["image_size"],
+                resize_mode=self.manifest.get("image_resize_mode", "stretch"),
+                pad_value=self.manifest.get("image_pad_value", 0.0),
             )
+        observation.update(
+            snapshot_auxiliary(snapshot.payload, self.config.input_features, self.source)
+        )
         batch = {k: v[None] for k, v in observation.items()}
+        history_spec = getattr(self.algorithm, "live_history_spec", None)
+        if history_spec is not None:
+            from alohamini.learning.observation_history import ObservationHistory
+
+            if self._observation_history is None:
+                self._observation_history = ObservationHistory(
+                    history_spec(asdict(self.config), cameras=self.manifest["cameras"]), self.fps
+                )
+            batch = self._observation_history.append(batch, snapshot.received_s)
         if self.algorithm.include_task:
             batch["task"] = [self.task]
         return self.processor(self.fixed_input(batch))

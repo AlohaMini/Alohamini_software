@@ -35,6 +35,8 @@ def describe_checkpoint(path, *, hash_weights=False):
         "config": manifest["config"],
         "cameras": manifest["cameras"],
         "image_size": manifest["image_size"],
+        "image_resize_mode": manifest.get("image_resize_mode", "stretch"),
+        "image_pad_value": manifest.get("image_pad_value", 0.0),
         "state": manifest["state"],
         "training": training,
         "dataset_files": manifest.get("table_sha256", {}),

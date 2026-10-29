@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 ASSET_FIELDS = {
+    "acdit": ("assets_path",),
     "spirit": ("backbone_path",),
     "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
     "smolvla": ("vlm_model_name",),
@@ -105,7 +106,10 @@ def checkpoint_sidecars(manifest):
         "action_feature": manifest["source_info"]["features"]["action"],
         "normalization_mapping": manifest["config"].get("normalization_mapping"),
     }
-    for key in ("field_transforms", "statistics_features", "data_fields", "recorded_state_stats"):
+    for key in (
+        "field_transforms", "statistics_features", "data_fields", "recorded_state_stats",
+        "image_resize_mode", "image_pad_value",
+    ):
         if key in manifest:
             processor[key] = manifest[key]
     return {"config.json": config, "preprocessing.json": processor}
@@ -195,6 +199,9 @@ def resolve_pretrained(settings, *, expected_kind=None):
     for key in ("cameras", "image_size"):
         if cfg.get(key) is None:
             cfg[key] = deepcopy(manifest[key])
+    for key, default in (("image_resize_mode", "stretch"), ("image_pad_value", 0.0)):
+        if key in manifest and cfg.get(key) is None:
+            cfg[key] = manifest.get(key, default)
     return cfg
 
 
@@ -214,6 +221,14 @@ def validate_pretrained(settings, samples):
         if json.loads(json.dumps(manifest[key])) != json.loads(json.dumps(value)):
             raise ValueError(f"Pretrained checkpoint {key} does not match training data")
     saved = manifest["source_info"]
+    for key, feature in samples.input_features.items():
+        if feature.type == "ENV" and (
+            saved["features"].get(key) != samples.info["features"].get(key)
+        ):
+            raise ValueError(f"Pretrained auxiliary observation contract changed: {key}")
+    for key, default in (("image_resize_mode", "stretch"), ("image_pad_value", 0.0)):
+        if manifest.get(key, default) != getattr(samples, key, default):
+            raise ValueError(f"Pretrained checkpoint {key} differs from the selected preprocessing")
     if saved["features"]["action"] != samples.info["features"]["action"]:
         raise ValueError("Pretrained checkpoint action coordinates do not match training data")
     unannotated = saved.get("training_only") or samples.info.get("training_only")

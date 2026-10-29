@@ -48,6 +48,8 @@ def sample_arguments(cfg, components, options):
         state=state,
         cameras=cfg.get("cameras"),
         image_size=tuple(cfg.get("image_size", DEFAULT_IMAGE_SIZE)),
+        image_resize_mode=cfg.get("image_resize_mode", "stretch"),
+        image_pad_value=cfg.get("image_pad_value", 0.0),
         review_note=cfg.get("review_note", ""),
         video_cache_size=cfg.get("video_cache_size", 8),
         video_backend=cfg.get("video_backend", "pyav"),
@@ -96,6 +98,12 @@ def _contract(components, samples, options, kind):
             json.dumps(samples.sample_indices, separators=(",", ":")).encode()
         ).hexdigest(),
     )
+    if (
+        getattr(samples, "image_resize_mode", "stretch") != "stretch"
+        or getattr(samples, "image_pad_value", 0.0) != 0.0
+    ):
+        contract["image_resize_mode"] = samples.image_resize_mode
+        contract["image_pad_value"] = samples.image_pad_value
     if getattr(samples, "field_transform", None) is not None:
         contract["data_fields"] = samples.field_transform.configuration
     return _canonical(contract)

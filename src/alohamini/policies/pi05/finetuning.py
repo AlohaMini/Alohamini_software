@@ -1,10 +1,8 @@
 """Explicit PI0.5 parameter ownership; LoRA keeps base checkpoint key names."""
 
-import math
-
-import torch
 from torch import nn
-from torch.nn import functional as F
+
+from alohamini.policies.lora import LoRALinear as LoRALinear
 
 # Vision includes the image-to-language projector. Heads/time conditioning belong
 # to the action expert and remain fully trainable, like OpenPI's LoRA recipe.
@@ -15,32 +13,6 @@ FINETUNING_MODES = {
     "c": ("full", "lora", "full"),
     "d": ("lora", "lora", "full"),
 }
-
-
-class LoRALinear(nn.Linear):
-    """Zero-initialized residual, FP32 adapters, unchanged weight/bias keys."""
-
-    def __init__(self, base, rank, alpha):
-        nn.Module.__init__(self)
-        self.in_features, self.out_features = base.in_features, base.out_features
-        self.weight, self.bias = base.weight, base.bias
-        self.weight.requires_grad_(False)
-        if self.bias is not None:
-            self.bias.requires_grad_(False)
-        self.scaling = alpha / rank
-        self.lora_A = nn.Parameter(
-            torch.empty(rank, self.in_features, device=base.weight.device, dtype=torch.float32)
-        )
-        self.lora_B = nn.Parameter(
-            torch.zeros(self.out_features, rank, device=base.weight.device, dtype=torch.float32)
-        )
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-
-    def forward(self, x):
-        base = F.linear(x, self.weight, self.bias)
-        # Autocast may select BF16 matmuls, while optimizer master weights stay FP32.
-        residual = F.linear(F.linear(x.to(self.lora_A.dtype), self.lora_A), self.lora_B)
-        return base + residual.to(base.dtype) * self.scaling
 
 
 def _adapt(module, mode, rank, alpha):

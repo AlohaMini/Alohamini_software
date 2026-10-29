@@ -77,7 +77,9 @@ class _Inputs:
                         raise ValueError(f"示范缺少模型相机：{camera}, frame {row['frame_index']}")
                     with Image.open(self.reader.keyframe(refs[i], camera)) as image:
                         result = image_tensor(
-                            np.array(image.convert("RGB")), policy.manifest["image_size"]
+                            np.array(image.convert("RGB")), policy.manifest["image_size"],
+                            resize_mode=policy.manifest.get("image_resize_mode", "stretch"),
+                            pad_value=policy.manifest.get("image_pad_value", 0.0),
                         )
                 elif key == "observation.state":
                     result = torch.from_numpy(policy.selection.frame(row))
@@ -103,6 +105,9 @@ class _Inputs:
         if "past_action" in self.windows:
             sample["past_action"] = field("past_action", "action")
             sample["sequence_index"] = torch.tensor(index)
+        for key, feature in getattr(getattr(policy, "config", None), "input_features", {}).items():
+            if feature.type == "ENV":
+                sample[key] = field(key)
         for key, values in padding.items():
             if key in self.windows:
                 sample[f"{key}_is_pad"] = torch.tensor(values, dtype=torch.bool)
@@ -195,6 +200,18 @@ def probe_reference(context, reference, reader, output, *, samples, device, seed
                 ):
                     raise ValueError(f"{key}: 示范输入字段、顺序或单位与 checkpoint 不一致")
         windows, include_task = _spec(policy)
+        input_features = getattr(getattr(policy, "config", None), "input_features", {})
+        auxiliary = {
+            key: feature
+            for key, feature in input_features.items()
+            if feature.type == "ENV"
+        }
+        for key in auxiliary:
+            if (
+                policy.manifest["source_info"]["features"].get(key)
+                != reference.data.info["features"].get(key)
+            ):
+                raise ValueError(f"{key}: 示范数值观测契约与 checkpoint 不一致")
         offsets = windows["action"]
         inputs = _Inputs(policy, reference, reader, windows, include_task)
         positions = np.unique(
@@ -314,6 +331,7 @@ def probe_reference(context, reference, reader, output, *, samples, device, seed
                 for key in (
                     (["observation.state"] if policy.selection else [])
                     + [f"observation.images.{camera}" for camera in policy.manifest["cameras"]]
+                    + list(auxiliary)
                 )
             },
         },

@@ -436,3 +436,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+AC-DiT policy architecture and point tokenizer adapt PKU-HMI-Lab/AC-DiT at
+90ad00a926f34da04816ed9c3312aaf3bc845b7f (MIT, Copyright 2026 PKU HMI Lab),
+including its vendored LIFT3D subset (MIT, Copyright 2024 Sixiang Chen,
+Yueru Jia). Sources and retained licenses are in policies/acdit/SOURCE.json,
+LICENSE.acdit and LICENSE.lift3d. The native implementation uses explicit
+named robot coordinates, shared FP32 LoRA, portable local SigLIP assets,
+PyTorch geometry operations, dynamic input shapes and complete staged
+checkpoint transfer. RGB-only use is an explicit robot adaptation.
+No pretrained model weights are included.

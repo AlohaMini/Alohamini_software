@@ -504,6 +504,12 @@ checkpoint 不重复打包冻结的 Wan／UMT5 文件，迁移机器时须保留
 微调时也可用上述三个资源参数指定新路径。从平台 checkpoint 微调会恢复全部机器人输入／输出层。
 完整基座需要较大显存，示例 batch 不保证适用于所有 GPU。
 
+### AC-DiT
+
+策略名为 `acdit`，支持底盘预训练和全身策略训练。只有 RGB 时显式设置
+`--policy.use_pointcloud=false`。论文／开源脚本预设、输入坐标、两阶段命令及资源配置见
+[AC-DiT](acdit.md)。
+
 ### SmolVLA
 
 准备基座及视觉语言模型的配置、tokenizer 文件：
@@ -830,7 +836,7 @@ python -m alohamini.learning.train \
 
 新增示范、改用合并数据集、更换验证回合，或希望调整学习率时，使用 `--policy.path`
 加载已有模型，并指定一个新的输出目录。此时不加 `--resume=true`。
-六种算法均支持从平台 checkpoint 微调；下面以 ACT／AM-ACT 为例：
+各原生策略均支持从平台 checkpoint 微调；下面以 ACT／AM-ACT 为例：
 
 ```bash
 python -m alohamini.learning.train \

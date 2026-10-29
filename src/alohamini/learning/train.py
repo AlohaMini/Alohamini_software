@@ -146,6 +146,9 @@ def offline_evaluate(
         or samples.state != policy.manifest["state"]
         or samples.cameras != policy.manifest["cameras"]
         or samples.image_size != tuple(policy.manifest["image_size"])
+        or getattr(samples, "image_resize_mode", "stretch")
+        != policy.manifest.get("image_resize_mode", "stretch")
+        or getattr(samples, "image_pad_value", 0.0) != policy.manifest.get("image_pad_value", 0.0)
         or samples.info["fps"] != policy.fps
         or (samples.selection.feature if samples.selection else None)
         != policy.manifest["state_feature"]
@@ -596,7 +599,8 @@ def _train(settings, execution):
             wrapped, optimizer = execution.prepare(model, optimizer)
         ema = (
             EMAManager(model, ema_config)
-            if ema_config.enable and (execution.main or execution.sharded) else None
+            if ema_config.enable and (execution.main or execution.sharded)
+            else None
         )
         if ema is not None:
             if resume_state and not execution.sharded:
@@ -821,9 +825,12 @@ def _train(settings, execution):
             if ema_config.enable and ema_config.use_for_eval
             else checkpoint
         )
+        action_evaluation = getattr(
+            components, "supports_action_prediction", lambda config: True
+        )(model.config)
         if validation:
             logger.debug("Running final offline evaluation")
-        if validation and (
+        if validation and action_evaluation and (
             execution.sharded or (execution.main and samples.info.get("training_only"))
         ):
             from alohamini.learning.processor import scale_action
@@ -866,7 +873,7 @@ def _train(settings, execution):
                     json.dumps(metrics, indent=2) + "\n"
                 )
                 logger.debug("Final offline evaluation: %s", json.dumps(metrics))
-        elif execution.main and validation:
+        elif execution.main and validation and action_evaluation:
             del wrapped, model, optimizer
             policy = NativePolicy(eval_checkpoint, device=device)
             metrics = offline_evaluate(

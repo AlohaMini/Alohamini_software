@@ -1,0 +1,27 @@
+{
+  "paper": "https://proceedings.neurips.cc/paper_files/paper/2025/hash/5c6c63b7ec141825ff1327563e699f76-Abstract-Conference.html",
+  "repository": "https://github.com/PKU-HMI-Lab/AC-DiT",
+  "revision": "90ad00a926f34da04816ed9c3312aaf3bc845b7f",
+  "files": [
+    "models/acdit_runner.py",
+    "models/dit_runner.py",
+    "models/rdt/model.py",
+    "models/rdt/blocks.py",
+    "models/weighting.py",
+    "third_party/LIFT3D/lift3d/models/lift3d/backbone/lift3d_siglip.py",
+    "third_party/LIFT3D/lift3d/models/lift3d/model_utils/networks.py",
+    "third_party/LIFT3D/lift3d/models/lift3d/model_utils/mv_utils.py"
+  ],
+  "licenses": [
+    "LICENSE.acdit",
+    "LICENSE.lift3d"
+  ],
+  "native_changes": [
+    "Shared trainer, datasets and checkpoint interfaces",
+    "Dynamic named state/action slots, camera counts and horizons",
+    "Explicit RGB-only adaptation; no synthesized point cloud",
+    "Full mobility branch transfer and freezing; consistent unweighted mobility inputs",
+    "Pure PyTorch point grouping, device-safe projection and degenerate-cloud handling",
+    "Shared FP32 LoRA adapters and trainable storage"
+  ]
+}

@@ -42,6 +42,8 @@ def evaluate_checkpoint(
         state=manifest["state"],
         cameras=manifest["cameras"],
         image_size=tuple(manifest["image_size"]),
+        image_resize_mode=manifest.get("image_resize_mode", "stretch"),
+        image_pad_value=manifest.get("image_pad_value", 0.0),
         video_cache_size=video_cache_size,
         allow_unannotated=(
             bool(manifest["source_info"].get("training_only"))

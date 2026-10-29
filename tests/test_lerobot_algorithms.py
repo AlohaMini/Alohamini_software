@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 import torch
+from test_acdit import siglip_assets as siglip_assets
 from test_diffusion_fastwam import diffusion_options, fake_frozen_assets, fastwam_options
 from test_native_learning import model_options
 from test_native_learning import recording as recording
@@ -98,6 +99,10 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
                 for k in ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id")
             }
         )
+    elif kind == "acdit":
+        from test_acdit import tiny_options
+
+        options = tiny_options(request.getfixturevalue("siglip_assets"), stage="full", points=False)
     elif kind == "smolvla":
         options = smolvla_options(request.getfixturevalue("tiny_assets"))
         options.update(max_state_dim=32, max_action_dim=32)
