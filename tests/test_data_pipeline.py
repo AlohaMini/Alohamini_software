@@ -125,15 +125,12 @@ def test_inspection_rejects_mutation_during_scan(tmp_path, monkeypatch):
         DatasetInspection().check(root)
 
 
-def test_training_pipeline_defaults_resolve_backend_and_preserve_overrides(monkeypatch):
+def test_training_pipeline_defaults_resolve_backend_and_preserve_overrides():
     from alohamini.learning.loading import resolve_data_pipeline
     from alohamini.learning.train_config import parse_training_args
 
-    monkeypatch.setattr(
-        "alohamini.learning.loading.importlib.util.find_spec", lambda name: object()
-    )
     cfg, _ = parse_training_args(["--dataset.root=/tmp/data", "--output_dir=/tmp/run"])
-    assert cfg["video_backend"] == "torchcodec"
+    assert cfg["video_backend"] == "pyav"
     assert cfg["camera_workers"] == 3 and cfg["video_cache_size"] == 32
     assert cfg["return_uint8"] is True
     assert cfg["dataloader_multiprocessing_context"] == "spawn"
@@ -145,8 +142,8 @@ def test_training_pipeline_defaults_resolve_backend_and_preserve_overrides(monke
         dataloader_multiprocessing_context="forkserver",
     )
     assert resolve_data_pipeline(override) == override
-    monkeypatch.setattr("alohamini.learning.loading.importlib.util.find_spec", lambda name: None)
     assert resolve_data_pipeline({})["video_backend"] == "pyav"
+    assert resolve_data_pipeline({"video_backend": "torchcodec"})["video_backend"] == "torchcodec"
     assert resolve_data_pipeline({"policy": "smolvla"})["return_uint8"] is True
 
 
