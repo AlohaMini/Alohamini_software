@@ -1,5 +1,6 @@
 """Shared loader settings for training and ordered offline evaluation."""
 
+import importlib.util
 import multiprocessing
 
 import torch
@@ -7,9 +8,10 @@ from torch.utils.data import DataLoader
 
 
 def resolve_data_pipeline(cfg):
-    """Resolve conservative loader defaults without enabling optional decoders implicitly."""
+    """Prefer installed TorchCodec and preserve explicit loader settings."""
     cfg = dict(cfg)
-    cfg.setdefault("video_backend", "pyav")
+    if "video_backend" not in cfg:
+        cfg["video_backend"] = "torchcodec" if importlib.util.find_spec("torchcodec") else "pyav"
     cfg.setdefault("camera_workers", 3)
     cfg.setdefault("video_cache_size", 32)
     cfg.setdefault("return_uint8", True)
