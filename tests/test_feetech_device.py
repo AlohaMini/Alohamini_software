@@ -1241,7 +1241,26 @@ class FeetechDeviceTests(unittest.TestCase):
         self.assertEqual(second.samples["joint"].registers["position_raw"], 1500)
         self.assertEqual(second.samples["joint"].current_a, 1.3)
         requests = [p for p in self.serial.requests if p[4] == 0x82]
-        self.assertEqual([list(p[7:-1]) for p in requests], [[2]])
+        self.assertEqual([list(p[7:-1]) for p in requests], [[2, 1]])
+        self.assertFalse(self.writes())
+
+    def test_single_full_block_loss_retries_next_cycle_without_repeated_register_reads(self):
+        self.connect()
+        self.serial.drop.add((1, 0x82, 56))
+        first = self.device.read_feedback()
+        self.assertFalse(first.failures)
+        self.assertNotIn("temperature_raw", first.samples["joint"].registers)
+        self.serial.drop.clear()
+        second = self.device.read_feedback()
+        third = self.device.read_feedback()
+
+        grouped = [list(p[7:-1]) for p in self.serial.requests if p[4] == 0x82]
+        self.assertEqual(grouped, [[1, 2], [2, 1], [1, 2]])
+        singles = [(p[2], p[5]) for p in self.serial.requests if p[4] == 2]
+        self.assertEqual(singles, [(1, 69), (1, 56)])
+        self.assertIn("temperature_raw", second.samples["joint"].registers)
+        self.assertIn("temperature_raw", third.samples["joint"].registers)
+        self.assertFalse(second.failures or third.failures or self.device._feedback_retry)
         self.assertFalse(self.writes())
 
     def test_critical_fallback_failure_is_not_an_optional_telemetry_error(self):
@@ -1259,12 +1278,59 @@ class FeetechDeviceTests(unittest.TestCase):
         self.serial.drop.add((1, 0x82, 56))
         first = self.device.read_feedback()
         self.assertNotIn("temperature_raw", first.samples["joint"].registers)
+        self.assertEqual(self.device._feedback_retry["joint"][1], 0.0)
+        second = self.device.read_feedback()
+        self.assertFalse(second.failures)
+        self.assertEqual(self.device._feedback_retry["joint"][1], 1.0)
+        retry = self.device._feedback_retry["joint"]
+        self.serial.set(1, 56, 2, 1500)
+        self.serial.requests.clear()
+        skipped = self.device.read_feedback()
+        self.assertFalse(skipped.failures)
+        self.assertEqual(skipped.samples["joint"].registers["position_raw"], 1500)
+        self.assertEqual(self.device._feedback_retry["joint"], retry)
+        self.assertEqual([list(p[7:-1]) for p in self.serial.requests if p[4] == 0x82], [[2]])
+        self.assertEqual(
+            [(p[2], p[5]) for p in self.serial.requests if p[4] == 2], [(1, 69), (1, 56)]
+        )
         self.serial.drop.clear()
         due = self.device._feedback_retry["joint"][0]
         with patch("time.monotonic", return_value=due + 0.001):
             recovered = self.device.read_feedback()
         self.assertIn("temperature_raw", recovered.samples["joint"].registers)
         self.assertFalse(self.device._feedback_retry)
+
+    def test_only_one_due_block_is_probed_and_unrequested_failures_do_not_advance(self):
+        self.connect()
+        self.serial.drop.update({(1, 0x82, 56), (2, 0x82, 56)})
+        self.assertFalse(self.device.read_feedback().failures)
+        wheel_retry = self.device._feedback_retry["wheel"]
+        self.serial.requests.clear()
+        self.assertFalse(self.device.read_feedback().failures)
+        self.assertEqual([list(p[7:-1]) for p in self.serial.requests if p[4] == 0x82], [[1]])
+        self.assertEqual(self.device._feedback_retry["joint"][1], 1.0)
+        self.assertEqual(self.device._feedback_retry["wheel"], wheel_retry)
+        joint_retry = self.device._feedback_retry["joint"]
+        self.serial.requests.clear()
+        self.assertFalse(self.device.read_feedback().failures)
+        self.assertEqual([list(p[7:-1]) for p in self.serial.requests if p[4] == 0x82], [[2]])
+        self.assertEqual(self.device._feedback_retry["wheel"][1], 1.0)
+        self.assertEqual(self.device._feedback_retry["joint"], joint_retry)
+        self.assertFalse(self.writes())
+
+    def test_servo_fault_on_full_block_retry_never_becomes_healthy_via_fallback(self):
+        self.connect()
+        self.serial.drop.add((1, 0x82, 56))
+        self.assertFalse(self.device.read_feedback().failures)
+        self.serial.drop.clear()
+        self.serial.errors[(1, 0x82, 56)] = 1
+        self.serial.requests.clear()
+        batch = self.device.read_feedback()
+        self.assertIn("joint", batch.failures)
+        self.assertEqual(batch.samples["joint"].packet_error, 1)
+        self.assertFalse(self.device._feedback_retry)
+        self.assertFalse(any(p[4] == 2 for p in self.serial.requests))
+        self.assertFalse(self.writes())
 
     def test_servo_fault_packet_never_becomes_healthy_via_fallback(self):
         self.connect()
@@ -1626,6 +1692,51 @@ class FeetechDeviceTests(unittest.TestCase):
             self.assertEqual(serial.get(2, 46, 2), 0)
             self.assertEqual(serial.get(1, 42, 2), 1234)
             self.assertEqual(serial.write_timeout, 0.005)
+
+    def test_feedback_fault_cleanup_does_not_hold_a_late_current_reply_as_position(self):
+        serial = DelayedRegisterSerial()
+        serial.delay = 0.0
+        self.factory.return_value = serial
+        host = HostSupervisor({"left": self.device}, self.actuators)
+        reply = serial.reply
+
+        def late_current(motor_id, instruction, address, data=b""):
+            previous = serial.delay
+            if (motor_id, instruction, address) == (1, 2, 69):
+                # A two-byte STS reply carries no requested register address.
+                # Keep it pending past the critical-feedback transaction, where
+                # an old cleanup position read could accept it as position 200.
+                serial.delay = 0.020
+            try:
+                reply(motor_id, instruction, address, data)
+            finally:
+                serial.delay = previous
+
+        with patch("time.monotonic", side_effect=serial.clock):
+            host.start()
+            serial.set(1, 69, 2, 200)
+            serial.drop.add((1, 0x82, 56))
+            serial.requests.clear()
+            with patch.object(serial, "reply", side_effect=late_current):
+                result = host.cycle()
+
+        self.assertIs(result.status.phase, HostPhase.FAULT)
+        self.assertIn("joint", result.feedback[0].failures)
+        self.assertFalse(result.command_applied)
+        self.assertFalse(result.status.cleanup_failures)
+        self.assertEqual(serial.get(1, 42, 2), 3000)
+        self.assertEqual(serial.get(1, 56, 2), 1234)
+        self.assertFalse(any(p[4] in (3, 0x83) and p[5] == 42 for p in serial.requests))
+        self.assertFalse(any(p[4] == 0x82 and p[6] == 2 for p in serial.requests))
+        self.assertEqual(
+            [
+                (p[2], p[5], int.from_bytes(p[6:-1], "little"))
+                for p in serial.requests
+                if p[4] == 3
+            ],
+            [(2, 46, 0), (1, 40, 0), (2, 40, 0)],
+        )
+        self.assertFalse(serial.is_open)
 
     def test_failed_connection_leaves_cyclic_write_timeout_unchanged(self):
         self.serial.set(1, 3, 2, 777)

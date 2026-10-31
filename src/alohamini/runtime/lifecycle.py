@@ -27,7 +27,7 @@ class HostDevice(Protocol):
     read_feedback uses the supplied session ID as its monotonic clock_id.
     stop cancels active targets, holds positional axes using valid feedback and
     zeros velocity-controlled axes. It must raise if any required stop fails.
-    stop_velocity only zeros velocity axes before overcurrent torque release;
+    stop_velocity only zeros velocity axes before fault torque release;
     it must attempt all such axes and raise on failure without holding joints.
     stop_motion is the runtime watchdog path, using this cycle's feedback rather
     than maintenance register readback. Its group writes have no servo ACK.
@@ -212,12 +212,13 @@ class HostSupervisor:
                 )
         return errors
 
-    def _shutdown(self, *, already_stopped: bool = False) -> None:
+    def _shutdown(self, *, already_stopped: bool = False, velocity_only: bool = False) -> None:
         errors = []
         if not already_stopped:
-            # Source overcurrent shutdown stops base/lift then unloads torque;
-            # do not spend position hold transactions on overloaded arm joints.
-            stop_errors = self._stop(velocity_only=self._trip is not None)
+            # Overcurrent and failed feedback stop velocity axes before torque
+            # release. A delayed register reply after a failed read cannot prove
+            # the position for a new hold target (status packets carry no address).
+            stop_errors = self._stop(velocity_only=velocity_only or self._trip is not None)
             errors.extend(stop_errors)
             if not stop_errors and self._owner.owner is not None:
                 self._owner.release()
@@ -257,10 +258,12 @@ class HostSupervisor:
                     )
         return errors
 
-    def _fault(self, reason: str, *, already_stopped: bool = False) -> None:
+    def _fault(
+        self, reason: str, *, already_stopped: bool = False, velocity_only: bool = False
+    ) -> None:
         self._phase = HostPhase.FAULT
         self._fault_reason = reason
-        self._shutdown(already_stopped=already_stopped)
+        self._shutdown(already_stopped=already_stopped, velocity_only=velocity_only)
 
     def start(self) -> HostStatus:
         self._enter()
@@ -328,6 +331,7 @@ class HostSupervisor:
         batches = []
         applied = False
         command_error = None
+        reading_feedback = False
         try:
             if self._phase not in (HostPhase.STARTING, HostPhase.READY, HostPhase.ACTIVE):
                 raise RuntimeError("Host must be started and free of latched faults")
@@ -339,6 +343,7 @@ class HostSupervisor:
                 if self._phase is not HostPhase.FAULT:
                     observation_started = time.perf_counter()
                     currents = {}
+                    reading_feedback = True
                     for source, device in self._devices.items():
                         started = time.monotonic()
                         read_started = time.perf_counter()
@@ -348,6 +353,7 @@ class HostSupervisor:
                             batches.append(batch)
                         self._validate_feedback(source, batch, started)
                         currents.update({name: s.current_a for name, s in batch.samples.items()})
+                    reading_feedback = False
                     self._trip = self._protection.update(currents, now=time.monotonic())
                     if self._trip is not None:
                         self._fault(f"{self._trip.cause}: {self._trip.motor}")
@@ -404,7 +410,10 @@ class HostSupervisor:
             except BaseException as exc:
                 applied = False
                 if self._phase is not HostPhase.FAULT:
-                    self._fault(f"Host cycle failed: {type(exc).__name__}: {exc}")
+                    self._fault(
+                        f"Host cycle failed: {type(exc).__name__}: {exc}",
+                        velocity_only=reading_feedback,
+                    )
                 if not isinstance(exc, Exception):
                     raise
             return CycleResult(tuple(batches), applied, self.status, command_error)

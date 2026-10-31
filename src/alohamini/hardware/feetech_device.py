@@ -259,7 +259,7 @@ class FeetechBusDevice(MotorsBus):
                     )
                 expected = width if value is None else 0
                 while result == 0:
-                    packet, result = self._handler.rxPacket(port)
+                    packet, result = port.read_packet()
                     if result != 0:
                         break
                     if packet[2] != self._ids[name]:
@@ -406,6 +406,7 @@ class FeetechBusDevice(MotorsBus):
         not make temperature/load availability a condition for control. Missing
         blocks use fresh critical-register reads, never cached values. Servo
         error flags remain fatal and cannot be cleared by a successful fallback.
+        Retry a missing full block once before treating it as persistently unavailable.
         """
         self._check_thread()
         if self._reader is None or self._verified != self._ids.keys():
@@ -422,7 +423,7 @@ class FeetechBusDevice(MotorsBus):
             if name in samples:  # Includes faulted packets: never mask their errors.
                 retry.pop(name, None)
             else:
-                delay = min(retry.get(name, (0.0, 0.5))[1] * 2, 30.0)
+                delay = 0.0 if name not in retry else min(max(retry[name][1], 0.5) * 2, 30.0)
                 retry[name] = (batch.received_s + delay, delay)
         missing = [name for name in self._ids if name not in samples]
         # One shared fallback budget, not N independent retry timeouts.

@@ -213,6 +213,29 @@ class HostLifecycleTests(unittest.TestCase):
         self.assertEqual(result.status.phase, HostPhase.FAULT)
         self.assertFalse(polls)
         self.assertFalse(result.command_applied)
+        self.assert_cleanup(stop="stop_velocity")
+
+    def test_feedback_failure_never_holds_position_and_attempts_all_cleanup_after_errors(self):
+        self.start()
+        self.host.cycle(self.command())
+        self.events.clear()
+        self.devices["left"].errors.update(
+            read=OSError("critical feedback timeout"),
+            stop_velocity=OSError("velocity stop failed"),
+            disable_torque=OSError("torque off failed"),
+        )
+        self.devices["right"].errors["close"] = OSError("close failed")
+        poll = Mock()
+        result = self.host.cycle(poll_command=poll)
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertIn("critical feedback timeout", result.status.fault)
+        self.assertFalse(result.command_applied)
+        poll.assert_not_called()
+        self.assert_cleanup(stop="stop_velocity")
+        self.assertEqual(
+            [(failure.source_id, failure.operation) for failure in result.status.cleanup_failures],
+            [("left", "stop_velocity"), ("left", "disable_torque"), ("right", "close")],
+        )
 
     def test_command_lease_starts_after_controller_device_writes(self):
         self.start()
@@ -263,7 +286,7 @@ class HostLifecycleTests(unittest.TestCase):
         self.devices["left"].errors["read"] = KeyboardInterrupt()
         with self.assertRaises(KeyboardInterrupt):
             self.host.cycle(self.command())
-        self.assert_cleanup()
+        self.assert_cleanup(stop="stop_velocity")
         self.assertEqual(self.host.status.phase, HostPhase.FAULT)
 
     @unittest.skipUnless(importlib.util.find_spec("scservo_sdk"), "optional SDK not installed")
@@ -286,7 +309,7 @@ class HostLifecycleTests(unittest.TestCase):
         self.assertEqual(result.feedback[1].samples["right_motor"].packet_error, 1)
         self.assertEqual(result.status.phase, HostPhase.FAULT)
         self.assertFalse(result.command_applied)
-        self.assert_cleanup()
+        self.assert_cleanup(stop="stop_velocity")
 
     def test_no_new_command_does_not_repeat_target_writes(self):
         self.start()
@@ -410,7 +433,7 @@ class HostLifecycleTests(unittest.TestCase):
         self.assertEqual(len(result.feedback), 1)
         self.assertEqual(result.status.phase, HostPhase.FAULT)
         self.assertFalse(result.command_applied)
-        self.assert_cleanup()
+        self.assert_cleanup(stop="stop_velocity")
 
     def test_partial_feedback_preserved_but_not_authorized_for_motion(self):
         self.start()
@@ -419,6 +442,7 @@ class HostLifecycleTests(unittest.TestCase):
         self.assertIn("left_motor", result.feedback[0].samples)
         self.assertFalse(result.command_applied)
         self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assert_cleanup(stop="stop_velocity")
 
     def test_bad_bus_session_time_sequence_or_current_faults(self):
         transforms = [
@@ -443,6 +467,20 @@ class HostLifecycleTests(unittest.TestCase):
                 result = self.host.cycle(self.command())
                 self.assertEqual(result.status.phase, HostPhase.FAULT)
                 self.assertFalse(result.command_applied)
+                self.assert_cleanup(stop="stop_velocity")
+
+    def test_controller_observation_failure_after_valid_reads_keeps_normal_stop_path(self):
+        control = Mock()
+        control.observe.side_effect = RuntimeError("controller observation failed")
+        self.host = HostSupervisor(self.devices, self.actuators, control=control)
+        self.start()
+        poll = Mock()
+        result = self.host.cycle(poll_command=poll)
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertIn("controller observation failed", result.status.fault)
+        poll.assert_not_called()
+        control.clear_targets.assert_called_once()
+        self.assert_cleanup()
 
     def test_overload_trips_without_waiting_for_new_command(self):
         self.start()
