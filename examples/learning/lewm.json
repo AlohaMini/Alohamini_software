@@ -1,0 +1,16 @@
+{
+  "policy": "lewm",
+  "dataset": "~/Alohamini_workspace/datasets/task_demo_ready",
+  "run_name": "lewm_task",
+  "device": "cuda",
+  "batch_size": 32,
+  "steps": 30000,
+  "save_freq": 2000,
+  "keep_last_checkpoints": 2,
+  "model": {
+    "history_size": 3,
+    "action_block": 5,
+    "planning_horizon": 5,
+    "gradient_checkpointing": true
+  }
+}

@@ -7,6 +7,7 @@ import pytest
 import torch
 from test_acdit import siglip_assets as siglip_assets
 from test_diffusion_fastwam import diffusion_options, fake_frozen_assets, fastwam_options
+from test_gr00t_lewm import groot_assets as groot_assets
 from test_native_learning import model_options
 from test_native_learning import recording as recording
 from test_smolvla import options as smolvla_options
@@ -118,6 +119,11 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
         from test_spirit import tiny_spirit_options
 
         options = tiny_spirit_options(tmp_path / "spirit-assets")
+    elif kind in ("gr00t_n17", "lewm"):
+        from test_gr00t_lewm import options as native_options
+
+        assets = request.getfixturevalue("groot_assets") if kind == "gr00t_n17" else None
+        options = native_options(kind, assets)
     else:
         options = small_pi05(tmp_path, monkeypatch)
     cfg = dict(
@@ -146,18 +152,24 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     assert any(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters())
     checkpoint = tmp_path / "checkpoint"
     save_checkpoint(
-        checkpoint, model, stats, data,
+        checkpoint,
+        model,
+        stats,
+        data,
         training={"mixed_precision": "bfloat16"} if kind == "hyvla05" else {},
     )
     saved = (checkpoint / "policy.json").read_bytes()
     loaded = NativePolicy(checkpoint, offline=True)
+    goals = {"forward": np.zeros((32, 32, 3), dtype=np.uint8)} if kind == "lewm" else None
+    if goals is not None:
+        loaded.set_goal(goals)
     predicted = loaded.predict(data[0])
     assert predicted.shape[-1] == 18 and torch.isfinite(predicted).all()
     with pytest.raises(ValueError, match="Offline policy"):
         loaded.select_action(None)
     with pytest.raises(ValueError, match="Offline policy"):
         loaded.bind_robot(None)
-    result = evaluate_checkpoint(checkpoint, root, episodes=val, batch_size=2)
+    result = evaluate_checkpoint(checkpoint, root, episodes=val, batch_size=2, goal_images=goals)
     assert len(result["mae_by_action"]) == 18
     assert result["valid_action_steps"] > 0
     assert saved == (checkpoint / "policy.json").read_bytes()

@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/NVIDIA/Isaac-GR00T",
+  "revision": "c56f54128d92f743889b7e4cecfc1ceafd88739e",
+  "references": [
+    "https://huggingface.co/nvidia/GR00T-N1.7-3B",
+    "https://arxiv.org/abs/2503.14734"
+  ],
+  "adaptations": [
+    "Action head, alternating DiT and embodiment projections retained",
+    "Configuration registry removed; platform owns registration",
+    "VLM constructed from local embedded Qwen3-VL config with Transformers 5",
+    "Official model weights loaded by exact name through explicit namespace mapping",
+    "Removed parameter-count prints",
+    "Enabled non-reentrant checkpointing at DiT block calls; parameter keys and uncheckpointed arithmetic unchanged",
+    "GPU-specific SDPA workaround only checks CUDA inputs, preserving CPU checkpointing"
+  ],
+  "published_checkpoint": {
+    "repository": "nvidia/GR00T-N1.7-3B",
+    "revision": "2fc962b973bccdd5d8ce4f67cc63b264d6886495"
+  }
+}

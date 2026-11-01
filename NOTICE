@@ -458,3 +458,15 @@ named robot coordinates, shared FP32 LoRA, portable local SigLIP assets,
 PyTorch geometry operations, dynamic input shapes and complete staged
 checkpoint transfer. RGB-only use is an explicit robot adaptation.
 No pretrained model weights are included.
+
+The native GR00T N1.7 action head, alternating DiT and embodiment projections
+adapt NVIDIA/Isaac-GR00T at c56f54128d92f743889b7e4cecfc1ceafd88739e
+(Apache-2.0, Copyright 2026 NVIDIA CORPORATION & AFFILIATES). The retained
+license and source metadata are in policies/gr00t_n17/LICENSE.gr00t and
+SOURCE.json. Runtime preprocessing and training use platform interfaces.
+
+LeWorldModel JEPA, predictor and SIGReg components adapt lucas-maes/le-wm at
+8edfeb336732b5f3ce7b8b210d0ba370a09e2cac (MIT, Copyright 2026 Lucas Maes).
+The retained license is policies/lewm/LICENSE.lewm; source metadata is in
+policies/lewm/SOURCE.json. Distributed regularization and visual-goal control
+use native platform adapters. No pretrained weights are distributed.

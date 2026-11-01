@@ -152,6 +152,10 @@ def main(argv: list[str] | None = None) -> int:
         "--policy.path", dest="checkpoint", help="本地 AlohaMini 策略 checkpoint"
     )
     evaluator.add_argument("--device", help="checkpoint 推理设备，默认 cuda")
+    evaluator.add_argument(
+        "--goal-images", dest="goal_images", type=json.loads, default=argparse.SUPPRESS,
+        help='目标图像映射，例如 {"forward":"/path/goal.png"}；仅用于支持视觉目标的策略',
+    )
     from alohamini.rtc import add_rtc_arguments
 
     add_rtc_arguments(evaluator)
@@ -452,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
                     "fixed_dataset",
                     "fixed_current",
                     "calibration_mode",
+                    "goal_images",
                 )
                 if key in options
             }

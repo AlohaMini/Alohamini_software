@@ -25,13 +25,15 @@ def evaluate_checkpoint(
     log_freq=50,
     video_cache_size=8,
     allow_unannotated=None,
+    goal_images=None,
 ):
     """Compare predicted chunks with recorded actions; never connect to a robot."""
     if type(batch_size) is not int or batch_size < 1:
         raise ValueError("batch_size must be a positive integer")
-    policy = NativePolicy(checkpoint, device=device, offline=True)
+    policy = NativePolicy(checkpoint, device=device, offline=True, goal_images=goal_images)
     manifest = policy.manifest
-    sample_spec = policy.algorithm.sample_spec(manifest["config"], cameras=manifest["cameras"])
+    sampling = getattr(policy.algorithm, "evaluation_sample_spec", policy.algorithm.sample_spec)
+    sample_spec = sampling(manifest["config"], cameras=manifest["cameras"])
     sample_spec["exclude_fixed_state"] = manifest.get("fixed_state_excluded", False)
     if manifest.get("data_fields"):
         sample_spec["context_fields"] = ["observation.state"]
@@ -83,6 +85,7 @@ def main(argv=None):
     parser.add_argument("--dataset.root", dest="dataset", required=True)
     parser.add_argument("--dataset.episodes", dest="episodes", type=json.loads, required=True)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--goal-images", dest="goal_images", type=json.loads)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--prefetch_factor", type=int, default=4)

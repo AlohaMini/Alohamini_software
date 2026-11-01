@@ -3,6 +3,8 @@
 from importlib import import_module
 
 ALGORITHMS = {
+    "gr00t_n17": ("alohamini.policies.gr00t_n17.adapter", "GR00TN17Algorithm"),
+    "lewm": ("alohamini.policies.lewm.adapter", "LeWMAlgorithm"),
     "acdit": ("alohamini.policies.acdit.adapter", "ACDiTAlgorithm"),
     "hyvla05": ("alohamini.policies.hyvla05.adapter", "HyVLA05Algorithm"),
     "openwam": ("alohamini.policies.openwam.adapter", "OpenWAMAlgorithm"),

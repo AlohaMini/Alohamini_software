@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 ASSET_FIELDS = {
+    "gr00t_n17": ("assets_path",),
     "acdit": ("assets_path",),
     "hyvla05": ("assets_path",),
     "openwam": ("assets_path",),

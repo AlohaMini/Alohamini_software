@@ -130,7 +130,9 @@ class ACTAlgorithm:
         new_enabled = model.config.use_camera_embeddings
         if old_enabled or new_enabled:
             camera_names = [
-                key for key, feature in saved["input_features"].items() if feature["type"] == "VISUAL"
+                key
+                for key, feature in saved["input_features"].items()
+                if feature["type"] == "VISUAL"
             ]
             if camera_names != list(model.config.image_features):
                 raise ValueError("Camera embeddings require the checkpoint camera names and order")

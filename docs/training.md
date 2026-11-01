@@ -103,72 +103,46 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 
 ### 关节、TCP 与相对目标
 
-`observation.state` 描述当前观测，`action` 是对应记录中的控制目标。两者即使名称和维度相同，
-也不能互相替代。Host 的关节位置可以是归一化舵机坐标，不能直接作为 URDF／DH 的关节角。
-
-`--state` 选择送入模型的源字段；以下参数在同一数据处理层选择这些字段和 action 的表示，
-转换后才计算训练统计和归一化，不改写原数据集。目前 ACT、Spirit 接入此接口：
+`--state` 选择模型输入字段；以下参数选择 state/action 的表示。转换后计算统计与归一化，原数据不变。
 
 | 参数 | 选项与用途 |
 | --- | --- |
-| `--data.state_representation` | `recorded` 保留所选字段；`tcp` 将完整臂关节位置组替换为 TCP 位姿，保留其他所选字段 |
-| `--data.action_representation` | `recorded` 原目标；`tcp_absolute` 绝对 TCP 目标；`tcp_delta` 相对当前观测的 TCP 目标 |
-| `--data.kinematics.reference_pose` | 按型号登记的标定姿态解析几何与编码器坐标，如 `upright_forward` |
-| `--data.kinematics.spec` | 自定义字段、坐标和几何的 JSON 文件 |
-| `--data.kinematics.path` | 已解析、包含完整几何快照的转换描述 JSON |
+| `--data.state_representation` | `recorded` 保留记录值；`tcp` 将臂关节位置替换为末端位姿，保留其他所选字段 |
+| `--data.action_representation` | `recorded` 保留控制目标；`tcp_absolute` 绝对末端目标；`tcp_delta` 相对当前观测的末端目标 |
+| `--data.kinematics.reference_pose` | 使用型号登记的标定姿态，如 `upright_forward` |
+| `--data.kinematics.spec` | 自定义坐标与几何 JSON，见[弧度坐标示例](../examples/datasets/kinematics-radians.json) |
+| `--data.kinematics.path` | 复用已解析的转换描述 JSON |
 
-三种 `kinematics` 来源选一。ACT 默认保留记录表示；Spirit 新训练默认使用 TCP state 和 TCP 增量动作，
-仍须显式提供一种几何来源。原始字段、模型字段、转换配置和归一化统计随 checkpoint 保存，续训无需原配置文件。
+三种 `kinematics` 来源选一。ACT 默认保留记录表示；Spirit 默认使用 TCP state 和 TCP 增量动作。
+GR00T 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
 
-state 与 action 表示可以独立选择。例如保留关节 state、只转换动作时，使用
-`--data.state_representation=recorded --data.action_representation=tcp_delta`。
-ACT 使用 `--state=none` 时仍可预测 TCP 动作：数据须保留原关节观测作为转换及 IK 的锚点，
-这些关节值不送入模型；已经移除数值观测的纯视觉副本无法提供此锚点。
-TCP 动作执行按窗口解码，不支持 ACT 时间融合；其他策略须完成对应适配后才能启用此接口。
-
-关节到 TCP 的转换依次使用以下参数：
-
-| 转换 | 所需参数 |
-| --- | --- |
-| Host 记录值 → 归零后编码器位置 | 数据集中的归一化方式、范围和方向 |
-| 归零后编码器位置 → 模型关节角（rad） | 对应设备的参考编码器值、参考关节角、正方向和传动比 |
-| 模型关节角 → TCP 位姿 | 机器人型号的 DH 几何、基坐标与工具变换 |
-
-`q_URDF` 表示 URDF 模型定义的关节角，零值对应模型的 CAD 零姿态，单位为 rad。
-采集关节角也可使用其他明确的零姿态；切换零姿态时，将对应模型角加到 DH 的 `theta_offset`，
-即可保持同一套物理 FK，不要求把模型 CAD 零位当成电机标定零位。
-
-**标准中位标定数据**：`alohamini2pro` 的 `upright_forward` 预设采用大臂向上平行 z 轴、
-小臂及夹爪沿机器人 x 轴前伸、夹爪开合平面水平，肩部转向与腕部偏转处于中位。
-`upright` 指大臂竖直，`forward` 指小臂及夹爪前伸；这是标定坐标预设的名称。
-仅在采集时按此姿态执行半圈归零的情况下，训练时选择：
+对按 `upright_forward` 姿态完成半圈归零的 `alohamini2pro` 数据：
 
 ```bash
 pip install -e '.[kinematics]'
-alohamini train \
-  --policy.type=act \
+alohamini train --policy.type=act \
   --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
   --state=joint_position \
   --data.state_representation=tcp \
   --data.action_representation=tcp_delta \
   --data.kinematics.reference_pose=upright_forward \
-  --output_dir="$HOME/Alohamini_workspace/runs/act_tcp_01" --background
+  --run_name=act_tcp_01 --background
 ```
 
-此预设将上述姿态定义为六个关节角均为零，将与 CAD 零姿态的差值吸收到 DH 角偏移。
-该姿态对应原模型关节角 `[0°, -90°, 90°, 0°, 0°, 0°]`；方向按连杆主轴确定，
-不使用偏置安装的舵机轴心连线代替连杆方向。
-STS 半圈归零后的参考 tick 为 `2047`；当前数据的归一化、方向、范围及归零参数从记录元数据读取，
-不读取旧设备的关节映射文件。IK 关节范围由该记录的编码器范围换算，预设及解析后的参数随 checkpoint 保存。
-选择此预设是声明采集所用的标定协议，不会移动机器人或重新归零，也不从文件名或向量维度推断姿态。
+该标定姿态要求大臂竖直向上、小臂及夹爪向前、夹爪开合平面水平，肩部转向与腕部偏转居中。
+预设读取采集期的编码器范围、方向及归零参数；选择预设不会移动机器人或重新归零。
+Host 归一化值、编码器 tick 不能直接标为模型关节角 `rad`／`deg`；自定义数据须声明参考角、参考编码器值、方向、传动比和几何。
 
-已经使用模型关节坐标的弧度或角度数据可直接进行 FK。编码器数据还需定义它与模型关节坐标的关系；
-电机范围和 `homing_offset` 本身不能唯一确定模型中的关节零位。计算不需要启动 ROS 或读取在线 TF。
-编码器值和参考编码器值均使用归零后坐标，不重复加减 `homing_offset`。
-每关节的模型角按 `q = q_ref + sign × wrap(tick - tick_ref) × 2π/N × ratio` 计算，
-其中 `N` 为一圈编码器计数，`wrap` 取单圈有符号差；限位用于选择明确的角度分支。
+state 与 action 可独立选择：只转换动作时使用 `--data.state_representation=recorded`。
+ACT 使用 `--state=none` 预测 TCP 动作时，原数据仍须保留关节观测供转换及 IK 使用。
+TCP 动作不支持 ACT 时间融合。
 
-需要单独检查或复用解析结果时，可选导出转换描述：
+每臂输出 `[x,y,z,rx,ry,rz]`，位置为 m、旋转向量为 rad；夹爪按配置追加，底盘速度和升降高度透传。
+内置双臂分别使用 `left_Base`、`right_Base`，不隐含世界坐标。
+`tcp_delta` 的整段动作共用当前观测锚点，不是相邻帧差或逐步累积；旋转按矩阵组合。
+推理还原目标后连续求 IK，不可达、越界或不收敛时报错。
+
+需要复用转换描述时，可先导出，再用 `--data.kinematics.path` 加载：
 
 ```bash
 mkdir -p "$HOME/Alohamini_workspace/configs"
@@ -178,75 +152,13 @@ python -m alohamini.datasets.kinematic_fields \
   --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
 ```
 
-此命令只将当前数据的字段、编码器坐标和型号几何解析为 JSON，不生成 TCP 数据列，也不训练。
-训练可通过 `--data.kinematics.path` 复用该文件；直接选择预设时无需先执行导出。
+自定义 JSON 用 `--spec` 替换 `--reference-pose`。已有双六关节臂 Host YAML 时，也可改用
+`--left-map /path/left.yaml --right-map /path/right.yaml`；每关节须包含匹配采集期的
+`motor_calibration`（`homing_offset`、`range_min`、`range_max`、`drive_mode`）。
+导出文件须尚不存在；命令只生成转换描述，不改写数据。
 
-自定义坐标使用 `--data.kinematics.spec=/完整路径/坐标配置.json`；导出命令也支持用 `--spec` 替代
-`--reference-pose`。JSON 不要求固定型号、左右臂名称或 ROS 标定文件，配置包括：
-
-| 字段 | 配置要求 |
-| --- | --- |
-| `version` | `1` |
-| `source_names` | 原 action 顺序；省略时读取数据集；原关节观测须包含这些命名坐标，所选模型 state 可以只取其中一部分 |
-| `arms` | 一个或多个命名运动链；关节数由几何确定，夹爪可省略 |
-| `arms[].model` | `{"id":"alohamini2pro","chain":"left"}`；自定义型号用 `directory` 替代 `id`；可用 `joint_zero` 声明新零姿态对应的模型关节角 |
-| `arms[].geometry` | 与 `model` 二选一；直接提供标准 DH 的 `rows`、`base_transform`、`tool_transform` 和 `joint_limits`，同时声明 `frame` |
-| `arms[].coordinates` | 按模型关节顺序列出 `field` 与 `unit`；支持模型 `rad`／`deg`、归零后 `encoder` tick、Host `host` 坐标 |
-| `arms[].gripper` | 声明源字段、源开闭端点、输出开闭端点及单位；不从数值范围推断实际开口 |
-| `passthrough`／`passthrough_units` | 按顺序透传的字段及单位；与运动链合计覆盖每个源字段一次 |
-| `source_calibration` | Host 数据所用电机的采集期参数，按电机名保存归一化、范围、方向、`homing_offset`，以及可用的 ID／型号 |
-
-`encoder`／`host` 坐标另需 `encoder` 映射：`ticks_per_revolution`、`reference_tick`、
-`reference_position_rad`、`direction`、`joint_per_encoder_ratio` 及弧度限位
-`position_min_rad`／`position_max_rad`。`host` 还需 `host_units` 中的
-`normalization`、`range_min`、`range_max`、`drive_mode`。这些参数必须对应采集期的坐标。
-
-关节已经是模型弧度时，可复制[单臂配置示例](../examples/datasets/kinematics-radians.json)，
-按数据修改字段名、运动链和夹爪端点后传给 `--data.kinematics.spec`。Host 的归一化值或中心角度不能直接标成模型 `rad`／`deg`。
-型号的 `model.json` 通过 `kinematic_chains` 登记几何文件；当前内置 `alohamini2pro` 左右臂，
-未登记的型号不会回退到其他机器人的几何。标准 DH 后端支持转动关节链，不支持移动关节。
-
-已有左右臂 Host YAML 时，可使用导入入口：
-
-```bash
-python -m alohamini.datasets.kinematic_fields \
-  --dataset "$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --left-map "$HOME/Alohamini_workspace/calibration/hardware_joint_map_left.yaml" \
-  --right-map "$HOME/Alohamini_workspace/calibration/hardware_joint_map_right.yaml" \
-  --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
-```
-
-此导入器处理双六关节臂格式，映射中每个关节须包含采集期的 `motor_calibration`：
-`homing_offset`、`range_min`、`range_max`、`drive_mode`。缺失或与数据不符时拒绝生成，不能用当前配置补填旧标定来源。
-生成的描述保存字段、单位、编码器映射、DH／TCP 几何、参考坐标、限位和夹爪映射；输出文件须尚不存在。
-训练统计及 checkpoint 加载均校验来源坐标，后续计算直接读取快照，不再访问原型号文件和标定路径。
-
-训练读取样本后调用共享转换，保留原始记录、时间配对和动作请求语义，不将动作请求替换为未来实测反馈。
-Spirit 的训练资源与命令见 [Spirit v1.5](#spirit-v15)。
-
-每条运动链生成 `[x, y, z, rx, ry, rz]`，配置夹爪时再追加 `gripper`：位置为 m，旋转向量为 rad。
-Host YAML 导入器将夹爪映射到 `canonical_0_0.1`，该数值不表示实际开口米数。
-`alohamini2pro` 两臂分别使用 `left_Base`、`right_Base`，不隐含世界坐标或底盘里程计。
-
-相对目标以当前观测为同一个锚点，对每个未来目标分别计算：
-
-```text
-T_anchor    = FK(current_model_joints)
-T_target[k] = FK(recorded_target_joints[k])
-delta_p[k]  = p_target[k] - p_anchor
-delta_r[k]  = rotvec(R_target[k] @ R_anchor.T)
-```
-
-这些值是各臂基坐标系下相对当前观测的目标，不是相邻两帧的差，也不逐步累积。
-旋转通过矩阵组合计算，不能直接相减旋转向量。
-夹爪保持绝对开合目标并按配置换算单位；底盘速度和升降高度保留记录值及声明单位。
-单纯计算关节坐标差不需要 FK；计算 TCP 差需要正确的模型关节角和几何。
-
-推理时还原 `p_target = p_anchor + delta_p`、`R_target = exp(delta_r) @ R_anchor`，
-再以当前观测关节为初值执行 IK，后续目标沿用上一步解。
-本地逐步评估先解码整个执行窗口，再逐步发送，沿用同一锚点和连续 IK 解；新窗口重新取观测。
-不可达、超出约束或未收敛的目标会报错。转换描述与处理顺序随 checkpoint 保存。
-部署时继续使用匹配的编码器坐标；普通 `normalized` 关节比例迁移不能替代 TCP 映射，来源坐标变化会拒绝绑定。
+字段、单位、几何、编码器映射与统计量随 checkpoint 保存；续训不依赖原配置文件。
+部署须匹配来源坐标，关节比例迁移不能替代 TCP 映射。动作转换始终使用记录的控制目标，不替换为未来实测反馈。
 
 ## 4. 训练
 
@@ -506,9 +418,105 @@ checkpoint 不重复打包冻结的 Wan／UMT5 文件，迁移机器时须保留
 
 ### AC-DiT
 
-策略名为 `acdit`，支持底盘预训练和全身策略训练。只有 RGB 时显式设置
-`--policy.use_pointcloud=false`。论文／开源脚本预设、输入坐标、两阶段命令及资源配置见
-[AC-DiT](acdit.md)。
+安装依赖并下载冻结的 SigLIP 图像／语言编码器：
+
+```bash
+python -m pip install -e '.[acdit]'
+hf download google/siglip-so400m-patch14-384 \
+  --local-dir "$HOME/Alohamini_workspace/pretrained/siglip-so400m-patch14-384"
+
+alohamini train --policy.type=acdit --policy.stage=mobility \
+  --policy.use_pointcloud=false \
+  --policy.assets_path="$HOME/Alohamini_workspace/pretrained/siglip-so400m-patch14-384" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --dataset.eval_episodes='[1]' --run_name=acdit_mobility --background
+```
+
+底盘阶段完成后，新建全身训练任务：
+
+```bash
+alohamini train \
+  --policy.path="$HOME/Alohamini_workspace/runs/acdit_mobility/checkpoint" \
+  --policy.stage=full \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --dataset.eval_episodes='[1]' --run_name=acdit_full --background
+```
+
+默认底盘阶段 20000 步、学习率 `1e-4`；全身阶段 30000 步、`1e-5`，冻结底盘分支。
+每进程 batch 16，AdamW、恒定学习率、BF16、FP32 可训练参数、EMA 关闭。
+显存不足时使用通用 FSDP2、减小 batch 并增加梯度累积。
+
+需要非空任务文本与命名的 state/action；保留记录字段及单位，训练集均值／标准差归一化。
+图像等比例补边至 384×384，再映射至 `[-1,1]`；图像取前一帧和当前帧，state 取当前帧，动作块为 2 行。
+默认随机初始化动作头；外部 RDT 初始化使用 `mobility_pretrained_path`／`body_pretrained_path`，须显式提供命名槽位映射。
+
+无点云数据时使用上例的 RGB 模式；点云模式须在第一阶段启用 `--policy.use_pointcloud=true`，
+提供 `observation.point_cloud`（N×3 或 N×6）及真实坐标系、米制单位声明，不能生成占位点云。
+第二阶段继承第一阶段相机、输入模式及统计量。底盘 checkpoint 不可直接部署全身控制；当前未接入远程动作块服务。
+来源与预设见 [SOURCE.json](../src/alohamini/policies/acdit/SOURCE.json)。
+
+### GR00T N1.7
+
+下载本地基座与 Cosmos 处理器资源；Cosmos 仓库须先取得访问权限并登录 Hugging Face：
+
+```bash
+python -m pip install -e '.[gr00t_n17]'
+hf download nvidia/GR00T-N1.7-3B \
+  --include 'config.json' 'model*.safetensors' 'model*.index.json' 'embodiment_id.json' \
+  --local-dir "$HOME/Alohamini_workspace/pretrained/gr00t_n17"
+hf download nvidia/Cosmos-Reason2-2B \
+  --include '*.json' '*.txt' '*.model' '*.jinja' \
+  --local-dir "$HOME/Alohamini_workspace/pretrained/gr00t_n17/backbone"
+
+CUDA_VISIBLE_DEVICES=0,1 alohamini train --policy.type=gr00t_n17 \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/gr00t_n17" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --dataset.eval_episodes='[1]' --eval_steps=1000 \
+  --distributed_backend=fsdp2 --num_processes=2 --batch_size=2 \
+  --gradient_accumulation_steps=4 --run_name=gr00t_task --background
+```
+
+默认冻结 LLM、视觉编码器，训练动作头、投影与 VL 适配层；
+`--policy.tune_llm=true`、`--policy.tune_visual=true` 分别解冻，`--policy.tune_top_llm_layers=4` 仅解冻最后四层 LLM。
+默认 10000 步、AdamW `1e-4`、5% 预热与余弦下降，BF16 计算、FP32 可训练参数、重计算开启、EMA 关闭。
+上例有效 batch 为 16；资源预设为每进程 8，按显存调整。
+
+使用选中相机当前帧、非空任务文本、命名 state 与 40 行动作；保留记录坐标和单位。
+图像先裁剪再缩放短边至 256，交给 Qwen3-VL 处理器；state/action 使用训练集 q01/q99 映射至 `[-1,1]` 并裁剪。
+默认新 embodiment 31，重新初始化其状态／动作投影；复用已有 embodiment 须指定 `state_slot_map`、`action_slot_map` 并关闭 `reinitialize_embodiment`。
+运行时只读本地资源，checkpoint 可独立迁移；支持通用推理和远程动作块，未接入 RTC。
+来源与预设见 [SOURCE.json](../src/alohamini/policies/gr00t_n17/SOURCE.json)。
+
+### LeWorldModel
+
+从零训练，无需下载基座；需要至少一路 RGB 与命名动作字段，不输入 state 或语言：
+
+```bash
+python -m pip install -e '.[lewm]'
+alohamini train --policy.type=lewm \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --dataset.eval_episodes='[1]' --eval_steps=1000 \
+  --batch_size=32 --run_name=lewm_task --background
+```
+
+图像为 224×224、ImageNet mean/std；多相机共享编码器并平均特征。
+动作保留记录坐标与单位，使用训练集 z-score；支持 `recorded`、`tcp_absolute`，不支持 `tcp_delta`。
+默认 3 个历史观测、每 5 行一个动作块；预测损失为特征 MSE 加 `0.09 × SIGReg`，验证不自动生成动作 MAE。
+默认 30000 步、AdamW `5e-5`、恒定学习率、BF16、EMA 关闭；支持 DDP/FSDP2。
+多卡 SIGReg 汇集单次 forward 的全局 batch，梯度累积不合并多次 forward 的统计。
+
+推理须显式提供全部相机的目标图片，CEM 默认规划 25 行动作：
+
+```bash
+alohamini evaluate --host 192.168.77.2 --robot_model alohamini2pro \
+  --policy.path "$HOME/Alohamini_workspace/runs/lewm_task/checkpoint" \
+  --device cuda --fps 30 --goal-images '{"forward":"/path/to/goal.png"}'
+```
+
+多相机目标使用同一 JSON 增加相机项。离线评估同样使用 `--goal-images`；
+Python 接口为 `NativePolicy.set_goal({"forward": "/path/to/goal.png"})`，目标不写入权重，`reset()` 保留目标。
+官方 `weights.pt` 可通过 `--policy.path` 导入，须匹配结构和动作块维度；PushT 权重不能直接用于不同动作维度。
+当前未接入远程目标传递与 RTC。来源与预设见 [SOURCE.json](../src/alohamini/policies/lewm/SOURCE.json)。
 
 ### SmolVLA
 
@@ -611,10 +619,56 @@ KI 可通过 `--policy.vlm_data_path=/path/to/train.jsonl` 混入图文或规划
 
 SmolVLA／π0.5 的完整基座须按可用显存调整 batch 和精度。
 
-### HyVLA-0.5 与 OpenWAM-α
+### HyVLA-0.5
 
-策略名为 `hyvla05`、`openwam`。本地基座、历史图像／未来视频窗口与动作表示见
-[HyVLA-0.5](hyvla05.md) 和 [OpenWAM-α](openwam.md)。两者共用本章的训练、验证、多卡和 checkpoint 配置。
+```bash
+python -m pip install -e '.[hyvla05]'
+hf download tencent/Hy-Embodied-0.5-VLA-RoboTwin \
+  --revision bd7bba6f5934ad62293a2a34f74760c6a3ef2ff8 \
+  --local-dir "$HOME/Alohamini_workspace/pretrained/hyvla05"
+
+alohamini train --policy.type=hyvla05 \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/hyvla05" \
+  --run_name=hyvla05_task --batch_size=1 --steps=60000 --background
+```
+
+需要非空任务文本与 state，相机按 `--cameras` 或数据集顺序输入；图像等比例补边至 224×224。
+默认 6 帧历史、间隔 15 行，动作块 20 行、流匹配采样 10 步、BF16；state/action 使用训练集均值／标准差。
+动作是连续 20 行原始记录目标，不套用 RoboTwin 的相对／绝对姿态拼接，不自动执行 FK/IK。
+在线历史按客户端时间戳读取过去观测，`reset()` 清空历史和动作队列。
+
+`--policy.network='{"freeze_vision_encoder":true}'` 可冻结视觉，图像特征仍参与训练。
+运行时只读本地资源，checkpoint 自带 tokenizer 与权重；支持 DDP/FSDP2、训练器 EMA、普通远程动作块。
+未接入 RTC、FlowPRO 或 Bézier 拼接。来源与预设见 [SOURCE.json](../src/alohamini/policies/hyvla05/SOURCE.json)。
+
+### OpenWAM-α
+
+```bash
+python -m pip install -e '.[openwam]'
+hf download OpenWAM/OpenWAM-Alpha-Pretrain-Foundation-Model \
+  --revision 52df4e66c82c5c8b480adcc8d01f4db7415dfb56 \
+  --local-dir "$HOME/Alohamini_workspace/pretrained/openwam"
+
+alohamini train --policy.type=openwam \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/openwam" \
+  --run_name=openwam_task --batch_size=1 --steps=30000 \
+  --keep_last_checkpoints=1 --background
+```
+
+基座须含 `checkpoint_step_*.safetensors` 和 `tokenizer/google/umt5-xxl/`，无需另下载 Wan 基座。
+最多三路相机，按顺序组成 384×320 画布：上方主视角、左下与右下，缺失位置填黑；
+`--policy.camera_layout='["observation.images.head","observation.images.left",null]'` 可显式指定，须覆盖全部所选相机。
+
+默认动作块 32 行、视频取 0、4、…、32 行；`chunk_size` 须为 `4 × video_stride` 的整数倍。
+保留记录 state/action 字段和单位，使用训练集 min/max；不同动作维度重新初始化机器人输入／输出投影。
+视频与动作联合流匹配，VAE、umT5 冻结；未来图像仅作训练监督，推理使用当前图像，默认同步去噪 10 步、shift 5。
+默认 BF16、重计算开启；显存不足时使用通用 FSDP2。支持训练器 EMA 和普通远程动作块，未接入 RTC。
+
+运行时只读本地资源，checkpoint 含冻结编码器及 tokenizer，可独立迁移。
+保存时须预留两份完整 checkpoint 的空间；新文件写入成功后才清理旧文件。
+来源与预设见 [SOURCE.json](../src/alohamini/policies/openwam/SOURCE.json)。
 
 ### Spirit v1.5
 

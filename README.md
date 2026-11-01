@@ -12,7 +12,6 @@ AlohaMini 双臂移动机器人的控制、数据采集与算法开发平台。�
 - [LeRobot](docs/lerobot.md)：数据与模型兼容范围。
 - [训练与部署](docs/training.md)：数据选择与转换、策略训练、离线检查、云端推理与真机评估。
 - [Notebook](docs/notebook.md)：可选的数据分析与实验入口。
-- [贡献指南](CONTRIBUTING.md)：源码开发与测试。
 
 ## 日常启动
 

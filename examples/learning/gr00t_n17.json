@@ -1,0 +1,17 @@
+{
+  "policy": "gr00t_n17",
+  "dataset": "~/Alohamini_workspace/datasets/task_demo_ready",
+  "pretrained_path": "~/Alohamini_workspace/pretrained/gr00t_n17",
+  "run_name": "gr00t_n17_task",
+  "device": "cuda",
+  "batch_size": 2,
+  "gradient_accumulation_steps": 4,
+  "steps": 10000,
+  "save_freq": 2000,
+  "keep_last_checkpoints": 2,
+  "model": {
+    "tune_llm": false,
+    "tune_visual": false,
+    "gradient_checkpointing": true
+  }
+}

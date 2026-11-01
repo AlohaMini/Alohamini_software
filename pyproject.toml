@@ -23,6 +23,8 @@ multi_task_dit = ["alohamini-platform[learning]"]
 cdp = ["alohamini-platform[learning]"]
 dit_policy = ["alohamini-platform[learning]"]
 acdit = ["alohamini-platform[learning]", "timm>=1.0,<2"]
+gr00t_n17 = ["alohamini-platform[learning]", "protobuf>=5"]
+lewm = ["alohamini-platform[learning]"]
 learning = [
     "diffusers==0.39.0",
     "transformers==5.0.0",
@@ -64,6 +66,8 @@ alohamini = "alohamini.cli:main"
 [tool.setuptools.package-data]
 "alohamini.policies.dit_policy" = ["LICENSE.dit-policy"]
 "alohamini.policies.acdit" = ["LICENSE.acdit", "LICENSE.lift3d", "SOURCE.json"]
+"alohamini.policies.gr00t_n17" = ["LICENSE.gr00t", "SOURCE.json"]
+"alohamini.policies.lewm" = ["LICENSE.lewm", "SOURCE.json"]
 "alohamini.policies.spirit" = ["LICENSE.spirit", "SOURCE.json"]
 "alohamini.policies.hyvla05" = ["LICENSE.hyvla05", "SOURCE.json"]
 "alohamini.policies.openwam" = ["LICENSE.openwam", "SOURCE.json", "licenses/wan/*"]
@@ -89,3 +93,5 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.extend-per-file-ignores]
 "src/alohamini/policies/hyvla05/_vendor/**/*.py" = ["ALL"]
 "src/alohamini/policies/openwam/_vendor/**/*.py" = ["ALL"]
+"src/alohamini/policies/gr00t_n17/_vendor/**/*.py" = ["ALL"]
+"src/alohamini/policies/lewm/_vendor/**/*.py" = ["ALL"]

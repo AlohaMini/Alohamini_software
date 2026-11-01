@@ -13,3 +13,4 @@ ros2/log/
 *.local.json
 .ipynb_checkpoints/
 /AGENTS.md
+/CONTRIBUTING.md

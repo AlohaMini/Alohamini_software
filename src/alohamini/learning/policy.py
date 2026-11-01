@@ -117,6 +117,7 @@ class NativePolicy:
         calibration_mode="strict",
         robot_model=None,
         offline=False,
+        goal_images=None,
     ):
         if calibration_mode not in ("strict", "normalized", "legacy_normalized"):
             raise ValueError("calibration_mode must be strict, normalized or legacy_normalized")
@@ -235,6 +236,23 @@ class NativePolicy:
         else:
             configure(self, fixed_dimensions, fixed_dataset, current=fixed_current)
         self.fixed_deployment["calibration_mode"] = calibration_mode
+        self.reset()
+
+        if goal_images is not None:
+            self.set_goal(goal_images)
+
+    def set_goal(self, images):
+        """Set an explicit visual goal through the algorithm's input processor."""
+        prepare = getattr(self.processor, "prepare_goal", None)
+        setter = getattr(self.model, "set_goal", None)
+        if prepare is None or setter is None:
+            raise ValueError("This policy does not support visual goals")
+        prepared = prepare(
+            images,
+            resize_mode=self.manifest.get("image_resize_mode", "stretch"),
+            pad_value=self.manifest.get("image_pad_value", 0.0),
+        )
+        setter({key: prepared[key] for key in self.config.image_features})
         self.reset()
 
     def bind_robot(self, snapshot):

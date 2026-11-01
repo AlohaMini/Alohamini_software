@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from test_gr00t_lewm import groot_assets as groot_assets
 
 from alohamini.learning.loading import resolve_data_pipeline
 from alohamini.learning.processor import Processor, image_tensor
@@ -37,7 +38,7 @@ def assert_identical(a, b):
         assert a == b
 
 
-def make_processor(kind, shape):
+def make_processor(kind, shape, assets=None):
     features = dict(
         input_features={
             "observation.images.forward": {"type": "VISUAL", "shape": shape},
@@ -46,6 +47,10 @@ def make_processor(kind, shape):
         output_features={"action": {"type": "ACTION", "shape": (18,)}},
     )
     options = {**features, **({"crop_shape": None} if kind in ("diffusion", "cdp") else {})}
+    if kind in ("gr00t_n17", "lewm"):
+        from test_gr00t_lewm import options as native_options
+
+        options = {**native_options(kind, assets), **features}
     if kind == "spirit":
         options.update(
             backbone_path="unused-tokenizer-free-processor", action_representation="recorded"
@@ -76,7 +81,23 @@ def make_processor(kind, shape):
             name: torch.full(shape, value).tolist()
             for name, value in [("mean", 0.4), ("std", 0.2), ("min", -2.0), ("max", 3.0)]
         }
-    if kind == "spirit":
+    if kind == "gr00t_n17":
+        from transformers import AutoProcessor
+
+        from alohamini.policies.gr00t_n17.processor_gr00t_n17 import GR00TN17Processor
+
+        processor = GR00TN17Processor(
+            config,
+            stats,
+            AutoProcessor.from_pretrained(assets, use_fast=False),
+            "cpu",
+            SimpleNamespace(training=False),
+        )
+    elif kind == "lewm":
+        from alohamini.policies.lewm.processor_lewm import LeWMProcessor
+
+        processor = LeWMProcessor(config, stats, "cpu")
+    elif kind == "spirit":
         from alohamini.policies.spirit.processor_spirit import SpiritProcessor
 
         processor = SpiritProcessor(config, {}, "cpu")
@@ -117,14 +138,19 @@ def make_processor(kind, shape):
 
 @pytest.mark.parametrize("kind", ALGORITHMS)
 @pytest.mark.parametrize("size", [(24, 32), (16, 16)])
-def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, size):
+def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, size, request):
     assert resolve_data_pipeline({"policy": kind})["return_uint8"] is True
-    rgb = np.arange(24 * 32 * 3, dtype=np.uint8).reshape(24, 32, 3)
+    original_size = (24, 32)
+    if kind == "lewm":
+        size = (32, 32) if size == original_size else size
+        original_size = (32, 32)
+    rgb = np.arange(np.prod(original_size) * 3, dtype=np.uint8).reshape(*original_size, 3)
     key = "observation.images.forward"
     legacy = image_tensor(rgb, size)
     compact = image_tensor(rgb, size, return_uint8=True)
-    assert compact.dtype == (torch.uint8 if size == (24, 32) else torch.float32)
-    processor, config = make_processor(kind, (3, *size))
+    assert compact.dtype == (torch.uint8 if size == original_size else torch.float32)
+    assets = request.getfixturevalue("groot_assets") if kind == "gr00t_n17" else None
+    processor, config = make_processor(kind, (3, *size), assets)
     if kind in ("diffusion", "fastwam", "multi_task_dit"):
         legacy = legacy[None, None].repeat(2, 3, 1, 1, 1)
         compact = compact[None, None].repeat(2, 3, 1, 1, 1)
@@ -137,7 +163,15 @@ def test_model_specific_preprocessing_is_identical_for_compact_delivery(kind, si
         "action_is_pad": torch.tensor([[False, False, True]] * 2),
     }
     if kind in (
-        "smolvla", "fastwam", "pi05", "multi_task_dit", "spirit", "acdit", "hyvla05", "openwam"
+        "smolvla",
+        "fastwam",
+        "pi05",
+        "multi_task_dit",
+        "spirit",
+        "acdit",
+        "hyvla05",
+        "openwam",
+        "gr00t_n17",
     ):
         extras["task"] = ["pick", "pick"]
     if kind in ("diffusion", "fastwam", "multi_task_dit"):

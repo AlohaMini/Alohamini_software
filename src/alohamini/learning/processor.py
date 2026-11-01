@@ -186,6 +186,10 @@ def limits_statistics(samples):
     keys = [k for k in samples.sample_keys if not k.startswith("observation.images.")]
     stats = samples.statistics(keys=keys)
     for key in keys:
+        # Numeric field views already fit limits in their transformed units.
+        # Reading source._value here would replace them with raw joint limits.
+        if "min" in stats[key] and "max" in stats[key]:
+            continue
         minimum = maximum = None
         for i in sorted(samples._used_rows[key]):
             value = samples._value(i, key).double()
