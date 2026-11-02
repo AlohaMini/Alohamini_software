@@ -11,6 +11,7 @@ from alohamini.calibration.encoder import HostPositionUnits
 from alohamini.datasets.kinematic_fields import (
     KinematicActions,
     KinematicFields,
+    descriptor_from_dataset,
     descriptor_from_reference_pose,
     main,
 )
@@ -133,7 +134,8 @@ def test_reference_protocol_binds_each_recording_without_old_maps_and_keeps_plat
         fields.validate_source(changed)
 
 
-def test_reference_pose_cli_uses_recorded_metadata_and_requires_explicit_protocol(tmp_path):
+@pytest.mark.parametrize("automatic", [False, True])
+def test_reference_pose_cli_uses_recorded_metadata(tmp_path, automatic):
     info = recording_info()
     meta = tmp_path / "dataset/meta"
     meta.mkdir(parents=True)
@@ -142,11 +144,11 @@ def test_reference_pose_cli_uses_recorded_metadata_and_requires_explicit_protoco
     args = [
         "--dataset",
         str(meta.parent),
-        "--reference-pose",
-        "upright_forward",
         "--output",
         str(output),
     ]
+    if not automatic:
+        args += ["--reference-pose", "upright_forward"]
     main(args)
     assert json.loads(output.read_text())["reference_pose"]["name"] == "upright_forward"
     with pytest.raises(FileExistsError):
@@ -156,3 +158,50 @@ def test_reference_pose_cli_uses_recorded_metadata_and_requires_explicit_protoco
     info["robot_metadata"]["motors"]["arm_left_shoulder_pan"].pop("homing_offset")
     with pytest.raises(ValueError, match="lacks the homing offset"):
         descriptor_from_reference_pose(info, "upright_forward")
+
+
+@pytest.mark.parametrize("v3", [False, True])
+def test_auto_default_matches_explicit_and_binds_each_recording(tmp_path, v3):
+    info = recording_info()
+    expected = descriptor_from_reference_pose(info, "upright_forward")
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    if v3:
+        (meta / "alohamini.json").write_text(json.dumps({"source_info": info}))
+        exported = {"codebase_version": "v3.0", "features": info["features"]}
+    else:
+        exported = info
+    (meta / "info.json").write_text(json.dumps(exported))
+    before = {p.name: p.read_bytes() for p in meta.iterdir()}
+    assert descriptor_from_dataset(tmp_path) == expected
+    assert {p.name: p.read_bytes() for p in meta.iterdir()} == before
+    # A dataset-specific frozen descriptor takes precedence over the nominal default.
+    expected["ik"] = {"max_iterations": 40}
+    (meta / "kinematics.json").write_text(json.dumps(expected))
+    assert descriptor_from_dataset(tmp_path)["ik"] == {"max_iterations": 40}
+    assert "ik" not in descriptor_from_dataset(tmp_path, reference_pose="upright_forward")
+    info["robot_metadata"]["motors"]["arm_left_shoulder_pan"]["homing_offset"] += 1
+    path = meta / ("alohamini.json" if v3 else "info.json")
+    path.write_text(json.dumps({"source_info": info} if v3 else info))
+    with pytest.raises(ValueError, match="calibration differs"):
+        descriptor_from_dataset(tmp_path)
+
+
+def test_auto_resolution_requires_a_declared_default_and_complete_metadata(tmp_path):
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    info = recording_info()
+    info["robot_metadata"]["robot_model"] = "alohamini1"
+    (meta / "info.json").write_text(json.dumps(info))
+    with pytest.raises(ValueError, match="no default TCP"):
+        descriptor_from_dataset(tmp_path)
+    info["robot_metadata"]["robot_model"] = "alohamini2pro"
+    info["robot_metadata"]["motors"]["arm_left_shoulder_pan"].pop("homing_offset")
+    (meta / "info.json").write_text(json.dumps(info))
+    with pytest.raises(ValueError, match="lacks the homing offset"):
+        descriptor_from_dataset(tmp_path)
+    info.pop("robot_metadata")
+    info["codebase_version"] = "v3.0"
+    (meta / "info.json").write_text(json.dumps(info))
+    with pytest.raises(ValueError, match="no Host metadata"):
+        descriptor_from_dataset(tmp_path)

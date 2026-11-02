@@ -131,6 +131,7 @@
   "kinematic_presets": {
     "upright_forward": "config/kinematics/upright_forward.json"
   },
+  "default_kinematic_preset": "upright_forward",
   "validation": {
     "geometry": "inherited_ros_description",
     "hardware_safety_limits": false,

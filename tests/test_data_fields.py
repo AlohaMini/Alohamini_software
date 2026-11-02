@@ -115,6 +115,21 @@ def test_shared_fields_train_both_algorithms_and_reload_without_source_geometry(
         shutil.rmtree(tmp_path / "qwen")
     loaded = NativePolicy(checkpoint, offline=True)
     assert loaded.manifest["data_fields"] == settings["data"]
+    # A partial data override keeps the frozen geometry even after its source is gone.
+    from alohamini.learning.checkpoint import resolve_pretrained
+
+    inherited = resolve_pretrained(
+        {"pretrained_path": str(checkpoint), "data": {"tcp_delta_frame": "tool"}}
+    )["data"]
+    assert inherited["kinematic_fields"] == settings["data"]["kinematic_fields"]
+    assert inherited["tcp_delta_frame"] == "tool"
+    assert inherited["action_representation"] == "tcp_delta"
+    replacement = resolve_pretrained(
+        {"pretrained_path": str(checkpoint), "data": {"kinematics": {"spec": "new.json"}}}
+    )["data"]
+    assert "kinematic_fields" not in replacement
+    assert "source_state_names" not in replacement
+    assert replacement["kinematics"] == {"spec": "new.json"}
     assert loaded.config.action_feature.shape == (width,)
     assert loaded.manifest["source_info"]["features"]["action"]["shape"] == [3]
     assert loaded.manifest["statistics_features"]["action"]["names"][0] == "delta.manipulator.x"
@@ -344,6 +359,98 @@ def test_field_cli_configuration_is_at_data_level(monkeypatch):
     )
     assert cfg["model"]["action_representation"] == "recorded"
     assert not cfg["model"].get("kinematics_path")
+
+
+def test_training_auto_kinematics_uses_host_defaults_and_freezes_portably(tmp_path, monkeypatch):
+    from test_dataset import frame
+    from test_kinematic_reference import recording_info
+
+    from alohamini.datasets.record import _EpisodeWriter as LocalDataset
+    from alohamini.learning.checkpoint import read_checkpoint
+    from alohamini.learning.train import train
+
+    recording = tmp_path / "standard-middle"
+    dataset = LocalDataset(
+        recording, fps=30, task="test", robot_metadata=recording_info()["robot_metadata"]
+    )
+    dataset.begin_episode()
+    for index in range(4):
+        value = frame(dataset)
+        value["action"][:] = index
+        dataset.add_frame(value, {"forward": jpeg()}, {"safety": {"feedback_valid": True}})
+    dataset.save_episode()
+    dataset.close()
+    cfg = dict(
+        policy="act",
+        dataset=str(recording),
+        output_dir=str(tmp_path / "auto-run"),
+        state="joint_position,base_velocity,lift_height",
+        train_episodes=[0],
+        val_episodes=[],
+        device="cpu",
+        image_size=[32, 32],
+        steps=1,
+        batch_size=2,
+        num_workers=0,
+        cpu_threads=2,
+        model=model_options(),
+        save_freq=1,
+        data=dict(
+            state_representation="tcp",
+            action_representation="tcp_delta",
+            rotation_representation="rotation_6d",
+            tcp_delta_frame="tool",
+        ),
+    )
+    checkpoint = train(cfg)
+    model_path, manifest = read_checkpoint(checkpoint)
+    descriptor = manifest["data_fields"]["kinematic_fields"]
+    assert descriptor["reference_pose"]["name"] == "upright_forward"
+    assert descriptor["source_calibration"]
+    assert manifest["config"]["output_features"]["action"]["shape"] == [24]
+    loaded = NativePolicy(checkpoint, offline=True)
+    assert loaded.field_transform.geometry.width == 24
+    saved = json.loads((model_path / "train_config.json").read_text())
+    saved.update(resume=True, _checkpoint=str(model_path.parent), steps=2)
+    monkeypatch.setattr(
+        "alohamini.learning.data_fields.descriptor_from_dataset",
+        lambda *a, **kw: pytest.fail("Resume must reuse the frozen kinematic descriptor"),
+    )
+    _, resumed = read_checkpoint(train(saved))
+    assert resumed["data_fields"] == manifest["data_fields"]
+
+
+def test_dataset_descriptor_auto_load_and_explicit_override(recording, tmp_path):
+    source, settings, specification = source_dataset(recording, tmp_path)
+    dataset_spec = source.root / "meta/kinematics.json"
+    dataset_spec.write_bytes(specification.read_bytes())
+    settings["data"].pop("kinematics")
+    samples = prepare_fields(source, settings, algorithm("act"))
+    assert samples.output_features["action"].shape == (7,)
+    dataset_spec.write_text('{"invalid": true}')
+    # Frozen configuration needs no dataset descriptor or installed default.
+    assert (
+        prepare_fields(source, settings, algorithm("act")).output_features
+        == samples.output_features
+    )
+    explicit = {
+        "data": {"action_representation": "tcp_delta", "kinematics": {"spec": str(specification)}}
+    }
+    assert (
+        prepare_fields(source, explicit, algorithm("act")).output_features
+        == samples.output_features
+    )
+    with pytest.raises(ValueError, match="Unknown data.kinematics"):
+        prepare_fields(
+            source,
+            {
+                "data": {
+                    "action_representation": "tcp_delta",
+                    "kinematics": {"reference_poses": "upright_forward"},
+                }
+            },
+            algorithm("act"),
+        )
 
 
 @pytest.mark.parametrize("rotation", [None, "rotation_6d"])

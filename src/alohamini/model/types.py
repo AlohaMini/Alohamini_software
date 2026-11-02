@@ -48,6 +48,7 @@ class RobotModel:
     directory: Path = field(repr=False, compare=False)
     kinematic_chains: Mapping[str, str] = field(default_factory=dict)
     kinematic_presets: Mapping[str, str] = field(default_factory=dict)
+    default_kinematic_preset: str | None = None
 
     def asset_path(self, relative: str) -> Path:
         return asset_path(self.directory, relative)

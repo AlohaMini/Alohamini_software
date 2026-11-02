@@ -111,11 +111,12 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 | `--data.action_representation` | `recorded` 保留控制目标；`tcp_absolute` 绝对末端目标；`tcp_delta` 相对当前观测的末端目标 |
 | `--data.rotation_representation` | TCP 旋转编码：`rotvec`（默认，3 维）；`rotation_6d`（6 维，旋转矩阵前两行）；同时作用于所选 TCP state/action |
 | `--data.tcp_delta_frame` | 仅用于 `tcp_delta`：`base`（默认）在各臂基座系表达增量；`tool` 在当前末端系表达相对位姿，夹爪等其他字段保持绝对目标 |
-| `--data.kinematics.reference_pose` | 使用型号登记的标定姿态，如 `upright_forward` |
+| `--data.kinematics.reference_pose` | 覆盖自动选择，使用指定型号预设，如 `upright_forward` |
 | `--data.kinematics.spec` | 自定义坐标与几何 JSON，见[弧度坐标示例](../examples/datasets/kinematics-radians.json) |
 | `--data.kinematics.path` | 复用已解析的转换描述 JSON |
 
-三种 `kinematics` 来源选一。ACT 默认保留记录表示；Spirit 默认使用 TCP state 和 TCP 增量动作。
+`kinematics` 可省略：复用配置/checkpoint 中的描述，否则读取数据集 `meta/kinematics.json`，再使用型号默认预设；`alohamini2pro` 默认 `upright_forward`，绑定采集期标定。显式指定时三种来源选一。
+ACT 默认保留记录表示；Spirit 默认使用 TCP state 和 TCP 增量动作。
 GR00T、HyVLA 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
 
 对按 `upright_forward` 姿态完成半圈归零的 `alohamini2pro` 数据：
@@ -127,7 +128,6 @@ alohamini train --policy.type=act \
   --state=joint_position \
   --data.state_representation=tcp \
   --data.action_representation=tcp_delta \
-  --data.kinematics.reference_pose=upright_forward \
   --run_name=act_tcp_01 --background
 ```
 
@@ -139,7 +139,7 @@ state 与 action 可独立选择：只转换动作时使用 `--data.state_repres
 ACT 使用 `--state=none` 预测 TCP 动作时，原数据仍须保留关节观测供转换及 IK 使用。
 TCP 动作不支持 ACT 时间融合。
 
-每臂输出 `[x,y,z,rx,ry,rz]`，位置为 m、旋转向量为 rad；夹爪按配置追加，底盘速度和升降高度透传。
+每臂输出位置 3 维（m）及旋转向量 3 维（rad）或 6D 旋转；夹爪按配置追加，底盘速度和升降高度透传。
 内置双臂分别使用 `left_Base`、`right_Base`，不隐含世界坐标。
 `tcp_delta` 的整段动作共用当前观测锚点，不是相邻帧差或逐步累积；旋转按矩阵组合。
 推理还原目标后连续求 IK，不可达、越界或不收敛时报错。
@@ -150,11 +150,11 @@ TCP 动作不支持 ACT 时间融合。
 mkdir -p "$HOME/Alohamini_workspace/configs"
 python -m alohamini.datasets.kinematic_fields \
   --dataset "$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --reference-pose upright_forward \
   --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
 ```
 
-自定义 JSON 用 `--spec` 替换 `--reference-pose`。已有双六关节臂 Host YAML 时，也可改用
+非标准中位数据须用 `--data.kinematics.spec/path` 指定实际映射；缺少 Host 标定的外部数据也须提供描述。
+导出自定义 JSON 时增加 `--spec`。已有双六关节臂 Host YAML 时，也可使用
 `--left-map /path/left.yaml --right-map /path/right.yaml`；每关节须包含匹配采集期的
 `motor_calibration`（`homing_offset`、`range_min`、`range_max`、`drive_mode`）。
 导出文件须尚不存在；命令只生成转换描述，不改写数据。
@@ -484,7 +484,7 @@ CUDA_VISIBLE_DEVICES=0,1 alohamini train --policy.type=gr00t_n17 \
 上例有效 batch 为 16；资源预设为每进程 8，按显存调整。
 
 使用选中相机当前帧、非空任务文本、命名 state 与 40 行动作；默认保留记录坐标和单位。
-选择相对末端动作时，增加 `--data.state_representation=tcp --data.action_representation=tcp_delta --data.rotation_representation=rotation_6d --data.tcp_delta_frame=tool`，并指定一种 `--data.kinematics.*` 来源。
+选择相对末端动作时，增加 `--data.state_representation=tcp --data.action_representation=tcp_delta --data.rotation_representation=rotation_6d --data.tcp_delta_frame=tool`；标准中位数据自动解析运动学。
 图像先裁剪再缩放短边至 256，交给 Qwen3-VL 处理器；state/action 使用训练集 q01/q99 映射至 `[-1,1]` 并裁剪。
 默认新 embodiment 31，重新初始化其状态／动作投影；复用已有 embodiment 须指定 `state_slot_map`、`action_slot_map` 并关闭 `reinitialize_embodiment`。
 运行时只读本地资源，checkpoint 可独立迁移；支持通用推理和远程动作块，未接入 RTC。
@@ -701,7 +701,6 @@ alohamini train \
   --state=joint_position,base_velocity,lift_height \
   --data.state_representation=tcp \
   --data.action_representation=tcp_delta \
-  --data.kinematics.reference_pose=upright_forward \
   --dataset.eval_episodes='[1]' \
   --cameras='["forward","wrist_left","wrist_right"]' \
   --distributed_backend=fsdp2 --num_processes=4 \
@@ -722,7 +721,7 @@ alohamini train \
 | state=`tcp`、action=`tcp_delta`（默认） | 共享数据层转换关节 state/action；预测相对当前 TCP 的位姿目标，执行前用 IK 恢复 Host 目标 |
 | state=`recorded`、action=`recorded` | 保留所选 state 和原 action；无需运动学配置 |
 
-保留记录表示时，将上例两个表示参数均改为 `recorded` 并省略 `--data.kinematics.reference_pose`。
+保留记录表示时，将上例两个表示参数均改为 `recorded`。
 Spirit 需要数值 state 和非空任务文本，不支持 `--state=none`。
 原 action 的名称与顺序须匹配转换描述；所选 state 单独记录，FK 所需的完整关节观测由读取器提供。
 底盘和升降动作保持完整，不自动固定这些自由度。

@@ -445,6 +445,7 @@ def test_custom_model_registers_its_own_geometry_and_freezes_it(tmp_path, monkey
     (custom / "chain.json").write_text(json.dumps(chain))
     document = json.loads((installed.directory / "model.json").read_text())
     document.pop("kinematic_presets", None)
+    document.pop("default_kinematic_preset", None)
     document.update(
         model_id="bench_arm",
         descriptions={"kinematic": document["descriptions"]["kinematic"]},

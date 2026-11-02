@@ -195,8 +195,19 @@ def resolve_pretrained(settings, *, expected_kind=None):
     if "load_pretrained_encoders" in options:
         options["load_pretrained_encoders"] = False
     cfg["model"] = options
-    if "data" not in cfg and manifest.get("data_fields"):
-        cfg["data"] = deepcopy(manifest["data_fields"])
+    if manifest.get("data_fields"):
+        saved_fields = deepcopy(manifest["data_fields"])
+        data_overrides = cfg.get("data", {})
+        if data_overrides.get("kinematics") or data_overrides.get("kinematic_fields"):
+            # An explicit new geometry source replaces the old dataset binding.
+            for key in (
+                "kinematic_fields",
+                "source_state_names",
+                "selected_state_feature",
+                "selected_state_units",
+            ):
+                saved_fields.pop(key, None)
+        cfg["data"] = _merge(saved_fields, data_overrides)
     if cfg.get("state", "auto") == "auto":
         cfg["state"] = manifest["state"]
     for key in ("cameras", "image_size"):

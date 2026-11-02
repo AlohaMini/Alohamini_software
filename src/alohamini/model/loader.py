@@ -136,6 +136,11 @@ def load_robot_model(directory: str | Path) -> RobotModel:
             identifier(name, section + " name")
             asset_path(directory, relative)
         kinematics[section] = MappingProxyType(dict(entries))
+    default_preset = data.get("default_kinematic_preset")
+    if default_preset is not None and (
+        not isinstance(default_preset, str) or default_preset not in kinematics["kinematic_presets"]
+    ):
+        raise ValueError("default_kinematic_preset must name a registered kinematic preset")
     return RobotModel(
         model_id=data["model_id"],
         actuators=tuple(actuators),
@@ -146,6 +151,7 @@ def load_robot_model(directory: str | Path) -> RobotModel:
         descriptions=MappingProxyType(dict(descriptions)),
         directory=directory,
         **kinematics,
+        default_kinematic_preset=default_preset,
     )
 
 

@@ -36,13 +36,18 @@ def prepare_fields(samples, settings, components, *, options=None):
         raise ValueError("TCP actions require chunk execution without ACT temporal blending")
     configuration.setdefault("version", 1)
     kinematics = configuration.pop("kinematics", {})
+    unknown = set(kinematics) - {"reference_pose", "path", "spec"}
+    if unknown:
+        raise ValueError(f"Unknown data.kinematics options: {sorted(unknown)}")
     if kinematics and configuration.get("kinematic_fields"):
         raise ValueError("Choose either a frozen kinematic descriptor or a new kinematics source")
     if not configuration.get("kinematic_fields"):
         choices = [name for name in ("reference_pose", "path", "spec") if kinematics.get(name)]
-        if len(choices) != 1:
+        if len(choices) > 1:
             raise ValueError("Choose one data.kinematics.reference_pose, path or spec")
-        if choices[0] == "reference_pose":
+        if not choices:
+            descriptor = descriptor_from_dataset(samples.root)
+        elif choices[0] == "reference_pose":
             descriptor = descriptor_from_dataset(
                 samples.root, reference_pose=kinematics["reference_pose"]
             )

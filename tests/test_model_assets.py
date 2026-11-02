@@ -20,6 +20,7 @@ class ModelAssetTests(unittest.TestCase):
         self.data["descriptions"] = {}
         self.data.pop("kinematic_chains", None)
         self.data.pop("kinematic_presets", None)
+        self.data.pop("default_kinematic_preset", None)
 
     def write_model(self):
         (self.directory / "model.json").write_text(json.dumps(self.data))
@@ -91,6 +92,15 @@ class ModelAssetTests(unittest.TestCase):
         self.assertEqual(loaded.wheel_radius_m, 0.07)
         self.assertEqual(loaded.directory, self.directory.resolve())
         self.assertEqual(self.model.wheel_radius_m, 0.063)
+
+    def test_default_kinematics_must_name_a_registered_preset(self):
+        self.assertEqual(self.model.default_kinematic_preset, "upright_forward")
+        self.assertIsNone(get_robot_model("alohamini1").default_kinematic_preset)
+        for value in ("missing", [], True):
+            self.data["default_kinematic_preset"] = value
+            self.write_model()
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "registered"):
+                load_robot_model(self.directory)
 
     def test_kinematic_chains_are_optional_explicit_contained_assets(self):
         self.write_model()

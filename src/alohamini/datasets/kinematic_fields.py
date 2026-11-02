@@ -6,6 +6,7 @@ mapping. Relative action encoding is a separate, composable data transform.
 
 import argparse
 import json
+import logging
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -21,6 +22,7 @@ from .rotations import RotationEncoding
 
 HOST_UNIT_KEYS = ("normalization", "range_min", "range_max", "drive_mode")
 MOTOR_COORDINATE_KEYS = (*HOST_UNIT_KEYS, "homing_offset", "id", "model")
+logger = logging.getLogger(__name__)
 
 
 class KinematicFields:
@@ -554,15 +556,29 @@ def descriptor_from_host(info, mappings):
 
 
 def descriptor_from_dataset(root, mappings=None, *, spec=None, directory=None, reference_pose=None):
+    """Use explicit coordinates, a dataset descriptor, or its model's declared default.
+
+    The default is a recording convention, not a pose inferred from joint values.
+    Bind it to this dataset's motor metadata; never reuse another run's calibration.
+    """
     root = Path(root).expanduser()
+    if sum(value is not None for value in (mappings, spec, reference_pose)) > 1:
+        raise ValueError("Choose a reference pose, generic spec or two-arm YAML importer")
+    if mappings is None and spec is None and reference_pose is None:
+        saved = root / "meta/kinematics.json"
+        if saved.is_file():
+            spec = json.loads(saved.read_text())
+            directory = saved.parent
+            logger.info("Using dataset TCP kinematics: %s", saved)
     info = json.loads((root / "meta/info.json").read_text())
     if info.get("codebase_version") == "v3.0":
         sidecar = root / "meta/alohamini.json"
         if not sidecar.is_file():
             if spec is None:
                 raise ValueError(
-                    "Original v3 requires an explicit coordinate descriptor (--spec); "
-                    "Host metadata is unavailable"
+                    "Original v3 has no Host metadata for automatic TCP kinematics; "
+                    "provide an explicit coordinate descriptor via data.kinematics.spec "
+                    "(--spec) or meta/kinematics.json"
                 )
         else:
             source = json.loads(sidecar.read_text())["source_info"]
@@ -570,22 +586,32 @@ def descriptor_from_dataset(root, mappings=None, *, spec=None, directory=None, r
                 raise ValueError("Exported action fields differ from their Host annotation")
             info["robot_metadata"] = source["robot_metadata"]
     if reference_pose is not None:
-        if mappings is not None or spec is not None:
-            raise ValueError("Choose a reference pose, generic spec or two-arm YAML importer")
         return descriptor_from_reference_pose(info, reference_pose)
     if spec is not None:
-        if mappings is not None:
-            raise ValueError("Choose a generic spec or the two-arm YAML importer")
         return descriptor_from_spec(info, spec, directory=directory)
     if mappings is None:
-        raise ValueError("Provide --spec or explicit two-arm mappings")
+        metadata = info.get("robot_metadata")
+        if not metadata:
+            raise ValueError(
+                "Automatic TCP kinematics requires recorded Host metadata; "
+                "provide data.kinematics.spec or meta/kinematics.json"
+            )
+        model = get_robot_model(metadata["robot_model"])
+        preset = model.default_kinematic_preset
+        if preset is None:
+            raise ValueError(
+                f"Model {model.model_id!r} has no default TCP kinematic preset; "
+                "provide data.kinematics.reference_pose, spec or path"
+            )
+        logger.info("Using model TCP kinematics: %s/%s", model.model_id, preset)
+        return descriptor_from_reference_pose(info, preset, model=model)
     return descriptor_from_host(info, mappings)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Freeze named joint-to-TCP derived-field geometry")
     parser.add_argument("--dataset", required=True, type=Path)
-    source = parser.add_mutually_exclusive_group(required=True)
+    source = parser.add_mutually_exclusive_group()
     source.add_argument(
         "--spec",
         type=Path,
@@ -609,7 +635,7 @@ def main(argv=None):
         descriptor = descriptor_from_dataset(
             args.dataset, spec=json.loads(spec_path.read_text()), directory=spec_path.parent
         )
-    else:
+    elif args.left_map:
         import yaml
 
         mappings = {
@@ -617,6 +643,8 @@ def main(argv=None):
             for side in ("left", "right")
         }
         descriptor = descriptor_from_dataset(args.dataset, mappings)
+    else:
+        descriptor = descriptor_from_dataset(args.dataset)
     with args.output.expanduser().open("x") as stream:
         json.dump(descriptor, stream, ensure_ascii=False, indent=2, allow_nan=False)
 
