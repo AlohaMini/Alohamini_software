@@ -54,7 +54,13 @@ from alohamini.learning.training_state import (
     rng_state,
     save_training_checkpoint,
 )
-from alohamini.learning.validation import evaluate_loss, loss_denominators, timed_batches
+from alohamini.learning.validation import (
+    EvaluationBatchSampler,
+    evaluate_loss,
+    is_padding_batch,
+    loss_denominators,
+    timed_batches,
+)
 from alohamini.paths import WorkspacePaths
 from alohamini.policies.registry import algorithm
 
@@ -197,19 +203,21 @@ def _offline_evaluate_chunks(
     loader=None,
     device="cpu",
     log_freq=50,
+    reduce=None,
 ):
     """Accumulate physical-unit MAE for normal or collectively sharded predictions."""
     total = torch.zeros(len(names), dtype=torch.float64)
     count = 0
     if loader is None:
         loader = make_loader(samples, device=device, batch_size=batch_size)
-    for batch in timed_batches(
+    batches = timed_batches(
         loader,
         device=device,
         label="Offline MAE",
         log_freq=log_freq,
         action_offsets=samples.delta_indices.get("action"),
-    ):
+    )
+    for number, batch in enumerate(batches):
         mask = ~batch["action_is_pad"]
         offsets = samples.delta_indices.get("action")
         if offsets is not None:
@@ -218,8 +226,16 @@ def _offline_evaluate_chunks(
         targets = batch.get("_recorded_action", batch["action"])
         if predicted.shape != targets.shape:
             raise ValueError("Evaluation chunk_size must match checkpoint")
+        if is_padding_batch(loader, number):
+            continue
         total += ((predicted - targets).abs() * mask[..., None]).sum((0, 1))
         count += int(mask.sum())
+    if reduce is not None:
+        packed = torch.cat((total, total.new_tensor([count]))).to(device)
+        packed = reduce(packed, reduction="sum").cpu()
+        total, count = packed[:-1], int(packed[-1])
+    if not count:
+        raise ValueError("Evaluation requires at least one valid action step")
     return {
         "valid_action_steps": count,
         "mae_by_action": dict(zip(names, (total / count).tolist(), strict=True)),
@@ -591,7 +607,12 @@ def _train(settings, execution):
             eval_loader = make_loader(
                 validation,
                 device=device,
-                batch_size=eval_batch_size,
+                batch_sampler=EvaluationBatchSampler(
+                    len(validation),
+                    eval_batch_size,
+                    rank=execution.rank if execution.sharded else 0,
+                    world_size=execution.world_size if execution.sharded else 1,
+                ),
                 **loader_options(cfg, evaluation=True),
                 generator=torch.Generator().manual_seed(seed),
             )
@@ -751,7 +772,17 @@ def _train(settings, execution):
                     # Evaluation must not perturb dropout/CVAE RNG for subsequent updates.
                     rng = rng_state()
                     try:
+                        if execution.main:
+                            logger.info(
+                                "Validating %d samples: %d batches per rank, "
+                                "%d ranks, batch_size=%d",
+                                len(validation),
+                                len(eval_loader),
+                                execution.world_size if execution.sharded else 1,
+                                eval_batch_size,
+                            )
                         model.eval()
+                        eval_reduce = execution.accelerator.reduce if execution.sharded else None
                         eval_metrics = MetricAccumulator(metric_specs, device=device, phase="eval")
                         use_ema = ema is not None and ema_config.use_for_eval
                         with (
@@ -768,13 +799,15 @@ def _train(settings, execution):
                                 device=device,
                                 log_freq=eval_log_freq,
                                 metrics=eval_metrics,
+                                reduce=eval_reduce,
                             )
+                        metric_result = eval_metrics.result(reduce=eval_reduce)
                         if execution.main:
                             evaluation = {
                                 "step": step,
                                 "loss": eval_loss,
                                 "weights": "ema" if use_ema else "online",
-                                **eval_metrics.result(),
+                                **metric_result,
                             }
                             validation_stream.write(json.dumps(evaluation, allow_nan=False) + "\n")
                             validation_stream.flush()
@@ -828,17 +861,19 @@ def _train(settings, execution):
             if ema_config.enable and ema_config.use_for_eval
             else checkpoint
         )
-        action_evaluation = getattr(
-            components, "supports_action_prediction", lambda config: True
-        )(model.config)
+        action_evaluation = getattr(components, "supports_action_prediction", lambda config: True)(
+            model.config
+        )
         if validation:
             logger.debug("Running final offline evaluation")
-        if validation and action_evaluation and (
-            execution.sharded or (execution.main and samples.info.get("training_only"))
+        if (
+            validation
+            and action_evaluation
+            and (execution.sharded or (execution.main and samples.info.get("training_only")))
         ):
             from alohamini.learning.processor import scale_action
 
-            # FSDP ranks traverse identical batches for collective hooks. Original
+            # FSDP ranks traverse disjoint samples with equal forward counts. Original
             # LeRobot data uses this tensor-only path without a Host policy binding.
             model.eval()
             model.reset()
@@ -869,6 +904,7 @@ def _train(settings, execution):
                     loader=eval_loader,
                     device=device,
                     log_freq=eval_log_freq,
+                    reduce=execution.accelerator.reduce if execution.sharded else None,
                 )
             if execution.main:
                 metrics["weights"] = "ema" if eval_checkpoint != checkpoint else "online"

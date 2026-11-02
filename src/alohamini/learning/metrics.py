@@ -53,8 +53,8 @@ class MetricAccumulator:
 
     Each entry is a numerator and its actual denominator, including across
     microbatches/ranks. No activation or autograd graph is retained. Validation
-    uses no collective: the caller evaluates the complete dataset on one rank
-    (DDP) or identically on every rank (FSDP).
+    can reduce accumulated numerators and denominators across disjoint FSDP
+    samples; dummy forwards never enter the accumulator.
     """
 
     def __init__(self, specs=(), *, device="cpu", phase="train"):
