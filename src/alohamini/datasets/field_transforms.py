@@ -5,6 +5,7 @@ from copy import deepcopy
 import numpy as np
 
 from .kinematic_fields import KinematicFields
+from .rotations import RotationEncoding
 
 
 class FieldTransforms:
@@ -22,12 +23,26 @@ class FieldTransforms:
             "tcp_delta",
         ):
             raise ValueError("Unknown state/action data representation")
+        rotation = configuration.get("rotation_representation", "rotvec")
+        RotationEncoding(rotation)
+        if rotation != "rotvec" and self.state == "recorded" and self.action == "recorded":
+            raise ValueError("data.rotation_representation requires TCP state or actions")
+        frame = configuration.get("tcp_delta_frame", "base")
+        if frame not in ("base", "tool") or (frame != "base" and self.action != "tcp_delta"):
+            raise ValueError("data.tcp_delta_frame=tool requires tcp_delta actions")
         self.geometry = (
-            KinematicFields(configuration["kinematic_fields"])
+            KinematicFields(
+                configuration["kinematic_fields"],
+                rotation_representation=configuration.get("rotation_representation"),
+            )
             if self.state == "tcp" or self.action != "recorded"
             else None
         )
-        self.relative = self.geometry.relative_actions() if self.geometry else None
+        if self.geometry:
+            self.configuration["kinematic_fields"] = deepcopy(self.geometry.descriptor)
+        self.relative = (
+            self.geometry.relative_actions(reference_frame=frame) if self.geometry else None
+        )
         self.selected = configuration.get("selected_state_feature")
         self.selected_units = configuration.get("selected_state_units", [])
         self.state_projection = None
@@ -48,7 +63,7 @@ class FieldTransforms:
             for i in indices:
                 coordinate_arm[self.geometry.names[i]] = start
             if grip is not None:
-                source_to_tcp[self.geometry.names[grip]] = start + 6
+                source_to_tcp[self.geometry.names[grip]] = start + self.geometry.arm_pose_width
         if not selected.intersection(coordinate_arm):
             raise ValueError("TCP state requires at least one complete joint-position group")
         source_to_tcp.update(
@@ -64,7 +79,7 @@ class FieldTransforms:
                 if start in emitted:
                     continue
                 emitted.add(start)
-                for i in range(start, start + 6):
+                for i in range(start, start + self.geometry.arm_pose_width):
                     projection.append(("tcp", i))
                     names.append(absolute["names"][i])
                     quantities.append(absolute["units"][i])

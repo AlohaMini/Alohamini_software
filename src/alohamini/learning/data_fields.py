@@ -24,6 +24,7 @@ def prepare_fields(samples, settings, components, *, options=None):
     """Resolve coordinate metadata once, without an intermediate user-managed file."""
     configuration = deepcopy(settings.get("data", {}))
     if not active(configuration):
+        FieldTransforms(configuration)
         return samples
     if not getattr(components, "supports_field_transforms", False):
         raise ValueError("This algorithm has not registered the common numeric-field adapter")
@@ -65,7 +66,7 @@ def prepare_fields(samples, settings, components, *, options=None):
     transform.validate_source(
         samples.info, samples.selection.feature if samples.selection else None
     )
-    settings["data"] = deepcopy(configuration)
+    settings["data"] = deepcopy(transform.configuration)
     return FieldDataset(samples, transform)
 
 

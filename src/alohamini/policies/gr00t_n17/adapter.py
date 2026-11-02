@@ -95,7 +95,7 @@ class GR00TN17Algorithm(ChunkAlgorithm):
             if not names or (
                 options.get(name + "_names") and list(options[name + "_names"]) != names
             ):
-                raise ValueError("GR00T recorded field names/order changed")
+                raise ValueError("GR00T field names/order changed")
             options[name + "_names"] = list(names)
             options.setdefault(name + "_slot_map", {n: i for i, n in enumerate(names)})
         if not options.get("reinitialize_embodiment", True) and not explicit_slots:

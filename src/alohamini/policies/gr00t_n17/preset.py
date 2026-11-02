@@ -46,6 +46,11 @@ def apply_preset(settings):
                 "132-wide padded embodiment-specific projections; native robot "
                 "coordinates are named"
             ),
+            relative_eef=(
+                "Per-key RELATIVE+EEF: T_observed^-1 @ T_target; XYZ_ROT6D uses first "
+                "two matrix rows. DROID also uses relative joints and absolute gripper; "
+                "other embodiments may use NON_EEF/absolute actions"
+            ),
             images=(
                 "RGB, fraction crop .95, shortest edge256, Qwen3-VL processor; all selected views"
             ),
@@ -79,12 +84,13 @@ def apply_preset(settings):
                 "packed into explicit slots"
             ),
             (
-                "Absolute recorded actions retained; no inferred "
-                "end-effector/relative conversion or sin/cos expansion"
+                "Recorded actions by default; optional named FK, TCP deltas in base/tool "
+                "frame and rotvec/rotation_6d via data.*; no inferred FK or sin/cos expansion"
             ),
             (
-                "Quantiles fitted exactly in float64 on training rows; inputs and "
-                "inverse outputs clipped to limits"
+                "Quantiles fitted exactly in float64 after field transforms; relative "
+                "action windows pooled across horizon (official relative stats are per-step); "
+                "inputs and inverse outputs clipped to limits"
             ),
             (
                 "Torchvision crop/color augmentation replaces Albumentations; not "

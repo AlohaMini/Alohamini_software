@@ -11,22 +11,26 @@ from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from alohamini.calibration.encoder import EncoderCalibration, HostPositionUnits
 from alohamini.kinematics.arm import ARM_SUFFIXES, SerialArmKinematics
 from alohamini.model import get_robot_model, load_robot_model
 
 from .action_transforms import RelativeActions
+from .rotations import RotationEncoding
 
 HOST_UNIT_KEYS = ("normalization", "range_min", "range_max", "drive_mode")
 MOTOR_COORDINATE_KEYS = (*HOST_UNIT_KEYS, "homing_offset", "id", "model")
 
 
 class KinematicFields:
-    def __init__(self, descriptor):
+    def __init__(self, descriptor, *, rotation_representation=None):
         self.descriptor = deepcopy(descriptor)
         descriptor = self.descriptor
+        if rotation_representation is not None:
+            descriptor["rotation_representation"] = rotation_representation
+        self.rotation = RotationEncoding(descriptor.get("rotation_representation", "rotvec"))
+        self.arm_pose_width = 3 + self.rotation.width
         if descriptor.get("version") != 1:
             raise ValueError("Unsupported kinematic-fields descriptor")
         self.names = list(descriptor["source_names"])
@@ -72,8 +76,10 @@ class KinematicFields:
             used.extend(indices)
             self.arms.append((arm, indices, gi, geometry))
             self.arm_offsets.append(len(self.feature_names))
-            self.feature_names += [f"{arm['name']}.{k}" for k in ("x", "y", "z", "rx", "ry", "rz")]
-            self.units += ["m"] * 3 + ["rad"] * 3
+            self.feature_names += [
+                f"{arm['name']}.{k}" for k in ("x", "y", "z", *self.rotation.names)
+            ]
+            self.units += ["m"] * 3 + self.rotation.units
             if grip is not None:
                 self.feature_names.append(f"{arm['name']}.gripper")
                 self.units.append(grip["unit"])
@@ -172,23 +178,32 @@ class KinematicFields:
                     joints[..., j] = decoded.reshape(values.shape[:-1])
             poses = model.forward_batch(joints)
             result[..., offset : offset + 3] = poses[..., :3, 3]
-            result[..., offset + 3 : offset + 6] = (
-                Rotation.from_matrix(poses[..., :3, :3].reshape(-1, 3, 3))
-                .as_rotvec()
-                .reshape((*values.shape[:-1], 3))
+            result[..., offset + 3 : offset + self.arm_pose_width] = self.rotation.encode(
+                poses[..., :3, :3]
             )
             if gi is not None:
-                result[..., offset + 6] = self.gripper(values[..., gi], arm["gripper"])
+                result[..., offset + self.arm_pose_width] = self.gripper(
+                    values[..., gi], arm["gripper"]
+                )
         if self.passthrough:
             result[..., self.pose_width :] = values[..., self.passthrough]
         return result
 
-    def relative_actions(self):
+    def relative_actions(self, *, reference_frame="base"):
         """Declare pose groups from the field layout; grippers and passthrough stay absolute."""
         return RelativeActions(
             self.width,
             linear_dims=[i for start in self.arm_offsets for i in range(start, start + 3)],
-            rotation_groups=[list(range(start + 3, start + 6)) for start in self.arm_offsets],
+            rotation_groups=[
+                list(range(start + 3, start + self.arm_pose_width)) for start in self.arm_offsets
+            ],
+            rotation_representation=self.rotation.representation,
+            reference_frame=reference_frame,
+            position_groups=(
+                [list(range(start, start + 3)) for start in self.arm_offsets]
+                if reference_frame == "tool"
+                else ()
+            ),
         )
 
     def validate_source(self, info, *, state_names=None):
@@ -255,7 +270,7 @@ class KinematicFields:
             shape=[self.width],
             names=list(self.feature_names),
             units=list(self.units),
-            representation="absolute_tcp_rotvec",
+            representation=f"absolute_tcp_{self.rotation.representation}",
             frames={arm["name"]: arm["frame"] for arm, _, _, _ in self.arms},
             derivation=deepcopy(self.descriptor),
         )
@@ -280,13 +295,15 @@ class KinematicFields:
                 for step, pose in enumerate(poses[index]):
                     target = np.eye(4)
                     target[:3, 3] = pose[offset : offset + 3]
-                    target[:3, :3] = Rotation.from_rotvec(pose[offset + 3 : offset + 6]).as_matrix()
+                    target[:3, :3] = self.rotation.decode(
+                        pose[offset + 3 : offset + self.arm_pose_width]
+                    )
                     seed = model.inverse(target, seed, **self.descriptor.get("ik", {}))
                     for i, q, c in zip(indices, seed, arm["coordinates"], strict=True):
                         output[index + (step, i)] = self.source_joint(q, c)
                     if gi is not None:
                         output[index + (step, gi)] = self.gripper(
-                            pose[offset + 6], arm["gripper"], inverse=True
+                            pose[offset + self.arm_pose_width], arm["gripper"], inverse=True
                         )
             for n, i in enumerate(self.passthrough):
                 output[index + (slice(None), i)] = poses[index + (slice(None), self.pose_width + n)]

@@ -109,12 +109,14 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 | --- | --- |
 | `--data.state_representation` | `recorded` 保留记录值；`tcp` 将臂关节位置替换为末端位姿，保留其他所选字段 |
 | `--data.action_representation` | `recorded` 保留控制目标；`tcp_absolute` 绝对末端目标；`tcp_delta` 相对当前观测的末端目标 |
+| `--data.rotation_representation` | TCP 旋转编码：`rotvec`（默认，3 维）；`rotation_6d`（6 维，旋转矩阵前两行）；同时作用于所选 TCP state/action |
+| `--data.tcp_delta_frame` | 仅用于 `tcp_delta`：`base`（默认）在各臂基座系表达增量；`tool` 在当前末端系表达相对位姿，夹爪等其他字段保持绝对目标 |
 | `--data.kinematics.reference_pose` | 使用型号登记的标定姿态，如 `upright_forward` |
 | `--data.kinematics.spec` | 自定义坐标与几何 JSON，见[弧度坐标示例](../examples/datasets/kinematics-radians.json) |
 | `--data.kinematics.path` | 复用已解析的转换描述 JSON |
 
 三种 `kinematics` 来源选一。ACT 默认保留记录表示；Spirit 默认使用 TCP state 和 TCP 增量动作。
-GR00T 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
+GR00T、HyVLA 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
 
 对按 `upright_forward` 姿态完成半圈归零的 `alohamini2pro` 数据：
 
@@ -481,7 +483,8 @@ CUDA_VISIBLE_DEVICES=0,1 alohamini train --policy.type=gr00t_n17 \
 默认 10000 步、AdamW `1e-4`、5% 预热与余弦下降，BF16 计算、FP32 可训练参数、重计算开启、EMA 关闭。
 上例有效 batch 为 16；资源预设为每进程 8，按显存调整。
 
-使用选中相机当前帧、非空任务文本、命名 state 与 40 行动作；保留记录坐标和单位。
+使用选中相机当前帧、非空任务文本、命名 state 与 40 行动作；默认保留记录坐标和单位。
+选择相对末端动作时，增加 `--data.state_representation=tcp --data.action_representation=tcp_delta --data.rotation_representation=rotation_6d --data.tcp_delta_frame=tool`，并指定一种 `--data.kinematics.*` 来源。
 图像先裁剪再缩放短边至 256，交给 Qwen3-VL 处理器；state/action 使用训练集 q01/q99 映射至 `[-1,1]` 并裁剪。
 默认新 embodiment 31，重新初始化其状态／动作投影；复用已有 embodiment 须指定 `state_slot_map`、`action_slot_map` 并关闭 `reinitialize_embodiment`。
 运行时只读本地资源，checkpoint 可独立迁移；支持通用推理和远程动作块，未接入 RTC。

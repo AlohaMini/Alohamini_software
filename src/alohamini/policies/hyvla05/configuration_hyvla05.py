@@ -1,4 +1,4 @@
-"""HyVLA network settings and the platform's recorded-action adaptation."""
+"""HyVLA network settings; numeric representations are owned by data transforms."""
 
 from dataclasses import dataclass, field
 
@@ -38,7 +38,9 @@ class HyVLA05Config(PolicyConfig):
         if not self.image_features or self.robot_state_feature is None:
             raise ValueError("HyVLA requires cameras and observation.state")
         if self.action_representation != "recorded":
-            raise ValueError("HyVLA native adaptation requires recorded action coordinates")
+            raise ValueError(
+                "Select TCP actions with data.action_representation, not policy options"
+            )
         for key in ("chunk_size", "n_action_steps", "history_frames", "history_stride"):
             if type(getattr(self, key)) is not int or getattr(self, key) < 1:
                 raise ValueError(f"{key} must be a positive integer")
@@ -49,7 +51,7 @@ class HyVLA05Config(PolicyConfig):
             (self.action_feature, "max_action_dim"),
         ):
             if feature.shape[0] > self.network.get(maximum, 32):
-                raise ValueError(f"Recorded feature width exceeds HyVLA {maximum}")
+                raise ValueError(f"Feature width exceeds HyVLA {maximum}")
         if self.history_frames > 1 and not self.network.get("use_video_encoder", False):
             raise ValueError("Historical images require the MEM video encoder")
         if self.history_frames > 18:

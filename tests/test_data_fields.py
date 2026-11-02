@@ -77,18 +77,22 @@ def source_dataset(recording, tmp_path, *, position_names=False):
 
 
 @pytest.mark.parametrize("kind", ["act", "spirit"])
+@pytest.mark.parametrize("rotation", [None, "rotation_6d"])
 def test_shared_fields_train_both_algorithms_and_reload_without_source_geometry(
-    recording, tmp_path, kind
+    recording, tmp_path, kind, rotation
 ):
     torch.set_num_threads(2)
     source, settings, specification = source_dataset(recording, tmp_path)
+    if rotation:
+        settings["data"]["rotation_representation"] = rotation
+    width = 10 if rotation else 7
     recipe = algorithm(kind)
     source.include_task = recipe.include_task
     options = model_options() if kind == "act" else tiny_spirit_options(tmp_path / "qwen")
     samples = prepare_fields(source, settings, recipe, options=options)
     assert source[0]["observation.state"].shape == (3,)
-    assert samples[0]["observation.state"].shape == (7,)
-    assert samples[0]["action"].shape == (3, 7)
+    assert samples[0]["observation.state"].shape == (width,)
+    assert samples[0]["action"].shape == (3, width)
     assert samples[0]["_recorded_action"].shape == (3, 3)
     assert "kinematics" not in settings["data"]
     options.update(input_features=samples.input_features, output_features=samples.output_features)
@@ -99,7 +103,7 @@ def test_shared_fields_train_both_algorithms_and_reload_without_source_geometry(
     processor = make_processor(model, stats, "cpu", data_fields=settings["data"])
     batch = next(iter(torch.utils.data.DataLoader(samples, batch_size=2)))
     prepared = processor(batch)
-    assert prepared["observation.state"].shape == (2, 7)
+    assert prepared["observation.state"].shape == (2, width)
     assert prepared["_action_context"].shape == (2, 3)
     loss, _ = model(prepared)
     assert torch.isfinite(loss)
@@ -111,7 +115,7 @@ def test_shared_fields_train_both_algorithms_and_reload_without_source_geometry(
         shutil.rmtree(tmp_path / "qwen")
     loaded = NativePolicy(checkpoint, offline=True)
     assert loaded.manifest["data_fields"] == settings["data"]
-    assert loaded.config.action_feature.shape == (7,)
+    assert loaded.config.action_feature.shape == (width,)
     assert loaded.manifest["source_info"]["features"]["action"]["shape"] == [3]
     assert loaded.manifest["statistics_features"]["action"]["names"][0] == "delta.manipulator.x"
     assert len(loaded.manifest["physical_action_summary"]["mean"]) == 3
@@ -327,22 +331,31 @@ def test_field_cli_configuration_is_at_data_level(monkeypatch):
                 "--output_dir=/output",
                 "--state=joint_position,base_velocity,lift_height",
                 "--data.kinematics.reference_pose=upright_forward",
+                "--data.rotation_representation=rotation_6d",
+                "--data.tcp_delta_frame=tool",
             ]
         )
     assert cfg["data"] == dict(
         state_representation="tcp",
         action_representation="tcp_delta",
         kinematics=dict(reference_pose="upright_forward"),
+        rotation_representation="rotation_6d",
+        tcp_delta_frame="tool",
     )
     assert cfg["model"]["action_representation"] == "recorded"
     assert not cfg["model"].get("kinematics_path")
 
 
-def test_training_entry_resolves_fields_and_resumes_without_input_description(recording, tmp_path):
+@pytest.mark.parametrize("rotation", [None, "rotation_6d"])
+def test_training_entry_resolves_fields_and_resumes_without_input_description(
+    recording, tmp_path, rotation
+):
     from alohamini.learning.checkpoint import read_checkpoint
     from alohamini.learning.train import train
 
     source, settings, specification = source_dataset(recording, tmp_path)
+    if rotation:
+        settings["data"].update(rotation_representation=rotation, tcp_delta_frame="tool")
     output = tmp_path / "run"
     options = model_options()
     cfg = dict(

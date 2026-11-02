@@ -26,9 +26,9 @@ def apply_preset(settings):
             "flow": "Beta(1.5,1) time; 10 Euler steps",
         },
         "adaptations": {
-            "actions": "20 consecutive recorded physical targets; one representation",
-            "state": "selected recorded feedback with its names and units",
-            "normalization": "training split mean/std in recorded coordinates",
+            "actions": "20 consecutive targets; recorded by default or explicit data transforms",
+            "state": "selected feedback with named units and optional TCP rotation encoding",
+            "normalization": "training split mean/std after data transforms, pooled over horizons",
             "cameras": "ordered dataset/CLI camera list; no inferred camera identity",
             "time": "history stride 15 and action stride 1 in recorded rows; no resampling",
             "optimizer": "AdamW 2.5e-5, betas [0.9,0.95], decay 1e-10; 1k warmup, 40k decay",

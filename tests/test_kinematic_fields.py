@@ -283,7 +283,8 @@ def planar_spec():
     )
 
 
-def test_field_view_projects_history_without_changing_current_action_anchor():
+@pytest.mark.parametrize("rotation,width", [("rotvec", 7), ("rotation_6d", 10)])
+def test_field_view_projects_history_without_changing_current_action_anchor(rotation, width):
     spec = planar_spec()
     info = {
         "features": {
@@ -297,6 +298,7 @@ def test_field_view_projects_history_without_changing_current_action_anchor():
         dict(
             state_representation="tcp",
             action_representation="tcp_delta",
+            rotation_representation=rotation,
             kinematic_fields=spec,
             selected_state_feature=selected,
             selected_state_units=["rad", "deg", "A"],
@@ -312,7 +314,7 @@ def test_field_view_projects_history_without_changing_current_action_anchor():
     targets = np.repeat(anchors[:, None], 2, axis=1)
     targets[..., 2] += 0.005
     states, actions = fields.encode(history, targets, anchor=anchors)
-    assert states.shape == (3, 2, 7)
+    assert states.shape == (3, 2, width)
     np.testing.assert_array_equal(states[..., -1], history[..., -1])
     np.testing.assert_allclose(actions[:, 0], actions[:, 1])
     np.testing.assert_allclose(fields.decode(anchors, actions), targets, atol=2e-3)

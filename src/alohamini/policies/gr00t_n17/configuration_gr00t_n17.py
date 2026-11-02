@@ -70,7 +70,7 @@ class GR00TN17Config(PolicyConfig):
                 or len(set(names)) != len(names)
                 or set(slots) != set(names)
             ):
-                raise ValueError("GR00T requires ordered recorded names and explicit slot maps")
+                raise ValueError("GR00T requires ordered field names and explicit slot maps")
             if len(set(slots.values())) != len(names) or any(
                 type(i) is not int or not 0 <= i < self.network.get(maximum, 132)
                 for i in slots.values()

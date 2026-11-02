@@ -64,8 +64,16 @@ def parse_training_args(argv=None):
         choices=("recorded", "tcp_absolute", "tcp_delta"),
         default=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--data.tcp_delta_frame", choices=("base", "tool"), default=argparse.SUPPRESS
+    )
     for name in ("reference_pose", "path", "spec"):
         parser.add_argument(f"--data.kinematics.{name}", default=argparse.SUPPRESS)
+    parser.add_argument(
+        "--data.rotation_representation",
+        choices=("rotvec", "rotation_6d"),
+        default=argparse.SUPPRESS,
+    )
     parser.add_argument(
         "--stats", help="Prepared policy statistics JSON; omitted: fit once before training"
     )
