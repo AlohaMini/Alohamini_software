@@ -5,19 +5,23 @@ from scipy.spatial.transform import Rotation
 
 
 class RotationEncoding:
-    """6D stores the first two matrix rows (r00, r01, r02, r10, r11, r12).
+    """Explicit row (HyVLA/UMI) and column (OpenWAM) 6D conventions.
 
     Decode with Gram-Schmidt, as in HyVLA/UMI. Degenerate predictions cannot
     define a rotation and must fail before reaching inverse kinematics.
     """
 
     def __init__(self, representation="rotvec"):
-        if representation not in ("rotvec", "rotation_6d"):
-            raise ValueError("Rotation representation must be rotvec or rotation_6d")
+        if representation not in ("rotvec", "rotation_6d", "rotation_6d_columns"):
+            raise ValueError(
+                "Rotation representation must be rotvec, rotation_6d or rotation_6d_columns"
+            )
         self.representation = representation
         self.names = (
             ("rx", "ry", "rz")
             if representation == "rotvec"
+            else ("r00", "r10", "r20", "r01", "r11", "r21")
+            if representation == "rotation_6d_columns"
             else ("r00", "r01", "r02", "r10", "r11", "r12")
         )
         self.width = len(self.names)
@@ -26,6 +30,8 @@ class RotationEncoding:
     def encode(self, matrices):
         matrices = np.asarray(matrices, dtype=np.float64)
         shape = matrices.shape[:-2]
+        if self.representation == "rotation_6d_columns":
+            return matrices.swapaxes(-1, -2)[..., :2, :].reshape((*shape, 6)).copy()
         if self.representation == "rotation_6d":
             return matrices[..., :2, :].reshape((*shape, 6)).copy()
         if not matrices.size:
@@ -60,4 +66,5 @@ class RotationEncoding:
         if np.any(norm < 1e-8):
             raise ValueError("Degenerate rotation_6d: rows must be nonzero and independent")
         second = second / norm
-        return np.stack((first, second, np.cross(first, second)), axis=-2)
+        axis = -1 if self.representation == "rotation_6d_columns" else -2
+        return np.stack((first, second, np.cross(first, second)), axis=axis)
