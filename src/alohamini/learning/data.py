@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 
 from alohamini.datasets.images import image_path, image_rgb
 from alohamini.datasets.record import StateSelection
-from alohamini.datasets.tools import check_dataset
+from alohamini.datasets.tools import check_dataset, dataset_info
 from alohamini.datasets.video_reader import VideoFrameCache
 from alohamini.learning.logging import log_stage
 from alohamini.learning.processor import DEFAULT_IMAGE_SIZE, image_tensor
@@ -258,13 +258,18 @@ class AlohaMiniDataset(Dataset):
             )
         self.review_note = review_note
         self.include_task = include_task
-        self.info = json.loads((self.root / "meta/info.json").read_text())
-        self._v3 = None
+        self.info = dataset_info(self.root)
+        self._storage = None
         if self.info.get("codebase_version") == "v3.0":
             from alohamini.learning.lerobot import LeRobotSource
 
-            self._v3 = LeRobotSource(self.root, self.info, allow_unannotated=allow_unannotated)
-            self.info = self._v3.info
+            self._storage = LeRobotSource(self.root, self.info, allow_unannotated=allow_unannotated)
+            self.info = self._storage.info
+        elif self.info.get("format") == "alohamini-simulation":
+            from alohamini.datasets.simulation import SimulationSource
+
+            self._storage = SimulationSource(self.root)
+            self.info = self._storage.info
         self.episodes = list(episodes)
         if not self.episodes or len(set(self.episodes)) != len(self.episodes):
             raise ValueError("Select unique, nonempty episode indices")
@@ -272,7 +277,7 @@ class AlohaMiniDataset(Dataset):
             type(n) is not int
             or not 0
             <= n
-            < (len(self._v3.episodes) if self._v3 else self.report["summary"]["episodes"])
+            < (len(self._storage.episodes) if self._storage else self.report["summary"]["episodes"])
             for n in self.episodes
         ):
             raise ValueError("Episode index outside dataset")
@@ -303,12 +308,12 @@ class AlohaMiniDataset(Dataset):
             self.delta_indices["action"] = list(range(chunk_size))
         self.state = state
         if (
-            self._v3
+            self._storage
             and state != "none"
-            and (self.info["features"].get("observation.state") != self._v3.original_state)
+            and (self.info["features"].get("observation.state") != self._storage.original_state)
         ):
             raise ValueError(
-                "Selected v3 has no original state coordinates; "
+                "Selected dataset has no original state coordinates; "
                 "use state='none' or export default state"
             )
         from alohamini.learning.state import select_state
@@ -393,11 +398,11 @@ class AlohaMiniDataset(Dataset):
             if mask:
                 columns.append(mask)
         logging.getLogger(__name__).info("Loading selected episodes and sample windows")
-        loaded = self._v3.read_episodes(self.episodes, columns) if self._v3 else None
+        loaded = self._storage.read_episodes(self.episodes, columns) if self._storage else None
         for number, episode in enumerate(self.episodes, 1):
             directory = self.root / "episodes" / f"episode_{episode:06d}"
             table_path = directory / "frames.parquet"
-            if self._v3:
+            if self._storage:
                 rows, safety_path, paths = next(loaded)
             else:
                 safety_path = directory / "safety.jsonl"
@@ -504,7 +509,7 @@ class AlohaMiniDataset(Dataset):
                         or not np.isfinite(values).all()
                     ):
                         raise ValueError("Invalid numeric observation context")
-                if not (self._v3 and self._v3.unannotated) and (
+                if not (self._storage and self._storage.unannotated) and (
                     key in self.context_fields
                     or any(
                         k == "observation.state"
@@ -538,8 +543,10 @@ class AlohaMiniDataset(Dataset):
             camera = key.removeprefix("observation.images.")
             episode = self.root / "episodes" / f"episode_{self.locations[index][0]:06d}"
             reference = row[key]
-            if self._v3:
-                rgb = self._v3.image(reference, camera, video_reader=self.video_cache.read_tensor)
+            if self._storage:
+                rgb = self._storage.image(
+                    reference, camera, video_reader=self.video_cache.read_tensor
+                )
             elif isinstance(reference, dict) and "frame_index" in reference:
                 rgb = self.video_cache.read_tensor(
                     image_path(episode, camera, reference), reference["frame_index"]
@@ -547,8 +554,11 @@ class AlohaMiniDataset(Dataset):
             else:
                 rgb = image_rgb(episode, camera, reference)
             return image_tensor(
-                rgb, self.image_size, return_uint8=self.return_uint8,
-                resize_mode=self.image_resize_mode, pad_value=self.image_pad_value,
+                rgb,
+                self.image_size,
+                return_uint8=self.return_uint8,
+                resize_mode=self.image_resize_mode,
+                pad_value=self.image_pad_value,
             )
         if key == "observation.state":
             return torch.from_numpy(self.selection.frame(row))
@@ -606,8 +616,8 @@ class AlohaMiniDataset(Dataset):
             if self.camera_workers and key.startswith("observation.images."):
                 ref = self.rows[index][key]
                 # Parquet embedded-image row-group caches remain single-threaded.
-                if (self._v3 and ref[1] is None) or (
-                    not self._v3 and isinstance(ref, dict) and "frame_index" in ref
+                if (self._storage and ref[1] is None) or (
+                    not self._storage and isinstance(ref, dict) and "frame_index" in ref
                 ):
                     videos.append(key)
                     continue

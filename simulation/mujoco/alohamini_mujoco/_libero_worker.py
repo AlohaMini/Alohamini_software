@@ -118,8 +118,14 @@ def export(source, output, suite_name, indices):
                         quat=" ".join(map(str, model.body_iquat[bid])),
                         diaginertia=" ".join(map(str, model.body_inertia[bid])),
                     )
+            visual_contact_geoms = []
             for geom in world.iter("geom"):
                 gid = model.geom(geom.get("name")).id
+                # robosuite's visual group can also contain contact surfaces.
+                if model.geom_group[gid] == 1 and (
+                    model.geom_contype[gid] or model.geom_conaffinity[gid]
+                ):
+                    visual_contact_geoms.append(geom.get("name"))
                 geom.set(
                     "group", "3" if model.geom_contype[gid] or model.geom_conaffinity[gid] else "2"
                 )
@@ -189,6 +195,7 @@ def export(source, output, suite_name, indices):
                 "task": task._asdict(),
                 "parsed_problem": core.parsed_problem,
                 "objects": objects,
+                "visual_contact_geoms": visual_contact_geoms,
                 "initial_states": joint_bank,
                 "source_init_sha256": digest(bank),
                 "source_bddl_sha256": digest(bddl),

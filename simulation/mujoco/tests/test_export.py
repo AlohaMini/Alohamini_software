@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import mujoco
 import numpy as np
-from alohamini_mujoco.cli import export_robot
+from alohamini_mujoco.export import export_robot
 from alohamini_mujoco.meshes import Mesh
 from PIL import Image
 

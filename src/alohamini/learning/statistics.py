@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
+from alohamini.datasets.tools import dataset_info
 from alohamini.learning.checkpoint import resolve_pretrained, validate_pretrained
 from alohamini.learning.data import AlohaMiniDataset
 from alohamini.learning.data_fields import active, prepare_fields
@@ -16,14 +17,17 @@ from alohamini.policies.registry import algorithm
 def sample_arguments(cfg, components, options):
     """Shared field/window/episode selection for statistics and training."""
     root = Path(cfg["dataset"]).expanduser().resolve()
-    info = json.loads((root / "meta/info.json").read_text())
+    info = dataset_info(root)
     state = cfg.get("state", "none")
     if state == "auto":
         state = (
             (
                 "recorded"
-                if info.get("codebase_version") == "v3.0"
-                and not (root / "meta/alohamini.json").is_file()
+                if info.get("training_only")
+                or (
+                    info.get("codebase_version") == "v3.0"
+                    and not (root / "meta/alohamini.json").is_file()
+                )
                 else "joint_position,base_velocity,lift_height"
             )
             if "observation.state" in info["features"]
@@ -69,6 +73,12 @@ def sample_arguments(cfg, components, options):
         episodes = [i for i in range(count) if i not in validation]
     if set(episodes) & set(validation):
         raise ValueError("Train and validation episodes must be disjoint")
+    groups = info.get("episode_groups")
+    if groups:
+        if any(type(i) is not int or not 0 <= i < len(groups) for i in [*episodes, *validation]):
+            raise ValueError("Episode index outside dataset")
+        if {groups[i] for i in episodes} & {groups[i] for i in validation}:
+            raise ValueError("Train and validation episodes must use disjoint task/reset groups")
     return args, episodes, validation
 
 
@@ -184,7 +194,7 @@ def prepare_statistics(root, output, *, config=None):
         from alohamini.datasets.edit import compute_statistics
         from alohamini.datasets.tools import check_dataset
 
-        info = json.loads((root / "meta/info.json").read_text())
+        info = dataset_info(root)
         if info.get("format") != "alohamini-episodes":
             raise ValueError(
                 "Basic statistics require an AlohaMini recording; "

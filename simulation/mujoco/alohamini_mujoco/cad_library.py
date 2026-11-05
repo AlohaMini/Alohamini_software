@@ -187,8 +187,7 @@ def tessellate_assembly(
             command = [
                 sys.executable,
                 "-m",
-                "alohamini_mujoco",
-                "cad-tessellate",
+                "alohamini_mujoco._cad_worker",
                 "--cad-bundle",
                 str(directory),
                 "--definition",

@@ -26,6 +26,13 @@ class RecordedStateSelection:
         ):
             raise ValueError("Recorded state names must match the vector width and be unique")
         self.source_names = list(names)
+        units = feature.get("units", ["recorded (unit unverified)"] * self.width)
+        if (
+            not isinstance(units, list)
+            or len(units) != self.width
+            or any(not isinstance(unit, str) or not unit for unit in units)
+        ):
+            raise ValueError("Recorded state units must match its named coordinates")
         selected = []
         if selection == "recorded":
             selected = list(names)
@@ -50,7 +57,7 @@ class RecordedStateSelection:
                 selected.extend(subset)
         self.columns = [("observation.state", names.index(n), 1, None) for n in selected]
         self.feature = {"dtype": "float32", "shape": [len(selected)], "names": selected}
-        self.units = ["recorded (unit unverified)"] * len(selected)
+        self.units = [units[names.index(name)] for name in selected]
 
     def frame(self, row):
         values = np.asarray(row["observation.state"], dtype=np.float32)

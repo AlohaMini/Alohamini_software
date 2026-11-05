@@ -4,26 +4,12 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
-from alohamini_mujoco._sapien_worker import solid_distance
 from alohamini_mujoco.collision import visual_sources
 from alohamini_mujoco.description import Description
 from alohamini_mujoco.interop import export_collision_urdf, obj_bytes
 from alohamini_mujoco.meshes import Mesh
 
 from alohamini.model import get_robot_model
-
-
-def test_convex_surface_distance_handles_faces_edges_corners_and_interior():
-    import itertools
-
-    cube = np.array(list(itertools.product([-1.0, 1.0], repeat=3)))
-    for point, distance in [
-        ([2, 0, 0], 1),
-        ([2, 2, 0], np.sqrt(2)),
-        ([2, 2, 2], np.sqrt(3)),
-        ([0, 0, 0], 0),
-    ]:
-        assert solid_distance(np.array([point]), cube) == pytest.approx(distance, abs=1e-12)
 
 
 @pytest.mark.parametrize("mesh_unit", ["m", "mm"])

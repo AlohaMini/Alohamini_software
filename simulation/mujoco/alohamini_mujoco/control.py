@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from numbers import Real
+from types import MappingProxyType
 
 import mujoco
 import numpy as np
@@ -84,10 +87,51 @@ class FollowerSettings:
     start_angular_tolerance_rad: float = 1e-5
     start_linear_tolerance_m: float = 1e-7
     penetration_tolerance_m: float = 0.0005
+    joint_gains: Mapping = field(default_factory=dict)
+
+    def __post_init__(self):
+        if any(
+            isinstance(v, bool) or not isinstance(v, Real) or not math.isfinite(v) or v <= 0
+            for name, v in vars(self).items()
+            if name != "joint_gains"
+        ):
+            raise ValueError("Follower settings must be finite and positive")
+        if not isinstance(self.joint_gains, Mapping):
+            raise ValueError("Joint gains must map joint names to kp and kd")
+        gains = {}
+        for name, values in self.joint_gains.items():
+            if (
+                not isinstance(name, str)
+                or not isinstance(values, Mapping)
+                or set(values) != {"kp", "kd"}
+                or any(
+                    isinstance(v, bool) or not isinstance(v, Real) or not math.isfinite(v)
+                    for v in values.values()
+                )
+                or values["kp"] <= 0
+                or values["kd"] < 0
+            ):
+                raise ValueError("Joint gains require finite kp > 0 and kd >= 0")
+            gains[name] = MappingProxyType({key: float(value) for key, value in values.items()})
+        object.__setattr__(self, "joint_gains", MappingProxyType(gains))
+
+    def to_dict(self):
+        return {
+            **{name: float(value) for name, value in vars(self).items() if name != "joint_gains"},
+            "joint_gains": {name: dict(value) for name, value in self.joint_gains.items()},
+        }
 
 
 class DynamicFollower:
     def __init__(self, robot, data=None, settings=None):
+        if (
+            "inertial_binding" in robot.manifest
+            and not robot.manifest["inertial_binding"]["dynamics_ready"]
+        ):
+            raise ValueError(
+                "Partial inertial binding cannot run dynamics or collection; "
+                "complete rigid ownership and mass coverage first"
+            )
         if "rigid_assembly_fixture" in robot.manifest:
             raise ValueError(
                 "Rigid ownership inspection cannot run dynamics or collection; "
@@ -102,9 +146,10 @@ class DynamicFollower:
         self.data = robot.data() if data is None else data
         self.settings = settings or FollowerSettings()
         settings = self.settings
-        if any(not math.isfinite(v) or v <= 0 for v in vars(settings).values()):
-            raise ValueError("Follower settings must be finite and positive")
         self.names = tuple(self.model.actuator(i).name for i in range(self.model.nu))
+        unknown = settings.joint_gains.keys() - set(self.names)
+        if unknown:
+            raise ValueError(f"Gain overrides require driven robot joints: {sorted(unknown)}")
         self.joint_ids = np.array([self.model.joint(name).id for name in self.names])
         self.qpos_ids = self.model.jnt_qposadr[self.joint_ids]
         self.dof_ids = self.model.jnt_dofadr[self.joint_ids]
@@ -128,6 +173,9 @@ class DynamicFollower:
         omega = 2 * math.pi * settings.bandwidth_hz
         self.kp = inertia * omega**2
         self.kd = 2 * settings.damping_ratio * omega * inertia
+        for name, gains in settings.joint_gains.items():
+            index = self.names.index(name)
+            self.kp[index], self.kd[index] = gains["kp"], gains["kd"]
 
     def step(self):
         data = self.data
@@ -265,12 +313,13 @@ class DynamicFollower:
             "minimum_contact_distance_m": float(minimum_contact_distance),
             "final_contacts": contacts(self.robot, self.data),
             "controller": {
-                **vars(self.settings),
+                **self.settings.to_dict(),
                 "kp": self.kp.tolist(),
                 "kd": self.kd.tolist(),
                 "derivation": (
                     "diagonal effective inertia at initialization; "
-                    "kp=I*(2*pi*f)^2, kd=2*zeta*I*2*pi*f"
+                    "kp=I*(2*pi*f)^2, kd=2*zeta*I*2*pi*f; "
+                    "joint_gains explicitly override selected joints"
                 ),
             },
         }
@@ -290,6 +339,62 @@ def arm_joint_names(side):
             "wrist_roll",
         )
     )
+
+
+def gravity_load_report(robot, positions=None, *, reference_data=None):
+    """Static motor loads without support, payload, or other contact forces.
+
+    Loads use the compiled model's gravity, masses and COMs, not identified
+    hardware parameters. This screens a free-space hold; it does not certify a
+    trajectory or a contact-supported pose. Reference data is never modified.
+    """
+    data = _configuration_data(robot, positions, reference_data)
+    data.qvel[:] = 0
+    mujoco.mj_forward(robot.model, data)
+    names = tuple(robot.model.actuator(i).name for i in range(robot.model.nu))
+    dofs = [robot.model.jnt_dofadr[robot.model.joint(n).id] for n in names]
+    effort = data.qfrc_bias[dofs]
+    limits = robot.model.actuator_ctrlrange[:, 1]
+    utilization = np.abs(effort) / limits
+    overloaded = utilization > 1 + 1e-12
+    return {
+        "within_limits": bool(not overloaded.any()),
+        "joint_names": list(names),
+        "effort_units": [
+            "N" if robot.description.joints[n].kind == "prismatic" else "N*m" for n in names
+        ],
+        "required_motor_effort": effort.tolist(),
+        "effort_limits": limits.tolist(),
+        "utilization": utilization.tolist(),
+        "maximum_utilization": float(utilization.max()),
+        "overloaded_joints": [n for n, exceeds in zip(names, overloaded, strict=True) if exceeds],
+        "scope": (
+            "static free-space hold under compiled inertias; excludes contact and payload loads"
+        ),
+    }
+
+
+def _configuration_data(robot, positions, reference_data):
+    if reference_data is None:
+        return robot.data(positions)
+    data = mujoco.MjData(robot.model)
+    mujoco.mj_copyData(data, robot.model, reference_data)
+    for name, position in (positions or {}).items():
+        if name not in robot.description.joints:
+            raise ValueError(f"Unknown configuration joint: {name}")
+        joint = robot.description.joints[name]
+        joint.check_position(position)
+        if name in robot.profile.locked_positions:
+            if position != robot.profile.locked_positions[name]:
+                raise ValueError(f"Configuration conflicts with locked joint: {name}")
+            continue
+        if joint.kind == "fixed":
+            if position != 0:
+                raise ValueError(f"Fixed configuration joint has a nonzero position: {name}")
+            continue
+        joint_id = robot.model.joint(name).id
+        data.qpos[robot.model.jnt_qposadr[joint_id]] = position
+    return data
 
 
 def solve_ik(
@@ -322,6 +427,7 @@ def solve_ik_targets(
     targets,
     *,
     movable_joints=None,
+    joint_bounds=None,
     seed_positions=None,
     reference_data=None,
     max_iterations=200,
@@ -330,10 +436,12 @@ def solve_ik_targets(
 ):
     """Solve simultaneous world TCP poses in independent scratch data.
 
-    Explicitly including vertical_move allows coordinated lift/arm IK. A copied
+    Explicitly including vertical_move allows coordinated lift/arm IK. Optional
+    joint_bounds narrow the solver's search within physical joint limits. A copied
     reference_data preserves measured scene-object poses for contact diagnostics.
     Iterations update kinematics only; the final full forward pass computes
-    contacts. Convergence does not establish a collision-free path.
+    contacts and unloaded static motor loads. Convergence does not establish a
+    collision-free or dynamically feasible path.
     """
     if not targets or any(side not in ("left", "right") for side in targets):
         raise ValueError("Provide world TCP poses keyed by left and/or right")
@@ -366,29 +474,22 @@ def solve_ik_targets(
             raise ValueError(f"IK joint must be an unlocked bounded robot joint: {name}")
         joints.append(joint)
     model = robot.model
-    if reference_data is None:
-        data = robot.data(seed_positions)
-    else:
-        data = mujoco.MjData(model)
-        mujoco.mj_copyData(data, model, reference_data)
-        for name, position in (seed_positions or {}).items():
-            if name not in robot.description.joints:
-                raise ValueError(f"Unknown IK seed joint: {name}")
-            joint = robot.description.joints[name]
-            joint.check_position(position)
-            if name in robot.profile.locked_positions:
-                if position != robot.profile.locked_positions[name]:
-                    raise ValueError(f"IK seed conflicts with locked joint: {name}")
-                continue
-            if joint.kind == "fixed":
-                if position != 0:
-                    raise ValueError(f"Fixed IK seed joint has a nonzero position: {name}")
-                continue
-            joint_id = model.joint(name).id
-            data.qpos[model.jnt_qposadr[joint_id]] = position
+    data = _configuration_data(robot, seed_positions, reference_data)
     qpos_ids = np.array([model.jnt_qposadr[model.joint(n).id] for n in names])
     dof_ids = np.array([model.jnt_dofadr[model.joint(n).id] for n in names])
     lower, upper = np.array([j.lower for j in joints]), np.array([j.upper for j in joints])
+    for name, bounds in (joint_bounds or {}).items():
+        if name not in names:
+            raise ValueError(f"IK bounds require a movable joint: {name}")
+        index = names.index(name)
+        values = np.asarray(bounds, dtype=float)
+        if (
+            values.shape != (2,)
+            or not np.isfinite(values).all()
+            or not lower[index] <= values[0] < values[1] <= upper[index]
+        ):
+            raise ValueError(f"IK bounds must narrow the physical joint range: {name}")
+        lower[index], upper[index] = values
     body_ids = {side: model.body(f"{side}_tcp").id for side in targets}
     linear, angular = np.zeros((3, model.nv)), np.zeros((3, model.nv))
     errors, cached = {}, {}
@@ -454,6 +555,7 @@ def solve_ik_targets(
                 "bounded trust-region reflective least squares, analytic SE(3) residual Jacobian"
             ),
             "contacts": contacts(robot, data),
+            "gravity_load": gravity_load_report(robot, reference_data=data),
         }
     raise RuntimeError(f"Full-pose IK did not converge: {errors}")
 

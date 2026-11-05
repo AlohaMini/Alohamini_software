@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "frame_definition": "world: X forward, Y left, Z up; ground z=0; T_world_root locates the parked robot base; T_A_B maps B into A; metres and radians",
+  "parameter_status": "Ground-referenced reference fixture and virtual cameras; not hardware calibration or task-success certification",
+  "T_world_root": [
+    [1, 0, 0, -0.048357533562457304],
+    [0, 1, 0, 0.0625142444672312],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1]
+  ],
+  "T_world_libero": [
+    [0, -1, 0, 0.7088743375701404],
+    [1, 0, 0, 0.18726],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1]
+  ],
+  "initial_positions": {
+    "vertical_move": 0.3,
+    "left_shoulder_pan": -1.5707963267948966,
+    "right_shoulder_pan": 1.5707963267948966,
+    "left_wrist_flex": 0.0,
+    "right_wrist_flex": 0.0,
+    "left_gripper": -0.2
+  },
+  "camera_rotation_reference": "ManiSkill 828edfcae78e7c24a073e0e8f82f92739d2453c2 CAMERA_LINK_TO_SAPIEN_Q=[0.5,0.5,-0.5,0.5], converted from SAPIEN camera axes to OpenGL; provisional",
+  "inspection_camera": {
+    "lookat_world_m": [0.35, 0, 0.8],
+    "distance_m": 1.8,
+    "azimuth_deg": 135,
+    "elevation_deg": -30
+  },
+  "cameras": [
+    {
+      "name": "left_wrist",
+      "body": "left_camera",
+      "fovy_deg": 60,
+      "T_body_camera": [
+        [1, 0, 0, 0],
+        [0, -1, 0, 0],
+        [0, 0, -1, 0],
+        [0, 0, 0, 1]
+      ]
+    },
+    {
+      "name": "right_wrist",
+      "body": "right_camera",
+      "fovy_deg": 60,
+      "T_body_camera": [
+        [1, 0, 0, 0],
+        [0, -1, 0, 0],
+        [0, 0, -1, 0],
+        [0, 0, 0, 1]
+      ]
+    }
+  ],
+  "fixture_definition": {
+    "source_table_half_size_m": [0.5, 0.6, 0.025],
+    "ground_world_z_m": 0.0,
+    "tabletop_world_z_m": 0.9,
+    "stationary_and_full_stroke_lift_forward_extent_at_table_slab_m": 0.050516804007683165,
+    "table_to_fixed_robot_clearance_m": 0.058357533562457306,
+    "rotation_about_vertical_rad": 1.5707963267948966,
+    "lateral_alignment": "Left shoulder aligned to mean training-group task 8 plate Y; original task object placements unchanged"
+  }
+}

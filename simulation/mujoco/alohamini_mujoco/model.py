@@ -19,6 +19,7 @@ from .collision import load_bundle
 from .compilation import compile_xml
 from .description import Description, numbers, origin
 from .frames import rigid_transform
+from .inertia import MassProperties
 from .meshes import binary_stl
 from .shapes import Primitive
 
@@ -55,6 +56,7 @@ class ModelProfile:
     friction: tuple = (1.0, 0.005, 0.0001)
     collision_profile: str = "authoritative"
     collision_bundle: Path | None = None
+    inertial_bundle: Path | None = None
 
     def __post_init__(self):
         for name in ("locked_positions", "initial_positions"):
@@ -113,11 +115,16 @@ class RobotModel:
         return data
 
 
-def build_model(
-    robot_model=None, profile=None, *, scene=None, component_bundles=None, rigid_assembly=None
-):
+def build_model(robot_model=None, profile=None, *, scene=None):
     description = Description(robot_model or get_robot_model("alohamini2pro"))
     profile = profile or ModelProfile()
+    inertial_binding = None
+    if profile.inertial_bundle is not None:
+        from .inertial_binding import load_inertial_bundle
+
+        description.inertials, inertial_binding = load_inertial_bundle(
+            description, profile.inertial_bundle, profile.locked_positions
+        )
     T_world_root = rigid_transform(profile.T_world_root)
     if not math.isfinite(profile.timestep) or not 0 < profile.timestep <= 0.01:
         raise ValueError("Physics timestep must be in (0, 0.01] seconds")
@@ -315,21 +322,13 @@ def build_model(
         if link_name in description.inertials:
             mass, T_link_inertial, inertia = description.inertials[link_name]
             rotation = T_link_inertial[:3, :3]
-            inertia = rotation @ inertia @ rotation.T
-            # Explicit float64 diagonalization avoids the compiler's approximate
-            # fullinertia eigensolver changing nearly degenerate CAD tensors.
-            principal, axes = np.linalg.eigh(inertia)
-            if np.linalg.det(axes) < 0:
-                axes[:, -1] *= -1
-            principal_pose = np.eye(4)
-            principal_pose[:3, :3] = axes
-            principal_pose[:3, 3] = T_link_inertial[:3, 3]
+            properties = MassProperties(
+                link_name, mass, T_link_inertial[:3, 3], rotation @ inertia @ rotation.T
+            )
             ET.SubElement(
                 body,
                 "inertial",
-                **pose_attributes(principal_pose),
-                mass=text([mass]),
-                diaginertia=text(principal),
+                **properties.mjcf_attributes(),
             )
         for kind in ("visual", "collision"):
             if kind == "collision" and link_name in replacements:
@@ -360,6 +359,10 @@ def build_model(
                 )
                 if joint.lower is not None:
                     attributes.update(limited="true", range=text([joint.lower, joint.upper]))
+                if inertial_binding is not None:
+                    armature = inertial_binding["joint_armature_kg_m2"].get(joint.name)
+                    if armature is not None:
+                        attributes["armature"] = text([armature])
                 ET.SubElement(child, "joint", **attributes)
                 ET.SubElement(
                     actuators,
@@ -425,27 +428,22 @@ def build_model(
         ),
         "mesh_transport": "binary STL to indexed MSH; all triangles and winding retained",
         "inertia": (
-            "URDF COM and tensor; float64 principal-axis decomposition; "
+            (
+                "prepared link-local overrides and retained URDF inertias; "
+                if inertial_binding is not None
+                else "URDF COM and tensor; "
+            )
+            + "float64 principal-axis decomposition; "
             "no geometry inference or balancing"
         ),
     }
     if scene is not None:
         manifest["scene"] = scene.manifest
+    if inertial_binding is not None:
+        manifest["inertial_binding"] = inertial_binding
     robot = RobotModel(
         description, None, profile, xml, assets, meshes, geometry, manifest, initial, scene
     )
-    if component_bundles is not None:
-        from .contact_probe import _component_fixtures_inputs
-
-        inputs = _component_fixtures_inputs(robot, component_bundles)
-        robot.xml, robot.assets = inputs["xml"], inputs["assets"]
-        robot.geometry, robot.manifest = inputs["geometry"], inputs["manifest"]
-    if rigid_assembly is not None:
-        from .rigid_assembly import assembly_inputs
-
-        inputs = assembly_inputs(robot, rigid_assembly)
-        for key, value in inputs.items():
-            setattr(robot, key, value)
     robot.model = compile_xml(robot.xml, assets=robot.assets)
     for relative, expected in files.items():
         if (

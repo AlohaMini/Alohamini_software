@@ -929,8 +929,25 @@ def export_dataset(root: Path, output: Path, *, recover=False) -> dict:
             ) from exc
 
 
+def dataset_info(root):
+    root = Path(root).expanduser().resolve()
+    path = root / "meta/info.json"
+    if path.is_file():
+        return _read_json(path)
+    from alohamini.datasets.simulation import SimulationSource
+
+    return SimulationSource(root).info
+
+
 def check_dataset(root, *, decode_images=False, decode_videos=False, allow_unused_video_tail=False):
     try:
+        from alohamini.datasets.simulation import SimulationSource, is_simulation_dataset
+
+        if (
+            not (Path(root).expanduser() / "meta/info.json").is_file()
+            and is_simulation_dataset(root)
+        ):
+            return SimulationSource(root, verify=True, decode_images=decode_images).report()
         info = _read_json(Path(root).expanduser() / "meta/info.json")
         if not isinstance(info, dict):
             raise ValueError("meta/info.json must contain an object")

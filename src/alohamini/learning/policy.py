@@ -125,17 +125,17 @@ class NativePolicy:
         self.offline = offline
         self._robot_bound = False
         path, manifest = read_checkpoint(checkpoint)
-        original_v3 = manifest["source_info"].get("training_only")
+        training_only = manifest["source_info"].get("training_only")
         legacy_binding = calibration_mode == "legacy_normalized"
-        if original_v3 and not legacy_binding and not offline:
+        if training_only and not legacy_binding and not offline:
             raise ValueError(
-                "This checkpoint is for offline training only: its original LeRobot "
-                "data has no verified Host calibration/action contract. For confirmed "
-                "normalized action units, explicitly select --calibration-mode legacy_normalized"
+                "This checkpoint is for offline training only: its source data has no verified "
+                "Host calibration/action contract. --calibration-mode legacy_normalized only "
+                "supports original LeRobot v3 with confirmed normalized action units"
             )
         if legacy_binding and (
-            not isinstance(original_v3, dict)
-            or original_v3.get("source") != "original_lerobot_v3"
+            not isinstance(training_only, dict)
+            or training_only.get("source") != "original_lerobot_v3"
             or robot_model is None
         ):
             raise ValueError(

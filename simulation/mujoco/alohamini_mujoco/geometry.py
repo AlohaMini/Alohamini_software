@@ -8,6 +8,19 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
+def winding_number(mesh, point):
+    a, b, c = np.moveaxis(mesh.triangles - point, 1, 0)
+    la, lb, lc = (np.linalg.norm(p, axis=1) for p in (a, b, c))
+    denominator = (
+        la * lb * lc
+        + np.einsum("ij,ij->i", a, b) * lc
+        + np.einsum("ij,ij->i", b, c) * la
+        + np.einsum("ij,ij->i", c, a) * lb
+    )
+    numerator = np.einsum("ij,ij->i", a, np.cross(b, c))
+    return float(np.arctan2(numerator, denominator).sum() / (2 * math.pi))
+
+
 def _squared_distances(points, triangles):
     """Paired, broadcastable point-to-triangle distances, including degenerate faces."""
     a, b, c = (triangles[..., i, :] for i in range(3))

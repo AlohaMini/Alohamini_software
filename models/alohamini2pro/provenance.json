@@ -42,7 +42,8 @@
       "path": "config/kinematics/physical_parameters.yaml",
       "source_path": "config/kinematics/physical_parameters.yaml",
       "source_sha256": "75d8bf1c146dba82c2c48040e464ffe3564442a3aad0e17706a87eed68e1a1c7",
-      "imported_sha256": "75d8bf1c146dba82c2c48040e464ffe3564442a3aad0e17706a87eed68e1a1c7"
+      "transformation": "Classify assembly mass references as engineering estimates; retain existing URDF masses and inertias.",
+      "imported_sha256": "17d4caeac3e472a1046f9e8abc6b1f6e68d6fe14043603d5bfffb2a4457c845a"
     },
     {
       "path": "config/kinematics/right_arm_kinematics.yaml",

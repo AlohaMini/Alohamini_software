@@ -8,8 +8,8 @@ import mujoco
 import numpy as np
 import pytest
 from alohamini_mujoco.audit import contacts, validate_model
-from alohamini_mujoco.cli import export_robot
 from alohamini_mujoco.compilation import compile_xml, load_xml
+from alohamini_mujoco.export import export_robot
 from alohamini_mujoco.frames import points_in_frame, rigid_transform, rotation_rpy, transform
 from alohamini_mujoco.meshes import binary_stl, ray_x_intersections
 from alohamini_mujoco.model import ModelProfile, build_model

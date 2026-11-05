@@ -74,6 +74,39 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 缺少平台标定和安全记录的外部 v3 数据，训练时加 `--dataset.allow_unannotated=true`。
 有 state 时可用 `--state=recorded` 读取原向量，保留字段顺序和数值；纯视觉任务使用 `--state=none`。
 
+### MuJoCo 仿真数据
+
+支持读取已收录的 `alohamini-sim-v1` 回合或完成的 `alohamini-sim-batch-v1` 批次，无需转换为 LeRobot。`--dataset.root` 指向含 `dataset.json` 或 `index.json` 的目录；批次中的拒收回合及评估组不参与训练。回合按收录顺序从 0 编号，原任务与初态保存在 `episode_groups`，同组不能跨训练与验证。
+
+关节位置和动作保持具名的 rad/m，使用 `--state=recorded` 或默认 `auto`；图像与动作读取同一控制周期。仿真数据不需要 `--dataset.allow_unannotated`。当前支持检查、训练与仿真评测，不支持 `dataset edit`，不能直接与 Host 归一化动作混训或下发真机。
+
+```bash
+python -m pip install -e '.[learning]' -e './simulation/mujoco[collection]'
+alohamini dataset check "$DATASET" --decode-images
+python -m alohamini.learning.train --config examples/learning/act_simulation.json \
+  --dataset.root="$DATASET" --run_name=act_spatial_01 --background
+```
+
+示例使用三路 128×128 图像、100 帧动作块、20 Hz 控制和 ACT 时间融合。需要离线验证时，通过 `--dataset.eval_episodes='[1,5]' --eval_steps=5000` 留出收录回合；评估组初态 40–49 始终不进入训练或归一化统计。日志与 PID 保存在 `logs/training/`，checkpoint 保存输入单位、数据指纹、归一化和完整配置。
+
+使用匹配采集时模型、初态和场景配置进行闭环评测：
+
+```bash
+MUJOCO_GL=egl alohamini-mujoco evaluate \
+  ~/Alohamini_workspace/runs/act_spatial_01/checkpoint \
+  --libero-bundle "$LIBERO_BUNDLE" \
+  --scene-config examples/simulation/libero_spatial_near.json --task-index 8 \
+  --collision-bundle "$COLLISION_BUNDLE" --inertial-bundle "$INERTIAL_BUNDLE" \
+  --reset-indices {40..49} --horizon-s 60 --device cuda \
+  --output "${EVALUATION_OUTPUT:?请设置新评测目录}"
+```
+
+`benchmark.json` 保存各初态的原始任务结果、稳定释放、物理限制与回放结果，以及策略权重指纹。控制按 20 Hz 执行，目标投影到 URDF 位置范围并记录投影量；实际关节速度、限位或穿透超限时，该次评测失败。成功要求原始 `On` 条件满足且释放后保持至少 0.5 s，不代表原 Panda LIBERO 得分。
+
+初态落稳碰撞或初始目标已满足时，记录 `scene_reset_rejected`，继续后续初态；拒绝项保留在成功率分母。`complete` 为真表示全部指定初态均已处理，`reset_failures` 单独记录初始化失败数。
+
+交互查看时改为 `MUJOCO_GL=glfw`，增加 `--view --window-egl-device 0 --reset-indices 40`，只选择一个初态；空格播放，关闭窗口结束，未完成记为中断。评测仅支持当前帧观测和绝对 SI 关节动作；结果不作为训练数据收录。场景、数采与回放用法见 [MuJoCo 手册](simulation.md)。
+
 ### 导出与纯视觉副本
 
 需要另存或移除数值观测时：

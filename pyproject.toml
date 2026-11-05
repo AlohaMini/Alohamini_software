@@ -64,6 +64,7 @@ host = [
 alohamini = "alohamini.cli:main"
 
 [tool.setuptools.package-data]
+"alohamini._assets" = ["**/*.json", "**/*.yaml", "**/*.urdf", "**/*.srdf", "**/*.[sS][tT][lL]"]
 "alohamini.policies.dit_policy" = ["LICENSE.dit-policy"]
 "alohamini.policies.acdit" = ["LICENSE.acdit", "LICENSE.lift3d", "SOURCE.json"]
 "alohamini.policies.gr00t_n17" = ["LICENSE.gr00t", "SOURCE.json"]

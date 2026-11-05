@@ -1,10 +1,8 @@
 import json
-from types import SimpleNamespace
 
 import mujoco
 import numpy as np
 import pytest
-from alohamini_mujoco._sapien_worker import primitive_distance_bound
 from alohamini_mujoco.collision import load_bundle, merge_bundles, visual_sources
 from alohamini_mujoco.description import Description, origin
 from alohamini_mujoco.frames import points_in_frame, transform
@@ -201,48 +199,3 @@ def test_loader_rejects_ambiguous_primitive_or_misplaced_mesh_and_stale_sources(
         (changed / "collision.json").write_text(json.dumps(clone))
         with pytest.raises(ValueError):
             load_bundle(description, changed)
-
-
-def test_analytic_sapien_bounds_detect_dimension_frame_and_representation_changes():
-    class Pose:
-        def __init__(self, matrix):
-            self.matrix = matrix
-
-        def to_transformation_matrix(self):
-            return self.matrix
-
-    class Box:
-        pass
-
-    class Sphere:
-        pass
-
-    class Cylinder:
-        pass
-
-    physx = SimpleNamespace(
-        PhysxCollisionShapeBox=Box,
-        PhysxCollisionShapeSphere=Sphere,
-        PhysxCollisionShapeCylinder=Cylinder,
-    )
-    pose = transform([0.01, -0.1, 0.2], [0.3, -0.2, 0.7])
-    box = Box()
-    box.local_pose, box.half_size = Pose(pose), np.array([0.02, 0.03, 0.04])
-    expected = Primitive("box", {"size": [0.04, 0.06, 0.08]}, pose).record()
-    assert primitive_distance_bound(box, expected, physx) < 1e-12
-    box.half_size[1] += 0.002
-    assert primitive_distance_bound(box, expected, physx) == pytest.approx(0.002, abs=1e-12)
-    sphere = Sphere()
-    sphere.local_pose, sphere.radius = Pose(pose), 0.04
-    ball = Primitive("sphere", {"radius": 0.04}, pose).record()
-    assert primitive_distance_bound(sphere, ball, physx) == 0
-    cylinder = Cylinder()
-    # Loader turns local X into the URDF local Z axis.
-    cylinder.local_pose = Pose(pose @ transform(rpy=[0, np.pi / 2, 0]))
-    cylinder.radius, cylinder.half_length = 0.03, 0.05
-    expected = Primitive("cylinder", {"radius": 0.03, "length": 0.1}, pose).record()
-    assert primitive_distance_bound(cylinder, expected, physx) < 1e-12
-    cylinder.local_pose = Pose(pose)
-    assert primitive_distance_bound(cylinder, expected, physx) > 0.05
-    with pytest.raises(ValueError, match="Expected native"):
-        primitive_distance_bound(box, expected, physx)

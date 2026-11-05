@@ -6,7 +6,7 @@ import json
 import math
 import os
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +15,7 @@ import numpy as np
 
 from .compilation import load_xml
 from .control import DynamicFollower, FollowerSettings
-from .libero import sha256
+from .libero import RESET_SETTLE_S, settle_scene, sha256
 from .viewer import set_geometry
 
 STATE_SPEC = mujoco.mjtState.mjSTATE_INTEGRATION
@@ -38,7 +38,7 @@ def restore_state(model, data, state):
 class CollectionSettings:
     fps: int = 20
     image_size: int = 128
-    reset_settle_s: float = 0.5
+    reset_settle_s: float = RESET_SETTLE_S
     final_stability_s: float = 0.5
     minimum_lift_m: float = 0.02
     grasp_contact_s: float = 0.1
@@ -191,72 +191,136 @@ class Admission:
         }
 
 
-def replay_episode(directory, *, episode=None):
-    import h5py
+class EpisodeReplay:
+    """Step recorded commands through the saved physics, including command holds."""
 
-    directory = Path(directory).expanduser().resolve()
-    manifest = json.loads((directory / "dataset.json").read_text())
-    if manifest["mujoco_version"] != mujoco.__version__:
-        raise ValueError("Replay requires the recorded MuJoCo version")
-    environment = manifest.get("environment")
-    if not isinstance(environment, dict):
-        raise ValueError("Replay requires the recorded environment manifest")
-    for relative, expected in manifest["model_files"].items():
-        path = (directory / relative).resolve()
-        if not path.is_relative_to(directory) or sha256(path) != expected:
-            raise ValueError(f"Model checksum mismatch: {relative}")
-    model = load_xml(directory / "model/model.xml")
-    episode = Path(episode) if episode else directory / manifest["episode"]
-    if manifest.get("episode_sha256") and sha256(episode) != manifest["episode_sha256"]:
-        raise ValueError("Episode checksum mismatch")
-    with h5py.File(episode, "r") as file:
-        if json.loads(file.attrs["env_args"]) != environment:
-            raise ValueError("Episode environment differs from its dataset manifest")
-        group = file["data/demo_0"]
-        specification = json.loads(group.attrs["controller"])
-        names = json.loads(group.attrs["joint_names"])
-        if names != [model.actuator(i).name for i in range(model.nu)]:
-            raise ValueError("Episode actuator order differs from its model")
-        data = mujoco.MjData(model)
-        restore_state(model, data, group["states"][0])
-        # Replay only needs drive types, limits and the saved gains, not source assets.
+    is_recorded = True
+
+    def __init__(self, directory, *, episode=None, paused=False):
+        import h5py
+
+        directory = Path(directory).expanduser().resolve()
+        manifest = json.loads((directory / "dataset.json").read_text())
+        if manifest["mujoco_version"] != mujoco.__version__:
+            raise ValueError("Replay requires the recorded MuJoCo version")
+        environment = manifest.get("environment")
+        if not isinstance(environment, dict):
+            raise ValueError("Replay requires the recorded environment manifest")
+        for relative, expected in manifest["model_files"].items():
+            path = (directory / relative).resolve()
+            if not path.is_relative_to(directory) or sha256(path) != expected:
+                raise ValueError(f"Model checksum mismatch: {relative}")
+        model = load_xml(directory / "model/model.xml")
+        episode = Path(episode) if episode else directory / manifest["episode"]
+        if manifest.get("episode_sha256") and sha256(episode) != manifest["episode_sha256"]:
+            raise ValueError("Episode checksum mismatch")
+        with h5py.File(episode, "r") as file:
+            if json.loads(file.attrs["env_args"]) != environment:
+                raise ValueError("Episode environment differs from its dataset manifest")
+            group = file["data/demo_0"]
+            self.specification = json.loads(group.attrs["controller"])
+            names = json.loads(group.attrs["joint_names"])
+            if names != [model.actuator(i).name for i in range(model.nu)]:
+                raise ValueError("Episode actuator order differs from its model")
+            self.states, self.actions = group["states"][:], group["actions"][:]
+        if len(self.actions) == 0 or len(self.states) != len(self.actions) + 1:
+            raise ValueError("Replay needs N commands and N+1 physical states")
         joints = {
             name: SimpleNamespace(kind=kind)
-            for name, kind in zip(names, specification["kinds"], strict=True)
+            for name, kind in zip(names, self.specification["kinds"], strict=True)
         }
-        robot = SimpleNamespace(
-            model=model, description=SimpleNamespace(joints=joints), manifest=environment
+        self.robot = SimpleNamespace(
+            model=model,
+            description=SimpleNamespace(joints=joints),
+            manifest=environment,
+            scene=SimpleNamespace(
+                configuration=environment.get("scene", {}).get("configuration", {})
+            ),
         )
-        follower = DynamicFollower(
-            robot, data=data, settings=FollowerSettings(**specification["settings"])
+        self.steps_per_command = manifest["physics_steps_per_command"]
+        self.tolerance = manifest["collection_settings"]["replay_tolerance"]
+        self.reset()
+        self.paused = paused
+
+    @property
+    def data(self):
+        return self.follower.data
+
+    def reset(self):
+        model = self.robot.model
+        data = mujoco.MjData(model)
+        restore_state(model, data, self.states[0])
+        self.follower = DynamicFollower(
+            self.robot, data=data, settings=FollowerSettings(**self.specification["settings"])
         )
-        follower.kp[:] = specification["kp"]
-        follower.kd[:] = specification["kd"]
-        restore_state(model, data, group["states"][0])
-        maximum_error = 0.0
-        for index, command in enumerate(group["actions"]):
-            follower.target[:] = command
-            follower.target_velocity[:] = 0
-            for _ in range(manifest["physics_steps_per_command"]):
-                follower.step()
-            mujoco.mj_forward(model, data)
-            maximum_error = max(
-                maximum_error,
-                float(np.max(np.abs(physics_state(model, data) - group["states"][index + 1]))),
+        self.follower.kp[:] = self.specification["kp"]
+        self.follower.kd[:] = self.specification["kd"]
+        restore_state(model, data, self.states[0])
+        self.paused, self.completed = True, False
+        self.frame_index = self.substep = self.saturated_steps = 0
+        self.maximum_error = 0.0
+
+    def step(self, *, single=False):
+        if self.completed or (self.paused and not single):
+            return False
+        if self.substep == 0:
+            self.follower.target[:] = self.actions[self.frame_index]
+            self.follower.target_velocity[:] = 0
+        self.saturated_steps += int(self.follower.step().any())
+        self.substep += 1
+        if self.substep == self.steps_per_command:
+            mujoco.mj_forward(self.robot.model, self.data)
+            self.frame_index += 1
+            self.substep = 0
+            self.maximum_error = max(
+                self.maximum_error,
+                float(
+                    np.max(
+                        np.abs(
+                            physics_state(self.robot.model, self.data)
+                            - self.states[self.frame_index]
+                        )
+                    )
+                ),
             )
+            if self.frame_index == len(self.actions):
+                self.completed = self.paused = True
+        return True
+
+    def report(self):
         return {
-            "passed": maximum_error <= manifest["collection_settings"]["replay_tolerance"],
-            "maximum_state_error": maximum_error,
-            "frames": len(group["actions"]),
+            "passed": self.completed and self.maximum_error <= self.tolerance,
+            "maximum_state_error": self.maximum_error,
+            "frames": self.frame_index,
+            "completed": self.completed,
         }
+
+
+def replay_episode(directory, *, episode=None, view=False, paused=False, collisions=False):
+    playback = EpisodeReplay(directory, episode=episode, paused=paused if view else False)
+    if view:
+        from .viewer import run_viewer
+
+        run_viewer(playback.robot, playback=playback, collisions=collisions)
+    else:
+        while not playback.completed:
+            playback.step()
+    return playback.report()
 
 
 def collect_episode(
-    robot, trajectory, output, *, settings=None, cameras=("agentview", "left_wrist", "right_wrist")
+    robot,
+    trajectory,
+    output,
+    *,
+    settings=None,
+    follower_settings=None,
+    cameras=("agentview", "left_wrist", "right_wrist"),
+    generation=None,
 ):
     import h5py
 
-    from .cli import export_robot
+    from .export import export_robot
 
     settings = settings or CollectionSettings()
     if robot.scene is None:
@@ -277,10 +341,8 @@ def collect_episode(
     if output.exists():
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    follower = DynamicFollower(robot)
-    for _ in range(math.ceil(settings.reset_settle_s / robot.model.opt.timestep)):
-        follower.step()
-    mujoco.mj_forward(robot.model, follower.data)
+    follower = DynamicFollower(robot, settings=follower_settings)
+    settle_scene(follower, settings.reset_settle_s)
     if robot.scene.goal_status(robot, follower.data)["passed"]:
         raise ValueError("Initial goal is already satisfied; no demonstration was collected")
     indices = follower.trajectory_indices(trajectory)
@@ -297,7 +359,10 @@ def collect_episode(
             "joint_names": list(trajectory.names),
             "times_s": trajectory.times.tolist(),
             "positions": trajectory.positions.tolist(),
+            "controller": follower.settings.to_dict(),
         }
+        if generation is not None:
+            trajectory_specification["generation"] = generation
         (stage / "trajectory.json").write_text(
             json.dumps(trajectory_specification, indent=2) + "\n"
         )
@@ -311,12 +376,14 @@ def collect_episode(
                 ["m" if k == "prismatic" else "rad" for k in follower.kinds]
             )
             group.attrs["language"] = robot.scene.manifest["language"]
+            if generation is not None:
+                group.attrs["generation"] = json.dumps(generation, allow_nan=False)
             group.attrs["controller"] = json.dumps(
                 {
                     "kp": follower.kp.tolist(),
                     "kd": follower.kd.tolist(),
                     "kinds": follower.kinds,
-                    "settings": asdict(follower.settings),
+                    "settings": follower.settings.to_dict(),
                 }
             )
             states = group.create_dataset(
@@ -357,6 +424,8 @@ def collect_episode(
             states[0], times[0] = physics_state(robot.model, follower.data), follower.data.time
             options = mujoco.MjvOption()
             set_geometry(options, collisions=False)
+            # Sites include TCP and task debug markers, not physical surfaces.
+            options.sitegroup[:] = 0
             with mujoco.Renderer(
                 robot.model,
                 height=settings.image_size,
@@ -406,6 +475,7 @@ def collect_episode(
             "images": (
                 "lossless RGB, uint8, top-left origin; MuJoCo Renderer output without extra flip"
             ),
+            "observation_rendering": {"geom_groups": [2], "site_groups": [], "frames": "none"},
             "camera_frame": (
                 "OpenGL: X right, Y up, -Z forward; K uses pixel centers at half-integers"
             ),
@@ -420,6 +490,8 @@ def collect_episode(
             "episode": "attempt.hdf5",
             "admitted": False,
         }
+        if generation is not None:
+            manifest["generation"] = generation
         (stage / "dataset.json").write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
         report["replay"] = replay_episode(stage)
         report["passed"] = report["passed"] and report["replay"]["passed"]
@@ -440,3 +512,145 @@ def collect_episode(
             raise FileExistsError(output)
         os.rename(stage, output)
     return {"passed": report["passed"], "output": str(output), "quality": report}
+
+
+def collect_reference_batch(
+    robot,
+    reference_directory,
+    recipe,
+    reset_indices,
+    output,
+    *,
+    settings=None,
+    cameras=("agentview", "left_wrist", "right_wrist"),
+    resume=False,
+    progress=None,
+):
+    from .retarget import ReferenceMotion
+
+    if robot.scene is None:
+        raise ValueError("Reference batches require a task scene")
+    resets = list(reset_indices)
+    if (
+        not resets
+        or len(set(resets)) != len(resets)
+        or any(
+            type(v) is not int or not 0 <= v < len(robot.scene.task["initial_states"])
+            for v in resets
+        )
+    ):
+        raise ValueError("Use distinct reset indices from this task's initial-state bank")
+    settings = settings or CollectionSettings()
+    reference = ReferenceMotion(robot, reference_directory, recipe)
+    signature = {
+        "format": "alohamini-sim-batch-v1",
+        "task_index": robot.scene.task_index,
+        "reset_indices": resets,
+        "reference": reference.provenance,
+        "scene_configuration": robot.scene.configuration,
+        "initial_positions": robot.initial_positions,
+        "collection_settings": asdict(settings),
+        "cameras": list(cameras),
+    }
+    output = Path(output).expanduser().resolve()
+    manifest_path = output / "index.json"
+    if resume:
+        manifest = json.loads(manifest_path.read_text())
+        if any(manifest.get(key) != value for key, value in signature.items()):
+            raise ValueError(
+                "Batch resume requires unchanged reference, recipe, resets and settings"
+            )
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+        manifest = {**signature, "episodes": []}
+    records = {row["reset_index"]: row for row in manifest["episodes"]}
+
+    def save():
+        manifest["episodes"] = [records[n] for n in resets if n in records]
+        manifest["completed_count"] = len(records)
+        manifest["admitted_count"] = sum(row["admitted"] for row in records.values())
+        manifest["complete"] = len(records) == len(resets)
+        pending = manifest_path.with_suffix(".pending.json")
+        pending.write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
+        pending.replace(manifest_path)
+
+    save()
+    for reset in resets:
+        if reset in records:
+            row = records[reset]
+            if "dataset" in row:
+                saved = output / row["dataset"]
+                dataset = json.loads((saved / "dataset.json").read_text())
+                if (
+                    sha256(saved / "dataset.json") != row["dataset_sha256"]
+                    or sha256(saved / dataset["episode"]) != dataset["episode_sha256"]
+                ):
+                    raise ValueError(f"Completed batch episode changed: reset {reset}")
+            continue
+        scene = replace(robot.scene, reset_index=reset)
+        current = replace(robot, scene=scene, manifest={**robot.manifest, "scene": scene.manifest})
+        directory = output / f"reset_{reset:03d}"
+        notify = (
+            (lambda item, reset=reset: progress({"reset_index": reset, **item}))
+            if progress
+            else None
+        )
+        if notify:
+            notify({"stage": "planning"})
+        if not (directory / "dataset.json").is_file():
+            try:
+                trajectory, controller, generation = reference.plan(current, progress=notify)
+                if notify:
+                    notify({"stage": "collection"})
+                collect_episode(
+                    current,
+                    trajectory,
+                    directory,
+                    settings=settings,
+                    follower_settings=controller,
+                    cameras=cameras,
+                    generation=generation,
+                )
+            except (ValueError, RuntimeError) as exc:
+                record = {"reset_index": reset, "admitted": False, "error": str(exc)}
+                rejected = output / "rejected"
+                rejected.mkdir(exist_ok=True)
+                (rejected / f"reset_{reset:03d}.json").write_text(
+                    json.dumps(record, indent=2) + "\n"
+                )
+                records[reset] = record
+                save()
+                if notify:
+                    notify({"stage": "rejected", "error": str(exc)})
+                continue
+        dataset = json.loads((directory / "dataset.json").read_text())
+        generation = dataset.get("generation", {})
+        if (
+            any(generation.get(k) != v for k, v in reference.provenance.items())
+            or generation.get("reset_index") != reset
+            or dataset["environment"]["scene"] != scene.manifest
+            or sha256(directory / dataset["episode"]) != dataset["episode_sha256"]
+        ):
+            raise ValueError(
+                f"Saved episode does not belong to this reference batch: reset {reset}"
+            )
+        records[reset] = {
+            "reset_index": reset,
+            "episode_index": reset,
+            "split": dataset["split"],
+            "split_group": dataset["split_group"],
+            "dataset": directory.name,
+            "dataset_sha256": sha256(directory / "dataset.json"),
+            "admitted": dataset["admitted"],
+            "quality": dataset["quality"],
+        }
+        save()
+        if notify:
+            notify({"stage": "complete", "admitted": dataset["admitted"]})
+    return {
+        "passed": manifest["admitted_count"] == len(resets),
+        "output": str(output),
+        "attempted": len(resets),
+        "admitted": manifest["admitted_count"],
+        "failed_resets": [n for n in resets if not records[n]["admitted"]],
+    }

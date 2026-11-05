@@ -1,17 +1,17 @@
 schema_version: 1
-source: measured_assembly_totals_with_estimated_link_distribution
-calibrated: assembly_mass_totals_only
+source: engineering_assembly_estimates_with_estimated_link_distribution
+calibrated: false
 
-measured_assembly_masses_kg:
+estimated_assembly_masses_kg:
   whole_robot: 16.0
   lifted_subtree_with_two_arms_and_t_carriage: 5.1
   left_arm_assembly: 2.0
   right_arm_assembly: 2.0
-  # Derived constraints, not independently weighed:
+  # Derived from the engineering totals; none are scale measurements:
   fixed_non_lifted_subtree_derived: 10.9
   t_carriage_without_arms_derived: 1.1
-  source: physical_scale_measurement_reported_2026-08-06
-  note: assembly totals are measured; individual link values remain engineering estimates
+  source: engineering_estimates
+  note: Reference values only; do not rescale independently verified CAD mass properties to these totals.
 
 mass_distribution_kg:
   fixed_non_lifted_subtree:
@@ -32,7 +32,7 @@ mass_distribution_kg:
     wrist_camera_each_estimate: 0.2
     non_camera_links_each_total: 1.8
   method:
-    chassis: current CAD mass distribution retained and constrained to the measured fixed-subtree total
+    chassis: original CAD mass distribution scaled to the estimated fixed-subtree total
     arm: original CAD relative ratios for non-camera links, scaled to 1.8 kg per arm
     inertia: original CAD tensor scaled by new_mass / original_mass
     center_of_mass: original CAD inertial origin retained
@@ -42,7 +42,7 @@ mass_policy:
   override_all_links: false
 
 known_issues:
-  - Individual link masses are estimated because only assembly totals have been weighed.
+  - Assembly totals and individual link masses are engineering estimates, not current scale measurements.
   - Centers of mass still use the original CAD-export inertial origins.
   - Inertia tensors are mass-scaled CAD estimates, not identified from physical experiments.
   - Wrist camera mass is provisionally estimated at 0.2 kg including its mount and should be weighed later.

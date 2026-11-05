@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -132,25 +131,3 @@ def export_collision_urdf(description, bundle, output, *, mesh_unit="m"):
             raise FileExistsError(output)
         os.rename(stage, output)
     return output
-
-
-def check_sapien_asset(directory, python, output):
-    directory, output = Path(directory).expanduser().resolve(), Path(output).expanduser().resolve()
-    if output.exists():
-        raise FileExistsError(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    process = subprocess.run(
-        [
-            str(Path(python).expanduser().resolve()),
-            "-I",
-            str(Path(__file__).with_name("_sapien_worker.py")),
-            "--asset",
-            str(directory),
-            "--output",
-            str(output),
-        ],
-        check=False,
-    )
-    if process.returncode not in (0, 1) or not output.exists():
-        raise RuntimeError(f"SAPIEN geometry worker failed: exit {process.returncode}")
-    return json.loads(output.read_text())

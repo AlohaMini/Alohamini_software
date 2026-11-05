@@ -1,10 +1,13 @@
+import mujoco
 import numpy as np
 import pytest
 from alohamini_mujoco.control import (
     DynamicFollower,
+    FollowerSettings,
     JointTrajectory,
     _rotation_log_inverse,
     arm_joint_names,
+    gravity_load_report,
     solve_ik,
     solve_ik_targets,
 )
@@ -38,6 +41,40 @@ def test_gravity_feedforward_stays_inside_motor_effort_limits(robot):
     assert np.all(np.abs(follower.data.actuator_force) <= follower.effort_limits + 1e-12)
     assert np.all(np.abs(follower.data.ctrl) <= follower.effort_limits + 1e-12)
     assert np.linalg.norm(follower.data.qvel) > 0
+
+
+def test_per_joint_gains_change_motor_response_and_preserve_effort_caps(robot):
+    baseline = DynamicFollower(robot)
+    overrides = {"left_gripper": {"kp": 10.0, "kd": 0.1}}
+    settings = FollowerSettings(joint_gains=overrides)
+    overrides["left_gripper"]["kp"] = 1000.0
+    follower = DynamicFollower(robot, settings=settings)
+    grip = follower.names.index("left_gripper")
+    others = np.arange(len(follower.names)) != grip
+    np.testing.assert_array_equal(follower.kp[others], baseline.kp[others])
+    np.testing.assert_array_equal(follower.kd[others], baseline.kd[others])
+    bias = follower.data.qfrc_bias[follower.dof_ids[grip]]
+    follower.target[grip] += 0.02
+    assert not follower.step()[grip]
+    assert follower.data.ctrl[grip] == pytest.approx(0.2 + bias)
+    follower.target[grip] += 0.2
+    assert follower.step()[grip]
+    assert follower.data.ctrl[grip] == pytest.approx(follower.effort_limits[grip])
+    assert settings.to_dict()["joint_gains"]["left_gripper"]["kp"] == 10
+
+
+@pytest.mark.parametrize(
+    "gains",
+    [
+        {"left_gripper": {"kp": 0, "kd": 0.1}},
+        {"left_gripper": {"kp": float("nan"), "kd": 0.1}},
+        {"left_gripper": {"kp": 1, "kd": "0.1"}},
+        {"root_x_axis_joint": {"kp": 1, "kd": 0.1}},
+    ],
+)
+def test_gain_configuration_rejects_invalid_or_undriven_joints(robot, gains):
+    with pytest.raises(ValueError):
+        DynamicFollower(robot, settings=FollowerSettings(joint_gains=gains))
 
 
 def test_trajectory_checks_names_start_limits_and_peak_interpolated_speed(robot):
@@ -108,6 +145,33 @@ def test_both_tcp_targets_can_share_the_lift_without_changing_reference_data(rob
     np.testing.assert_array_equal(live.qvel, before[1])
 
 
+def test_ik_search_bounds_restrict_planning_without_changing_physical_limits(robot):
+    pose = robot.description.forward({**robot.initial_positions, "vertical_move": 0.22})["left_tcp"]
+    limits = robot.model.joint("vertical_move").range.copy()
+    result = solve_ik_targets(
+        robot,
+        {"left": pose},
+        movable_joints=["vertical_move"],
+        joint_bounds={"vertical_move": [0.21, 0.24]},
+    )
+    assert result["joint_positions"]["vertical_move"] == pytest.approx(0.22, abs=1e-5)
+    with pytest.raises(RuntimeError, match="did not converge"):
+        solve_ik_targets(
+            robot,
+            {"left": pose},
+            movable_joints=["vertical_move"],
+            joint_bounds={"vertical_move": [0.23, 0.24]},
+        )
+    with pytest.raises(ValueError, match="physical joint range"):
+        solve_ik_targets(
+            robot,
+            {"left": pose},
+            movable_joints=["vertical_move"],
+            joint_bounds={"vertical_move": [-0.4, 0.3]},
+        )
+    np.testing.assert_array_equal(robot.model.joint("vertical_move").range, limits)
+
+
 def test_static_gravity_hold_is_not_disabled(robot):
     follower = DynamicFollower(robot)
     initial = follower.data.qpos.copy()
@@ -119,6 +183,49 @@ def test_static_gravity_hold_is_not_disabled(robot):
     assert follower.data.actuator_force[actuator_id] == pytest.approx(5.1 * 9.80665, rel=1e-4)
     assert robot.model.opt.gravity[2] == -9.80665
     np.testing.assert_allclose(follower.data.qpos, initial, atol=1e-4)
+
+
+def test_static_load_query_preserves_live_state_and_excludes_motion(robot):
+    live = robot.data({"left_shoulder_lift": -1.2, "left_elbow_flex": 1.0})
+    live.qvel[:] = np.linspace(0.2, 2, robot.model.nv)
+    live.time = 7.0
+    mujoco.mj_forward(robot.model, live)
+    spec = mujoco.mjtState.mjSTATE_INTEGRATION
+    before = np.empty(mujoco.mj_stateSize(robot.model, spec))
+    after = before.copy()
+    mujoco.mj_getState(robot.model, live, before, spec)
+    report = gravity_load_report(robot, reference_data=live)
+    stationary = robot.data({"left_shoulder_lift": -1.2, "left_elbow_flex": 1.0})
+    ids = [robot.model.jnt_dofadr[robot.model.joint(n).id] for n in report["joint_names"]]
+    np.testing.assert_allclose(report["required_motor_effort"], stationary.qfrc_bias[ids])
+    assert np.max(np.abs(live.qfrc_bias[ids] - stationary.qfrc_bias[ids])) > 0.01
+    lift = report["joint_names"].index("vertical_move")
+    assert report["effort_units"][lift] == "N"
+    assert report["required_motor_effort"][lift] == pytest.approx(5.1 * 9.80665)
+    mujoco.mj_getState(robot.model, live, after, spec)
+    np.testing.assert_array_equal(before, after)
+
+
+def test_reachable_pose_can_exceed_static_motor_limits(robot):
+    pose = {
+        "left_shoulder_pan": 0.2,
+        "left_shoulder_lift": -2.4,
+        "left_elbow_flex": 2.3,
+        "left_wrist_flex": 1.4,
+        "left_wrist_roll": 1.37,
+    }
+    data = robot.data(pose)
+    target = np.eye(4)
+    target[:3, :3] = data.body("left_tcp").xmat.reshape(3, 3)
+    target[:3, 3] = data.body("left_tcp").xpos
+    result = solve_ik(robot, "left", target, seed_positions=pose)
+    assert result["position_error_m"] < 1e-5
+    load = result["gravity_load"]
+    assert not load["within_limits"]
+    assert "left_shoulder_lift" in load["overloaded_joints"]
+    shoulder = load["joint_names"].index("left_shoulder_lift")
+    assert load["effort_units"][shoulder] == "N*m"
+    assert load["utilization"][shoulder] > 1.3
 
 
 def test_so3_log_jacobian_matches_finite_differences_for_large_rotations():

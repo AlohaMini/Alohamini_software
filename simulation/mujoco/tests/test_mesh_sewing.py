@@ -32,7 +32,7 @@ def ring_with_cap_seam(gap=2e-8):
 
 def test_sewing_retains_through_bore_all_faces_and_certifies_continuous_error():
     pytest.importorskip("manifold3d")
-    from alohamini_mujoco.contact_probe import _winding
+    from alohamini_mujoco.geometry import winding_number
     from alohamini_mujoco.solid_geometry import _solid
 
     original = ring_with_cap_seam()
@@ -51,8 +51,8 @@ def test_sewing_retains_through_bore_all_faces_and_certifies_continuous_error():
     solid = _solid(sewn)
     expected = 16 * np.sin(2 * np.pi / 16) / 2 * (0.0096**2 - 0.0045**2) * 0.00210001
     assert solid.volume() == pytest.approx(expected, rel=1e-10)
-    assert abs(_winding(sewn, [0, 0.001, 0])) < 1e-10  # through bore stays empty
-    assert abs(_winding(sewn, [0.007, 0.001, 0])) == pytest.approx(1)
+    assert abs(winding_number(sewn, [0, 0.001, 0])) < 1e-10  # through bore stays empty
+    assert abs(winding_number(sewn, [0.007, 0.001, 0])) == pytest.approx(1)
 
 
 @pytest.mark.parametrize("damage", ["missing_face", "insufficient_budget", "real_gap"])

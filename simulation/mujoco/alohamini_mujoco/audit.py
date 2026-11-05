@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import itertools
-import xml.etree.ElementTree as ET
-from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -70,7 +67,7 @@ def validate_model(robot, *, samples=16, seed=0):
             expected = rotation @ inertia @ rotation.T
             max_inertia = max(max_inertia, float(np.max(np.abs(actual - expected))))
             if not np.isclose(model.body_mass[body], mass, rtol=0, atol=1e-12):
-                raise ValueError(f"Imported mass differs from URDF: {name}")
+                raise ValueError(f"Imported mass differs from the effective description: {name}")
     initial_poses = description.forward(robot.initial_positions, robot.profile.T_world_root)
     for name, geometry in robot.geometry.items():
         if geometry["shape"] != "mesh":
@@ -115,7 +112,7 @@ def validate_model(robot, *, samples=16, seed=0):
     )
     # Independent rigid-body kinetic energy assembly validates the imported
     # inertias in joint coordinates, beyond just comparing total mass.
-    assembled = np.zeros((model.nv, model.nv))
+    assembled = np.diag(model.dof_armature.copy())
     for name, (body_mass, _, _) in description.inertials.items():
         body_id = model.body(name).id
         linear, angular = np.zeros((3, model.nv)), np.zeros((3, model.nv))
@@ -130,7 +127,10 @@ def validate_model(robot, *, samples=16, seed=0):
     mass_matrix_error = float(np.max(np.abs((matrix - assembled)[robot_block])))
     return {
         "passed": bool(passed and mass_matrix_error <= 1e-10),
-        "scope": "URDF frame, mesh transport and inertial equivalence; not contact certification",
+        "scope": (
+            "URDF frames, mesh transport and effective inertial equivalence; "
+            "not physical calibration or contact certification"
+        ),
         "sample_count": samples,
         "seed": seed,
         "robot_links": len(description.links),
@@ -323,47 +323,4 @@ def gripper_sections(robot, *, side="right", positions=None, depths_m=None, y_m=
         ),
         "contact_surface_probe_counts": surface_counts,
         "sections": sections,
-    }
-
-
-def compare_maniskill(robot, checkout):
-    asset = Path(checkout).expanduser().resolve() / "mani_skill/assets/robots/alohamini2pro"
-    path = asset / "urdf/alohamini2pro.urdf"
-    reference = ET.parse(path).getroot()
-    source = robot.description.tree
-
-    def canonical(node, directory):
-        attributes = dict(node.attrib)
-        if node.tag == "mesh":
-            resource = (directory / attributes["filename"]).resolve()
-            expected_root = (
-                asset if directory == path.parent else robot.description.robot_model.directory
-            )
-            if not resource.is_relative_to(expected_root) or not resource.is_file():
-                raise ValueError(f"Invalid mesh in comparison: {resource}")
-            attributes["filename"] = hashlib.sha256(resource.read_bytes()).hexdigest()
-        return (
-            node.tag,
-            tuple(sorted(attributes.items())),
-            tuple(canonical(c, directory) for c in node),
-        )
-
-    differences = []
-    for kind in ("link", "joint"):
-        a = {n.get("name"): n for n in source.findall(kind)}
-        b = {n.get("name"): n for n in reference.findall(kind)}
-        for name in sorted(a.keys() | b.keys()):
-            if (
-                name not in a
-                or name not in b
-                or canonical(a[name], robot.description.path.parent)
-                != canonical(b[name], path.parent)
-            ):
-                differences.append(f"{kind}:{name}")
-    return {
-        "passed": not differences,
-        "reference_urdf": str(path),
-        "reference_urdf_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "differences": differences,
-        "scope": "URDF kinematics, inertias, primitives, and mesh contents; not a dynamics rollout",
     }

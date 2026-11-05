@@ -23,6 +23,40 @@ from .native_distance import InvalidNativeDistance, checked_geom_distance
 LIBERO_COMMIT = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 LIBERO_EXPORT_MUJOCO_VERSION = "3.8.1"
 SPATIAL_TASKS = tuple(range(10))
+RESET_SETTLE_S = 0.5
+
+
+class SceneResetError(ValueError):
+    """A task initial state violates the declared reset conditions."""
+
+
+def settle_scene(follower, duration_s=RESET_SETTLE_S):
+    """Settle a task reset without allowing objects to hit the waiting robot."""
+    if not np.isfinite(duration_s) or duration_s <= 0:
+        raise ValueError("Scene settling duration must be finite and positive")
+    robot, model, data = follower.robot, follower.model, follower.data
+    robot_geoms = {model.geom(name).id for name in robot.geometry}
+
+    def check_contacts():
+        for contact in data.contact:
+            first = contact.geom1 in robot_geoms
+            second = contact.geom2 in robot_geoms
+            if (first != second and contact.dist <= 0) or (
+                (first or second) and contact.dist < -follower.settings.penetration_tolerance_m
+            ):
+                raise SceneResetError(
+                    "Scene reset collision at "
+                    f"{data.time:.3f} s: {model.geom(contact.geom1).name} / "
+                    f"{model.geom(contact.geom2).name}, distance {contact.dist:.6f} m; "
+                    "use an initial robot pose clear of the scene and falling objects"
+                )
+
+    check_contacts()
+    for _ in range(int(np.ceil(duration_s / model.opt.timestep))):
+        follower.step()
+        check_contacts()
+    mujoco.mj_forward(model, data)
+    check_contacts()
 
 
 def sha256(path):
@@ -124,6 +158,15 @@ class LiberoScene:
         # Upright support surfaces and On predicates use the world's vertical.
         if not np.allclose(self.T_world_libero[:3, 2], [0, 0, 1], atol=1e-12):
             raise ValueError("LIBERO adaptation must preserve the vertical axis")
+        self.initial_object_translation_world_m = np.asarray(
+            self.configuration.get("initial_object_translation_world_m", [0, 0, 0]), dtype=float
+        )
+        if (
+            self.initial_object_translation_world_m.shape != (3,)
+            or not np.isfinite(self.initial_object_translation_world_m).all()
+            or self.initial_object_translation_world_m[2] != 0
+        ):
+            raise ValueError("Initial object translation needs finite world X/Y/Z metres with Z=0")
         self.fingerprint = sha256(manifest_path)
         self.configuration = copy.deepcopy(self.configuration)
         upstream_packages = None
@@ -153,7 +196,8 @@ class LiberoScene:
             "reset_index": self.reset_index,
             "configuration": self.configuration,
             "initial_state_policy": (
-                "named object joints only; robot state independently configured; zero velocities"
+                "named object joints; configured world XY translation of free objects; "
+                "robot state independently configured; zero velocities"
             ),
             "physical_parameters": (
                 "unchanged upstream simulation values; not real-object calibration"
@@ -174,6 +218,21 @@ class LiberoScene:
 
     def augment(self, root, assets):
         scene = ET.parse(self.folder / "scene.xml").getroot()
+        visible_contacts = set(self.task.get("visual_contact_geoms", [])) | {"floor"}
+        # Keep contact definitions intact and render their visible source surfaces separately.
+        for parent in scene.find("worldbody").iter():
+            for node in list(parent):
+                if node.tag == "geom" and node.get("name") in visible_contacts:
+                    visual = copy.deepcopy(node)
+                    name = node.get("name")
+                    visual.attrib.update(
+                        name="libero_floor_visual" if name == "floor" else f"libero_visual_{name}",
+                        group="2",
+                        contype="0",
+                        conaffinity="0",
+                        mass="0",
+                    )
+                    parent.insert(list(parent).index(node) + 1, visual)
         existing = {n.get("name") for n in root.iter() if n.get("name")}
         names = {n.get("name") for n in scene.iter() if n.get("name")}
         if existing & names:
@@ -275,7 +334,9 @@ class LiberoScene:
                 rotation = np.empty(9)
                 mujoco.mju_quat2Mat(rotation, q[3:])
                 T[:3, :3], T[:3, 3] = rotation.reshape(3, 3), q[:3]
-                attributes = pose_attributes(self.T_world_libero @ T)
+                world = self.T_world_libero @ T
+                world[:3, 3] += self.initial_object_translation_world_m
+                attributes = pose_attributes(world)
                 data.qpos[address : address + 7] = np.fromstring(
                     attributes["pos"] + " " + attributes["quat"], sep=" "
                 )
