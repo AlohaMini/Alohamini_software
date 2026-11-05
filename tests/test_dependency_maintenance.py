@@ -9,6 +9,7 @@ from packaging.version import Version
 from env.dependencies import (
     ROOT,
     check,
+    compile_lock,
     declared,
     dependency_group,
     exact_version,
@@ -143,6 +144,33 @@ def test_failed_resolution_restores_all_dependency_files(manifests, monkeypatch)
     with pytest.raises(RuntimeError, match="resolver failed"):
         refresh(manifests)
     assert before == {p: p.read_bytes() for p in before}
+
+
+def test_transitive_candidates_cannot_cross_the_existing_major(manifests, monkeypatch):
+    from packaging.requirements import Requirement
+
+    old = Version(
+        exact_version(requirements(manifests / "env/pc-linux-64.lock")["huggingface-hub"][0])
+    )
+
+    def resolve(command, **kwargs):
+        from pathlib import Path
+
+        path = Path(command[command.index("--constraint") + 1])
+        bounds = {
+            req.name: req.specifier for req in map(Requirement, path.read_text().splitlines())
+        }
+        assert str(old) in bounds["huggingface-hub"]
+        assert f"{old.major + 1}.0.0" not in bounds["huggingface-hub"]
+        assert command[command.index("--prerelease") + 1] == "disallow"
+
+    monkeypatch.setattr("env.dependencies.subprocess.run", resolve)
+    compile_lock(
+        manifests,
+        manifests / "env/pc-linux-64.in",
+        manifests / "env/pc-linux-64.lock",
+        group="models",
+    )
 
 
 @pytest.mark.parametrize(

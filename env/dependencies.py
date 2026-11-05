@@ -284,8 +284,22 @@ def compile_lock(
         command += [
             "--exclude-newer",
             (datetime.now(UTC) - timedelta(days=config["cooldown_days"])).isoformat(),
+            "--prerelease",
+            "disallow",
         ]
-    subprocess.run(command, cwd=root, check=True, stdout=subprocess.DEVNULL)
+    with tempfile.TemporaryDirectory(prefix="alohamini-version-bounds-") as directory:
+        if group:
+            # Apply the major-version policy to transitive dependencies too.
+            bounds = Path(directory) / "bounds.in"
+            bounds.write_text(
+                "\n".join(
+                    f"{name}<{Version(exact_version(req)).major + 1}"
+                    for name, (req, _) in sorted(existing.items())
+                )
+                + "\n"
+            )
+            command += ["--constraint", str(bounds)]
+        subprocess.run(command, cwd=root, check=True, stdout=subprocess.DEVNULL)
     # Constraints can repeat build options. Keep regeneration idempotent.
     lines, options = [], set()
     for line in output.read_text().splitlines():

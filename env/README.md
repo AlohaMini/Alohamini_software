@@ -12,6 +12,8 @@ python env/dependencies.py refresh --group models --report /tmp/dependency-chang
 
 `refresh` 只修改依赖文件。已有锁定版本优先保留；指定分组时，检查同一主版本中发布满 7 天的稳定版本并重新解析。解析失败会恢复原文件。`models`、`compute`、`host`、`tools` 分别维护模型、计算、硬件与其余工具/数据依赖。PC/Host 的公共依赖保持相同版本。
 
+自动更新的主版本上限也约束间接依赖。跨主版本升级时，先显式修改项目声明或部署约束，再运行不带 `--group` 的 `refresh` 并执行回归。
+
 ## GitHub Actions
 
 - `Dependency validation`：相关 PR、main 提交及手动触发；检查清单，在新建 Conda 环境中安装 CPU 对应版本，运行算法、checkpoint、续训、精度和分布式验证回归。CPU 锁定文件仅作为 CI 产物，不替换 CUDA 部署锁。
