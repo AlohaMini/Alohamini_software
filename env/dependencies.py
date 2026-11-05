@@ -289,11 +289,17 @@ def compile_lock(
         ]
     with tempfile.TemporaryDirectory(prefix="alohamini-version-bounds-") as directory:
         if group:
-            # Apply the major-version policy to transitive dependencies too.
+            # Upgrade only the selected group, including its transitive packages.
+            # Other groups remain fixed so a tools/Host update cannot move model
+            # or CUDA dependencies as a side effect of dependency resolution.
             bounds = Path(directory) / "bounds.in"
             bounds.write_text(
                 "\n".join(
-                    f"{name}<{Version(exact_version(req)).major + 1}"
+                    (
+                        f"{name}>={exact_version(req)},<{Version(exact_version(req)).major + 1}"
+                        if dependency_group(name, config["groups"]) == group
+                        else f"{name}=={exact_version(req)}"
+                    )
                     for name, (req, _) in sorted(existing.items())
                 )
                 + "\n"
@@ -382,7 +388,8 @@ def write_report(before, root, output):
     text = "Dependency candidate generated from the current main branch.\n\n"
     text += "| Package | Previous | Candidate |\n| --- | --- | --- |\n" + "\n".join(rows)
     text += (
-        "\n\nCPU checks run on the candidate commit. Model/compute updates also require "
+        "\n\nThis PR is an upgrade candidate; generation success is not a compatibility result. "
+        "CPU and Host checks run on the candidate commit. Model/compute updates also require "
         "the manually triggered GPU validation and checkpoint comparison before acceptance.\n"
     )
     output.parent.mkdir(parents=True, exist_ok=True)

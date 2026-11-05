@@ -104,6 +104,17 @@ def local_assets(value):
     return path
 
 
+def local_bpe_assets(value):
+    """Reject missing Qwen/CLIP BPE vocabularies before upstream builds an empty tokenizer."""
+    path = local_assets(value)
+    if not (
+        (path / "tokenizer.json").is_file()
+        or all((path / name).is_file() for name in ("vocab.json", "merges.txt"))
+    ):
+        raise FileNotFoundError(f"BPE tokenizer files are missing: {path}")
+    return path
+
+
 def padded_mean(loss, is_pad):
     """Mean per sample over valid time and action coordinates, then over samples."""
     valid = (~is_pad).to(loss.dtype)

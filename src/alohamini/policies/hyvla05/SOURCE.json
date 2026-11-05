@@ -4,5 +4,8 @@
   "paper": "https://arxiv.org/abs/2606.14409v2",
   "model": "tencent/Hy-Embodied-0.5-VLA-RoboTwin",
   "model_revision": "bd7bba6f5934ad62293a2a34f74760c6a3ef2ff8",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "adaptations": [
+    "Validate dual-tower options after base configuration initialization without overriding Transformers dataclass hooks"
+  ]
 }

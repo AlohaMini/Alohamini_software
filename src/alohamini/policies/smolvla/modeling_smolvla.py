@@ -25,6 +25,8 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from typing_extensions import Unpack
 
+from alohamini.policies.transformers_compat import crop_cache_to_length
+
 from .configuration_smolvla import SmolVLAConfig
 from .helpers import (
     create_sinusoidal_pos_embedding,
@@ -760,7 +762,7 @@ class VLAFlowMatching(nn.Module):
         )
         if past_key_values is not None:
             # Self-attention layers append suffix K/V in place; restore the prefix for the next step.
-            past_key_values.crop(prefix_len)
+            crop_cache_to_length(past_key_values, prefix_len)
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)

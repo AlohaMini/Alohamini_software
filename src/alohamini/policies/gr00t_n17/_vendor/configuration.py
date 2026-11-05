@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import MISSING, asdict, dataclass, field, is_dataclass
+from dataclasses import MISSING, asdict, field, is_dataclass
 from enum import Enum
 import json
 from pathlib import Path
@@ -21,9 +21,11 @@ from pathlib import Path
 import torch
 from transformers import PretrainedConfig
 
+from alohamini.policies.transformers_compat import dataclass_config
 
 
-@dataclass
+
+@dataclass_config
 class Gr00tN1d7Config(PretrainedConfig):
     """Unified configuration for Gr00tN1d7 model with backbone and action head.
 

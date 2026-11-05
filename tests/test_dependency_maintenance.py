@@ -162,6 +162,11 @@ def test_transitive_candidates_cannot_cross_the_existing_major(manifests, monkey
         }
         assert str(old) in bounds["huggingface-hub"]
         assert f"{old.major + 1}.0.0" not in bounds["huggingface-hub"]
+        assert "0.0.1" not in bounds["huggingface-hub"]
+        torch_version = exact_version(
+            requirements(manifests / "env/pc-linux-64.lock")["torch"][0]
+        )
+        assert str(bounds["torch"]) == f"=={torch_version}"
         assert command[command.index("--prerelease") + 1] == "disallow"
 
     monkeypatch.setattr("env.dependencies.subprocess.run", resolve)
@@ -193,3 +198,19 @@ def test_gpu_validation_ignores_jobs_on_unselected_devices():
     from env.gpu_preflight import validate_devices
 
     validate_devices("0,1", "0, GPU-a\n1, GPU-b\n2, GPU-c\n", "GPU-c, 1234\n")
+
+
+def test_ci_summary_reports_nested_suites_without_double_counting(tmp_path):
+    from env.ci_summary import summary
+
+    path = tmp_path / "results.xml"
+    path.write_text(
+        '<testsuites><testsuite tests="4"><testcase name="pass" />'
+        '<testcase classname="model" name="forward"><failure message="bad" /></testcase>'
+        '<testcase name="skip"><skipped /></testcase>'
+        '<testcase name="error"><error /></testcase></testsuite></testsuites>'
+    )
+    report = summary(path)
+    assert "1 passed, 2 failed, 1 skipped" in report
+    assert "model::forward" in report and "::error" in report
+    assert "passed" not in summary(tmp_path / "missing.xml")

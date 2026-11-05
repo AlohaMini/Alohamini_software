@@ -30,6 +30,7 @@ References:
 
 import math
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import einops
@@ -47,6 +48,8 @@ from transformers import (
     CLIPVisionModel,
 )
 
+from alohamini.policies.chunk import local_bpe_assets
+
 from .configuration_multi_task_dit import MultiTaskDiTConfig
 
 ACTION = "action"
@@ -56,6 +59,20 @@ OBS_LANGUAGE_TOKENS = "observation.language.tokens"
 OBS_LANGUAGE_ATTENTION_MASK = "observation.language.attention_mask"
 
 # -- Policy --
+
+
+def _clip_assets(model_name, *, tokenizer=False):
+    path = Path(model_name).expanduser()
+    if path.is_dir():
+        if not (path / "config.json").is_file():
+            raise FileNotFoundError(f"CLIP assets require a local config.json: {path}")
+        if tokenizer:
+            local_bpe_assets(path)
+        return str(path), True
+    if path.is_absolute() or str(model_name).startswith((".", "~")):
+        raise FileNotFoundError(f"CLIP asset directory does not exist: {path}")
+    # Explicit repository IDs retain online loading; HF_HUB_OFFLINE overrides it.
+    return str(model_name), False
 
 
 class MultiTaskDiTPolicy(nn.Module):
@@ -70,7 +87,8 @@ class MultiTaskDiTPolicy(nn.Module):
         self._queues: dict[str, deque[Tensor]] = {}
 
         self.observation_encoder = ObservationEncoder(config)
-        self.tokenizer = AutoTokenizer.from_pretrained(config.text_encoder_name)
+        text_assets, local_only = _clip_assets(config.text_encoder_name, tokenizer=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(text_assets, local_files_only=local_only)
         self.tokenizer.padding_side = config.tokenizer_padding_side
         text_config = self.observation_encoder.text_encoder.text_encoder.config
         if config.tokenizer_max_length > text_config.max_position_embeddings:
@@ -220,11 +238,14 @@ class CLIPVisionEncoder(nn.Module):
 
     def __init__(self, model_name: str, load_weights: bool = True):
         super().__init__()
+        model_name, local_only = _clip_assets(model_name)
         self.model_name = model_name
         self.model = (
-            CLIPVisionModel.from_pretrained(model_name)
+            CLIPVisionModel.from_pretrained(model_name, local_files_only=local_only)
             if load_weights
-            else CLIPVisionModel(CLIPVisionConfig.from_pretrained(model_name))
+            else CLIPVisionModel(
+                CLIPVisionConfig.from_pretrained(model_name, local_files_only=local_only)
+            )
         )
         self.num_non_spatial_tokens = 1
         self.embed_dim = self.model.config.hidden_size
@@ -248,12 +269,15 @@ class CLIPTextEncoder(nn.Module):
 
     def __init__(self, model_name: str, projection_dim: int = 512, load_weights: bool = True):
         super().__init__()
+        model_name, local_only = _clip_assets(model_name)
         self.model_name = model_name
         self.projection_dim = projection_dim
         self.text_encoder = (
-            CLIPTextModel.from_pretrained(model_name)
+            CLIPTextModel.from_pretrained(model_name, local_files_only=local_only)
             if load_weights
-            else CLIPTextModel(CLIPTextConfig.from_pretrained(model_name))
+            else CLIPTextModel(
+                CLIPTextConfig.from_pretrained(model_name, local_files_only=local_only)
+            )
         )
 
         for param in self.text_encoder.parameters():
