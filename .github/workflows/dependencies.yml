@@ -1,0 +1,70 @@
+name: Dependency validation
+
+on:
+  pull_request:
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/**"]
+  push:
+    branches: [main]
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependencies-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HF_HUB_OFFLINE: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+        with:
+          miniforge-version: latest
+          activate-environment: alohamini
+          environment-file: environment.yml
+          auto-activate-base: false
+      - name: Install dependency tools
+        run: |
+          UV_VERSION=$(python -c 'import tomllib; print(tomllib.load(open("env/dependencies.toml", "rb"))["uv"])')
+          python -m pip install "uv==$UV_VERSION"
+      - name: Check deployment manifests
+        run: python env/dependencies.py check
+      - name: Resolve and install CPU variant of the locked environment
+        run: |
+          mkdir -p reports
+          python env/dependencies.py ci-lock --output reports/ci-linux-64.lock
+          uv pip install --python "$CONDA_PREFIX/bin/python" --torch-backend cpu --require-hashes --no-build-isolation -r reports/ci-linux-64.lock
+          python -m pip install --no-deps --no-build-isolation -e .
+          python -m pip check
+          python -m pip freeze > reports/environment.txt
+      - name: Algorithms, checkpoints, precision and distributed validation
+        run: |
+          python -m pytest -q --tb=short --junitxml=reports/cpu.xml \
+            tests/test_dependencies.py tests/test_environment_manifests.py \
+            tests/test_dependency_maintenance.py tests/test_checkpoint_probe.py \
+            tests/test_lerobot_algorithms.py tests/test_training_precision.py \
+            tests/test_distributed_validation.py tests/test_validation_loading.py \
+            tests/test_checkpoint_retention.py tests/test_resume_paths.py \
+            tests/test_acdit_training.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: dependency-cpu-${{ github.sha }}
+          path: reports/
+          retention-days: 30

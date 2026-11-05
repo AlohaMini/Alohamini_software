@@ -1,0 +1,18 @@
+# Project requirements come from pyproject.toml. These selections fix the
+# deployment versions where the project intentionally accepts a wider range.
+python = "3.12"
+uv = "0.11.30"
+cooldown_days = 7
+pc_extras = ["pc", "analysis", "kinematics", "acdit", "hyvla05", "openwam", "gr00t_n17"]
+pins = [
+  "torch==2.11.0", "torchvision==0.26.0", "numpy==2.2.6",
+  "pyzmq==27.1.0", "pyarrow==24.0.0",
+  "pytest==8.4.2", "ruff==0.15.20", "fsspec==2026.2.0",
+  "packaging==25.0", "protobuf==7.36.2",
+]
+
+[groups]
+models = ["transformers", "tokenizers", "huggingface-hub", "accelerate", "diffusers", "sentencepiece", "safetensors", "einops", "timm", "ftfy", "num2words", "protobuf"]
+compute = ["torch", "torchvision", "torchcodec", "triton", "nvidia-*", "cuda-*", "av"]
+host = ["numpy", "opencv-python-headless", "pyzmq", "pyserial", "feetech-servo-sdk"]
+tools = ["*"]

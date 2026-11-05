@@ -1,0 +1,91 @@
+name: Dependency GPU validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu_ids:
+        description: Two or more idle physical GPU indices, separated by commas
+        required: true
+        type: string
+      cases:
+        description: Absolute path to checkpoint cases JSON on the runner
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-gpu
+  cancel-in-progress: false
+
+jobs:
+  gpu:
+    runs-on: [self-hosted, linux, x64, alohamini-gpu]
+    timeout-minutes: 90
+    env:
+      CUDA_VISIBLE_DEVICES: ${{ inputs.gpu_ids }}
+      CHECKPOINT_CASES: ${{ inputs.cases }}
+      HF_HUB_OFFLINE: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      ALOHAMINI_TEST_GR00T_LEWM_FSDP: "1"
+      ALOHAMINI_TEST_FSDP_RANKS: "2"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check devices and cases
+        run: |
+          python3 env/gpu_preflight.py
+          test -f "$CHECKPOINT_CASES"
+          mkdir -p reports
+          printf 'DEPENDENCY_ENVS=%s\n' "$RUNNER_TEMP/dependency-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Create isolated baseline and candidate environments
+        run: |
+          mkdir -p "$DEPENDENCY_ENVS"
+          git show origin/main:env/explicit-pc-linux-64.txt > "$DEPENDENCY_ENVS/baseline-conda.txt"
+          git show origin/main:env/pc-linux-64.lock > "$DEPENDENCY_ENVS/baseline.lock"
+          conda create -y --prefix "$DEPENDENCY_ENVS/baseline/alohamini" --file "$DEPENDENCY_ENVS/baseline-conda.txt"
+          conda create -y --prefix "$DEPENDENCY_ENVS/candidate/alohamini" --file env/explicit-pc-linux-64.txt
+          for variant in baseline candidate; do
+            if [ "$variant" = baseline ]; then LOCK="$DEPENDENCY_ENVS/baseline.lock"; else LOCK=env/pc-linux-64.lock; fi
+            conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip install --require-hashes --no-build-isolation -r "$LOCK"
+            conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip install --no-deps --no-build-isolation -e .
+            conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip check
+            conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip freeze > "reports/$variant-environment.txt"
+          done
+      - name: CUDA, mixed precision, FSDP checkpoint and validation checks
+        run: |
+          python3 env/gpu_preflight.py
+          conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python env/verify_pc.py
+          conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python -m pytest -q --tb=short --junitxml=reports/gpu.xml \
+            tests/test_distributed_validation.py tests/test_gr00t_lewm_distributed.py tests/test_training_precision.py
+      - name: Compare existing checkpoints on identical inputs
+        run: |
+          for variant in baseline candidate; do
+            conda run --no-capture-output -p "$DEPENDENCY_ENVS/$variant/alohamini" python env/checkpoint_probe.py capture \
+              --cases "$CHECKPOINT_CASES" --device cuda:0 --output "reports/$variant-checkpoints.json"
+          done
+          conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python env/checkpoint_probe.py compare \
+            --reference reports/baseline-checkpoints.json --candidate reports/candidate-checkpoints.json \
+            --output reports/checkpoint-comparison.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: dependency-gpu-${{ github.sha }}
+          path: reports/
+          retention-days: 30
+      - name: Remove this job's temporary environments
+        if: always() && env.DEPENDENCY_ENVS != ''
+        run: |
+          for variant in baseline candidate; do
+            if [ -d "$DEPENDENCY_ENVS/$variant/alohamini/conda-meta" ]; then
+              conda env remove -y --prefix "$DEPENDENCY_ENVS/$variant/alohamini"
+            fi
+          done

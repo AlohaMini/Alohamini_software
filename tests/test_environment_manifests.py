@@ -70,10 +70,15 @@ class EnvironmentManifestTests(unittest.TestCase):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
         extras = project["optional-dependencies"]
         self.assertIn("alohamini-platform[learning,notebook,zmq,feetech]", extras["pc"])
-        self.assertIn("transformers==5.0.0", extras["learning"])
+        self.assertTrue(any(value.startswith("transformers") for value in extras["learning"]))
         self.assertFalse((ROOT / "env/pi05-linux-64.lock").exists())
         self.assertFalse((ROOT / "env/smolvla-linux-64.lock").exists())
         self.assertFalse((ROOT / "integrations/lerobot/pyproject.toml").exists())
+
+    def test_project_constraints_and_generated_deployment_locks_agree(self):
+        from env.dependencies import check
+
+        check(ROOT)
 
 
 if __name__ == "__main__":

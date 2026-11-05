@@ -1,0 +1,12 @@
+[
+  {
+    "name": "act-tabletop",
+    "checkpoint": "/srv/alohamini/checkpoints/act/pretrained_model",
+    "dataset": "/srv/alohamini/datasets/tabletop",
+    "episodes": [0],
+    "indices": [0, 10, 20],
+    "seed": 42,
+    "atol": 0.00001,
+    "rtol": 0.0001
+  }
+]
