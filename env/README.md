@@ -12,12 +12,12 @@ python env/dependencies.py refresh --group models --report /tmp/dependency-chang
 
 `refresh` 只修改依赖文件。已有锁定版本优先保留；指定分组时，检查同一主版本中发布满 7 天的稳定版本并重新解析。解析失败会恢复原文件。`models`、`compute`、`host`、`tools` 分别维护模型、计算、硬件与其余工具/数据依赖。PC/Host 的公共依赖保持相同版本。
 
-自动更新的主版本上限也约束间接依赖。跨主版本升级时，先显式修改项目声明或部署约束，再运行不带 `--group` 的 `refresh` 并执行回归。
+指定分组只更新该组及属于该组的间接依赖，其他组保持锁定；不自动降级或跨主版本。需要联动迁移多个组时，先显式修改项目声明或部署约束，再运行不带 `--group` 的 `refresh` 并执行回归。
 
 ## GitHub Actions
 
 - `Dependency validation`：相关 PR、main 提交及手动触发；检查清单，在新建 Conda 环境中安装 CPU 对应版本，运行算法、checkpoint、续训、精度和分布式验证回归；另在 x86_64、ARM64 runner 安装 Host 锁并检查串口库、图像及进程内通信。CPU 锁定文件仅作为 CI 产物，不替换 CUDA 部署锁。
-- `Dependency update candidates`：每周一 03:17 UTC，也可手动选择分组；生成草稿 PR 并显式触发候选提交的 CPU、Host 检查。PR 记录版本差异，运行产物保留 30 天。
+- `Dependency update candidates`：每周一 03:17 UTC，也可手动选择分组；只运行所选组，生成草稿 PR 并触发候选提交的 CPU、Host 检查。候选生成成功不代表兼容检查通过，检查入口见运行摘要，测试摘要列出失败用例。PR 记录版本差异，运行产物保留 30 天。
 - `Dependency GPU validation`：手动选择候选分支，填写空闲 GPU 编号和 checkpoint 用例文件。需要标签为 `alohamini-gpu` 的 Linux x86_64 自托管 runner，提供 Conda、兼容驱动及至少两张空闲 GPU。用例路径上的 checkpoint、基座资源和数据集必须可读。
 
 仓库 Actions 设置须允许创建 PR；组织设置也须允许此权限。版本候选保持草稿，不自动合并。模型/计算更新接受前，需 CPU 与 GPU 检查均通过。GPU 工作流使用独立的临时环境，不更新现有运行环境；若指定显卡有计算进程则退出。

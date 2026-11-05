@@ -155,9 +155,9 @@ class HyDualTowerConfig(PretrainedConfig):
         self.config = kwargs.get("config", None)
 
         super().__init__(**kwargs)
+        self._validate_options()
 
-    def __post_init__(self):
-        super().__post_init__()
+    def _validate_options(self):
         if self.train_expert_only and not self.freeze_vision_encoder:
             raise ValueError(
                 "You set `freeze_vision_encoder=False` and `train_expert_only=True` "

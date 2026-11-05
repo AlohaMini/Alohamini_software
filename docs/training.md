@@ -366,7 +366,7 @@ python -m alohamini.learning.train \
 
 state 必须存在。CLIP 权重与 tokenizer 默认读取工作区 `pretrained/clip-vit-base-patch16/`
 （默认 `~/Alohamini_workspace/`，支持 `ALOHAMINI_WORKSPACE`），须提前下载 `openai/clip-vit-base-patch16`。
-`--policy.vision_encoder_name`、`--policy.text_encoder_name` 可覆盖为其他本地目录或 Hugging Face 模型 ID。
+`--policy.vision_encoder_name`、`--policy.text_encoder_name` 可指定本地目录或在线模型 ID；本地目录缺文件时报错。设置 `HF_HUB_OFFLINE=1` 可禁止模型 ID 联网加载。
 尾部排除数按同一时序公式计算；`--policy.do_mask_loss_for_padding=true` 可屏蔽补齐动作的损失。
 
 ```bash

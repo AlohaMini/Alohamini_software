@@ -7,7 +7,7 @@ from torch import nn
 from transformers import AutoProcessor, Qwen3VLConfig, Qwen3VLForConditionalGeneration
 from transformers.feature_extraction_utils import BatchFeature
 
-from alohamini.policies.chunk import ChunkPolicy, local_assets
+from alohamini.policies.chunk import ChunkPolicy, local_bpe_assets
 
 from ._vendor.action_head import Gr00tN1d7ActionHead
 from ._vendor.configuration import Gr00tN1d7Config
@@ -39,6 +39,8 @@ class LocalQwenBackbone(nn.Module):
         inputs = {
             k: batch[k] for k in ("input_ids", "attention_mask", "pixel_values", "image_grid_thw")
         }
+        if "mm_token_type_ids" in batch:
+            inputs["mm_token_type_ids"] = batch["mm_token_type_ids"]
         output = self.model.model(**inputs, use_cache=False)
         return BatchFeature(
             dict(
@@ -71,7 +73,7 @@ class GR00TN17Policy(ChunkPolicy):
                 config.gradient_checkpointing
             )
         self.vlm_processor = AutoProcessor.from_pretrained(
-            local_assets(config.assets_path),
+            local_bpe_assets(config.assets_path),
             local_files_only=True,
             trust_remote_code=False,
             use_fast=False,

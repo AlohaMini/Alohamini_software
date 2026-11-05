@@ -13,6 +13,7 @@ from safetensors.torch import load_file, load_model
 
 from alohamini.datasets.kinematic_fields import KinematicFields
 from alohamini.learning.metrics import MetricSpec, loss_count
+from alohamini.policies.chunk import local_bpe_assets
 
 from .configuration_spirit import SpiritConfig
 from .preset import apply_preset
@@ -50,7 +51,7 @@ class SpiritTrainModel(torch.nn.Module):
             if k in {f.name for f in fields(SpiritVLAConfig)}
         }
         options.update(
-            backbone=config.backbone_path,
+            backbone=str(local_bpe_assets(config.backbone_path)),
             load_backbone_weights=False,
             device="cpu",
             n_action_steps=config.network["chunk_size"],

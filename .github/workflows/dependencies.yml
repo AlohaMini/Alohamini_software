@@ -32,10 +32,10 @@ jobs:
       run:
         shell: bash -el {0}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
         with:
           miniforge-version: latest
           activate-environment: alohamini_host
@@ -63,10 +63,10 @@ jobs:
       MKL_NUM_THREADS: "2"
       UV_PYTHON_DOWNLOADS: never
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
         with:
           miniforge-version: latest
           activate-environment: alohamini
@@ -87,15 +87,19 @@ jobs:
           python -m pip check
           python -m pip freeze > reports/environment.txt
       - name: Algorithms, checkpoints, precision and distributed validation
+        id: regression
         run: |
           python -m pytest -q --tb=short --junitxml=reports/cpu.xml \
             tests/test_dependencies.py tests/test_environment_manifests.py \
-            tests/test_dependency_maintenance.py tests/test_checkpoint_probe.py \
+            tests/test_dependency_maintenance.py tests/test_checkpoint_probe.py tests/test_transformers_compat.py tests/test_policy_assets.py \
             tests/test_lerobot_algorithms.py tests/test_training_precision.py \
             tests/test_distributed_validation.py tests/test_validation_loading.py \
             tests/test_checkpoint_retention.py tests/test_resume_paths.py \
             tests/test_acdit_training.py
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Summarize compatibility results
+        if: always() && steps.regression.outcome != 'skipped'
+        run: python env/ci_summary.py reports/cpu.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: dependency-cpu-${{ github.sha }}

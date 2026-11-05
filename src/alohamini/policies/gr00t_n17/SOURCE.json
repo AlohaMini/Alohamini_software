@@ -12,7 +12,8 @@
     "Official model weights loaded by exact name through explicit namespace mapping",
     "Removed parameter-count prints",
     "Enabled non-reentrant checkpointing at DiT block calls; parameter keys and uncheckpointed arithmetic unchanged",
-    "GPU-specific SDPA workaround only checks CUDA inputs, preserving CPU checkpointing"
+    "GPU-specific SDPA workaround only checks CUDA inputs, preserving CPU checkpointing",
+    "Preserve Transformers configuration default factories and processor-provided multimodal token types across Transformers 5 interfaces"
   ],
   "published_checkpoint": {
     "repository": "nvidia/GR00T-N1.7-3B",

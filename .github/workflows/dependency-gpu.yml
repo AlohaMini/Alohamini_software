@@ -30,13 +30,14 @@ jobs:
       TOKENIZERS_PARALLELISM: "false"
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
+      PYTHONPATH: ${{ github.workspace }}/src
       ALOHAMINI_TEST_GR00T_LEWM_FSDP: "1"
       ALOHAMINI_TEST_FSDP_RANKS: "2"
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -56,7 +57,11 @@ jobs:
           for variant in baseline candidate; do
             if [ "$variant" = baseline ]; then LOCK="$DEPENDENCY_ENVS/baseline.lock"; else LOCK=env/pc-linux-64.lock; fi
             conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip install --require-hashes --no-build-isolation -r "$LOCK"
-            conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip install --no-deps --no-build-isolation -e .
+            # The baseline keeps main's dependency metadata; candidate source is
+            # imported through PYTHONPATH for the same-code comparison.
+            if [ "$variant" = candidate ]; then
+              conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip install --no-deps --no-build-isolation -e .
+            fi
             conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip check
             conda run -p "$DEPENDENCY_ENVS/$variant/alohamini" python -m pip freeze > "reports/$variant-environment.txt"
           done
@@ -75,7 +80,7 @@ jobs:
           conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python env/checkpoint_probe.py compare \
             --reference reports/baseline-checkpoints.json --candidate reports/candidate-checkpoints.json \
             --output reports/checkpoint-comparison.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: dependency-gpu-${{ github.sha }}
