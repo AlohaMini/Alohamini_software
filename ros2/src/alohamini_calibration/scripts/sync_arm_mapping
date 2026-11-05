@@ -82,9 +82,9 @@ def validate_host_against_json(observation: dict, calibration: dict) -> dict:
     metadata = observation.get("_robot_metadata")
     if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
         raise ValueError("Host state lacks schema_version=1 robot metadata")
-    if metadata.get("robot_model") != "alohamini2pro":
+    if metadata.get("robot_model") not in ("alohamini2pro", "alohamini2edu"):
         raise ValueError(
-            f"Host robot_model is {metadata.get('robot_model')!r}, expected 'alohamini2pro'"
+            f"Host robot_model is {metadata.get('robot_model')!r}, expected Pro or EDU"
         )
     motors = metadata.get("motors")
     if not isinstance(motors, dict):
@@ -170,8 +170,13 @@ def build_side_mapping(
     source: dict,
 ) -> dict:
     result = copy.deepcopy(template)
-    if result.get("schema_version") != 1 or result.get("robot_model") != "alohamini2pro":
-        raise ValueError("mapping template must describe alohamini2pro schema 1")
+    if result.get("schema_version") != 1 or result.get("robot_model") not in (
+        "alohamini2pro",
+        "alohamini2edu",
+    ):
+        raise ValueError("mapping template must describe Pro or EDU schema 1")
+    if source.get("robot_model", result["robot_model"]) != result["robot_model"]:
+        raise ValueError("Mapping template and captured Host model differ")
     result["status"] = "candidate_requires_review"
     for key in (
         "reference_capture",
@@ -189,7 +194,7 @@ def build_side_mapping(
         raise ValueError("only 4096-tick arm encoders are supported")
     if set(result["joints"]) != set(ARM_JOINTS):
         raise ValueError("mapping template must contain exactly seven arm joints")
-    actuators = {m.name: m for m in get_robot_model("alohamini2pro").actuators}
+    actuators = {m.name: m for m in get_robot_model(result["robot_model"]).actuators}
     reference_ticks = []
     reference_q = []
     for joint in ARM_JOINTS:
@@ -278,8 +283,8 @@ def build_side_mapping(
     return result
 
 
-def default_template(side: str) -> dict:
-    model = get_robot_model("alohamini2pro")
+def default_template(side: str, robot_model: str = "alohamini2pro") -> dict:
+    model = get_robot_model(robot_model)
     conventions = yaml.safe_load(
         model.asset_path("config/kinematics/encoder_conventions.yaml").read_text(encoding="utf-8")
     )
@@ -424,6 +429,9 @@ def main() -> int:
         finally:
             client.close()
         ticks = median_stable_ticks(observations, calibration, args.max_tick_spread)
+        model_id = observations[0]["_robot_metadata"]["robot_model"]
+        if any(item["_robot_metadata"]["robot_model"] != model_id for item in observations):
+            raise ValueError("Host model changed during capture")
 
         captured_at = datetime.now(timezone.utc).isoformat()
         source = {
@@ -433,10 +441,11 @@ def main() -> int:
             "command_port_used": False,
             "calibration_sha256": hashlib.sha256(calibration_bytes).hexdigest(),
             "host_session_id": observations[0]["_safety"]["host_session_id"],
+            "robot_model": model_id,
         }
         mappings = {}
         for side in ("left", "right"):
-            template = default_template(side)
+            template = default_template(side, model_id)
             if args.template_dir is not None:
                 template_path = args.template_dir.expanduser() / f"hardware_joint_map_{side}.yaml"
                 with template_path.open(encoding="utf-8") as stream:

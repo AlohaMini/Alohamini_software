@@ -126,6 +126,7 @@ class JoyConTeleop(Node):
         super().__init__("alohamini_joycon_teleop")
         defaults = {
             "hardware_mode": False,
+            "robot_model": "alohamini2pro",
             "input_endpoint": "tcp://127.0.0.1:5568",
             "input_timeout_sec": 0.25,
             "measured_state_timeout_sec": 0.25,
@@ -192,7 +193,8 @@ class JoyConTeleop(Node):
             raise ValueError("imu_latch_reference must be 'level' or 'current'")
         self.callback_group = MutuallyExclusiveCallbackGroup()
 
-        semantic = ET.parse(get_robot_model("alohamini2pro").description_path("semantic"))
+        self.robot_model = str(self.get_parameter("robot_model").value)
+        semantic = ET.parse(get_robot_model(self.robot_model).description_path("semantic"))
         self.positions = {
             joint.attrib["name"]: float(joint.attrib["value"])
             for group in semantic.findall("group_state")
@@ -229,7 +231,8 @@ class JoyConTeleop(Node):
         self.samples: dict[str, InputSample] = {}
         self.arms = {side: ArmControl() for side in ("left", "right")}
         self.kinematics = {
-            side: AlohaMiniArmKinematics.from_description(side) for side in ("left", "right")
+            side: AlohaMiniArmKinematics.from_description(side, robot_model=self.robot_model)
+            for side in ("left", "right")
         }
         self.preview_base = [0.0, 0.0, 0.0]
         self.lift_target = self.positions["vertical_move"]
@@ -336,7 +339,7 @@ class JoyConTeleop(Node):
         for status in message.status:
             if (
                 status.name != "AlohaMini Host state bridge"
-                or status.hardware_id != "alohamini2pro"
+                or status.hardware_id != self.robot_model
             ):
                 continue
             values = {value.key: value.value for value in status.values}

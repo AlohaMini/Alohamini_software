@@ -20,6 +20,9 @@ def generate_launch_description() -> LaunchDescription:
                 ),
             ),
             DeclareLaunchArgument("host", default_value="127.0.0.1"),
+            DeclareLaunchArgument("robot_model", default_value="alohamini2pro"),
+            DeclareLaunchArgument("base_only", default_value="false"),
+            DeclareLaunchArgument("cmd_vel_topic", default_value="/cmd_vel"),
             DeclareLaunchArgument(
                 "arm_mapping_dir", default_value=str(WorkspacePaths().calibration / "hardware")
             ),
@@ -36,6 +39,11 @@ def generate_launch_description() -> LaunchDescription:
                     LaunchConfiguration("params_file"),
                     {
                         "host": LaunchConfiguration("host"),
+                        "expected_robot_model": LaunchConfiguration("robot_model"),
+                        "base_only": ParameterValue(
+                            LaunchConfiguration("base_only"), value_type=bool
+                        ),
+                        "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
                         "arm_mapping_dir": LaunchConfiguration("arm_mapping_dir"),
                         "state_timestamp_mode": LaunchConfiguration("state_timestamp_mode"),
                         "max_state_response_age_sec": ParameterValue(

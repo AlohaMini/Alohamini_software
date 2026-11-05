@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>alohamini_sensors</name><version>0.1.0</version>
+  <description>AlohaMini sensor composition</description>
+  <maintainer email="anncatto@users.noreply.github.com">anncatto</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>alohamini_core</exec_depend>
+  <exec_depend>alohamini_imu</exec_depend>
+  <exec_depend>alohamini_rplidar_c1</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

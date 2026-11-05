@@ -2,6 +2,8 @@
 
 树莓派按使用手册启动 Host；PC 使用 ROS2 Humble 的系统 Python，不在 Conda 环境中运行 ROS 节点。
 
+EDU 的雷达／IMU、底盘建图、地图保存与导航见 [ROS2 导航](ros2-navigation.md)。整机、MoveIt 和 Joy-Con 入口支持 `robot_model:=alohamini2edu`；默认仍为 `alohamini2pro`。
+
 ## 构建
 
 在已安装 ROS2 Humble、colcon 和 rosdep 的 PC 终端执行：
@@ -19,7 +21,7 @@ source install/local_setup.bash
 
 ## 整机状态与 TF
 
-适用 `alohamini2pro`。将左右臂 URDF 映射 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` 及 `lift_axis.yaml` 放在 `~/Alohamini_workspace/calibration/hardware/`。这些文件与舵机标定 JSON 分开。
+适用 `alohamini2pro` 和 `alohamini2edu`，默认使用前者。将左右臂 URDF 映射 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` 及 `lift_axis.yaml` 放在 `~/Alohamini_workspace/calibration/hardware/`。这些文件与舵机标定 JSON 分开。
 
 ```bash
 export ROS_LOG_DIR="${ALOHAMINI_WORKSPACE:-$HOME/Alohamini_workspace}/logs/ros2"
@@ -32,6 +34,7 @@ ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP>
 - `/alohamini_lerobot_bridge/measured_joint_states`：双臂位置与升降编码器推算位置。没有高度传感器，不提供关节力矩。
 - `/alohamini_lerobot_bridge/derived_wheel_states`：速度积分的车轮角度与固定虚拟根，不代表定位或实测里程计。
 - `/alohamini/base_velocity`：底盘速度，m/s 和 rad/s；`/diagnostics`：连接与状态有效性。
+- `/wheel/twist`：同一实测轮速推算的 `TwistWithCovarianceStamped`，供 EKF 使用；协方差为可配置的名义值，无命令速度回填。
 
 失联或反馈无效时停止刷新状态。默认使用 PC 接收时间；`state_timestamp_mode:=host_wall` 使用 Host 时间，须先同步两端时钟。
 
@@ -109,7 +112,7 @@ ros2 run alohamini_validation validate_tf
 
 ## Joy-Con 遥操
 
-适用 `alohamini2pro`。先将 Joy-Con 与 PC 配对。在仓库根目录安装可选驱动，再按本文开头构建 ROS 包：
+适用 `alohamini2pro` 和 `alohamini2edu`，默认使用前者。先将 Joy-Con 与 PC 配对。在仓库根目录安装可选驱动，再按本文开头构建 ROS 包：
 
 ```bash
 conda activate alohamini
@@ -227,7 +230,7 @@ ros2 run alohamini_calibration import_calibration \
 
 输出保留原始测量与候选状态；舵机 JSON 放在 `robots/`，ROS 映射在 `hardware/`，相机结果在 `cameras/`。`import_manifest.json` 记录来源、校验值及读取格式问题。导入不自动启用：核对同一台机器的当前标定后，才用 `arm_mapping_dir:=<导入目录>/hardware` 指定映射；候选内外参仍须单独验证。
 
-适用 `alohamini2pro`。工具只读取状态，不使能、回零或写 EEPROM。候选结果保存在 `~/Alohamini_workspace/calibration/hardware/`，须检查后手动安装。
+适用 `alohamini2pro` 和 `alohamini2edu`，默认使用前者。工具只读取状态，不使能、回零或写 EEPROM。候选结果保存在 `~/Alohamini_workspace/calibration/hardware/`，须检查后手动安装。
 
 双臂：将运行中 Host 对应的 `AlohaMiniRobot.json` 放到本机，使用已有控制方式将双臂摆到模型 Home 姿态、合拢夹爪，结束遥操并保持静止：
 

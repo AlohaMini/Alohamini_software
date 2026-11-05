@@ -1,0 +1,32 @@
+schema_version: 1
+robot_model: alohamini2edu
+# Nominal mounts, not an installed-device calibration. All positions are meters.
+# Pro base_link is REP-103. Legacy CAD (0,-0.20,0.12), yaw=pi/2
+# becomes (+0.20,0,0.12), yaw=pi in this frame; do not add another base yaw.
+lidar:
+  serial_port: /dev/lidar_c1
+  serial_baudrate: 460800
+  frame_id: laser_frame
+  parent_frame: base_link
+  xyz: [0.20, 0.0, 0.12]
+  rpy: [0.0, 0.0, 3.141592653589793]
+  calibration_status: nominal_requires_measurement
+  scan_mode: Standard
+  scan_frequency: 10.0
+  inverted: false
+imu:
+  serial_port: /dev/imu_usb
+  serial_baudrate: 115200
+  frame_id: imu_link
+  parent_frame: base_link
+  # The previous build verified forward/left/up axes. Translation is unspecified;
+  # the default EKF only uses yaw rate, which does not depend on this translation.
+  xyz: [0.0, 0.0, 0.0]
+  rpy: [0.0, 0.0, 0.0]
+  calibration_status: orientation_from_previous_build_translation_unsurveyed
+scan_filter:
+  # Rear-facing scan zero; keep the physical front hemisphere.
+  min_angle: 1.5707963267948966
+  max_angle: -1.5707963267948966
+  max_age_sec: 0.5
+  max_future_sec: 0.05

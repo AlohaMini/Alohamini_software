@@ -1,0 +1,118 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="alohamini2edu_moveit">
+  <material name="white">
+    <color rgba="1 1 1 1" />
+  </material>
+  <link name="base_link" />
+  <link name="base_cad_link">
+    <inertial>
+      <origin xyz="-0.000612633316587952 0.0211982181323527 0.18480862701929" rpy="0 0 0" />
+      <mass value="9.6" />
+      <inertia ixx="0.0430572156804441" ixy="2.26528207664206e-05" ixz="-2.26018311121341e-06" iyy="0.0410524394792579" iyz="-0.000903312515020603" izz="0.049398565500333" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/base_link.STL" />
+      </geometry>
+      <material name="cad_gray">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="base_cad_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 1.5707963267948966" />
+    <parent link="base_link" />
+    <child link="base_cad_link" />
+  </joint>
+  <link name="wheel1">
+    <inertial>
+      <origin xyz="-0.162572857658571 -0.0120532949042898 -0.146727084322472" rpy="0 0 0" />
+      <mass value="0.3" />
+      <inertia ixx="0.00407572038104681" ixy="-6.76396510435328e-05" ixz="1.40451380887768e-05" iyy="0.0145589776105535" iyz="2.48510949735345e-05" izz="0.014601230248201" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/Link2_dp.STL" />
+      </geometry>
+      <material name="cad_gray">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1.17346644402e-06 0 0.0255000028726" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.0634601" length="0.0510028" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="wheel1_joint" type="continuous">
+    <origin xyz="-0.130229464 0.074533188 0.063355" rpy="3.3411E-05 1.5707 2.618" />
+    <parent link="base_cad_link" />
+    <child link="wheel1" />
+    <axis xyz="-8.7287E-05 0 -1" />
+  </joint>
+  <link name="wheel2">
+    <inertial>
+      <origin xyz="-0.162560049646843 0.000838249024472069 -0.166596420117959" rpy="0 0 0" />
+      <mass value="0.3" />
+      <inertia ixx="0.00407571800972123" ixy="2.24531308569639e-05" ixz="-6.51427600848319e-05" iyy="0.0146121854339267" iyz="5.87436051587519e-06" izz="0.0145480247961533" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/Link3_dp.STL" />
+      </geometry>
+      <material name="cad_gray">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="3.72529029846e-09 0 0.0254999993271" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.0634601" length="0.0510001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="wheel2_joint" type="continuous">
+    <origin xyz="-0.001402062 -0.149010130 0.063355" rpy="1.5708 1.5708 0" />
+    <parent link="base_cad_link" />
+    <child link="wheel2" />
+    <axis xyz="0 0 -1" />
+  </joint>
+  <link name="wheel3">
+    <inertial>
+      <origin xyz="-0.01147039688487 -0.162560049646841 -0.145503153867049" rpy="0 0 0" />
+      <mass value="0.3" />
+      <inertia ixx="0.0145691523010344" ixy="-4.51887196776876e-05" ixz="3.07195513752956e-05" iyy="0.00407571800972123" iyz="5.20163617589223e-05" izz="0.0145910579290456" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/Link4_dp.STL" />
+      </geometry>
+      <material name="cad_gray">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0254999996675" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.0634609" length="0.0510001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="wheel3_joint" type="continuous">
+    <origin xyz="0.127692644 0.074396362 0.063355" rpy="-1.5708 0 -1.0472" />
+    <parent link="base_cad_link" />
+    <child link="wheel3" />
+    <axis xyz="0 0 -1" />
+  </joint>
+</robot>

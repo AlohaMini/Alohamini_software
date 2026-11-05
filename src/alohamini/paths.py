@@ -71,6 +71,13 @@ class WorkspacePaths:
     def logs(self) -> Path:
         return self.root / "logs"
 
+    @property
+    def maps(self) -> Path:
+        return self.root / "maps"
+
+    def map_revision(self, name: str, revision: str) -> Path:
+        return self.maps / _name(name) / _name(revision)
+
     def calibration_file(self, role: str, device_id: str) -> Path:
         if role not in ("robots", "teleoperators"):
             raise ValueError("Calibration role must be robots or teleoperators")

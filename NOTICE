@@ -470,3 +470,11 @@ LeWorldModel JEPA, predictor and SIGReg components adapt lucas-maes/le-wm at
 The retained license is policies/lewm/LICENSE.lewm; source metadata is in
 policies/lewm/SOURCE.json. Distributed regularization and visual-goal control
 use native platform adapters. No pretrained weights are distributed.
+
+The ROS C1 LiDAR and Hiwonder IMU adapters originate from
+AlohaMini/alohamini_lidar_imu at 052b6f9c01935f76ed89a486b046559ce251097c
+(package declarations: BSD-3-Clause). The C1 package retains the Slamtec
+SDK's BSD-2-Clause license in SLAMTEC_SDK_LICENSE and source headers.
+Source metadata is retained in each imported package's SOURCE.json.
+EDU mechanics derive from the platform's Pro model; models/alohamini2edu/
+provenance.json records its baseline and sensor configuration sources.

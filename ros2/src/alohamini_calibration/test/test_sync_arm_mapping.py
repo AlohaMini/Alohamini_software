@@ -215,3 +215,10 @@ def test_remote_copy_is_targeted_and_bounded(tmp_path, monkeypatch):
     assert "--protect-args" in calls[0][0][0]
     with pytest.raises(ValueError):
         MODULE.pull_json("pi5@host;other", "robot.json", tmp_path / "robot.json")
+
+
+def test_edu_template_uses_edu_identity_with_pro_motor_conventions():
+    pro = MODULE.default_template("left")
+    edu = MODULE.default_template("left", "alohamini2edu")
+    assert edu["robot_model"] == "alohamini2edu"
+    assert edu["joints"] == pro["joints"]

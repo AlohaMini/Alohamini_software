@@ -1079,3 +1079,54 @@ def test_network_recovery_stops_old_motion_without_automatically_reenabling(host
         assert not commands.status()[0]
     finally:
         receiver.close()
+
+
+def test_edu_base_only_bridge_needs_no_arm_mapping_and_publishes_measured_twist(ros, tmp_path):
+    with (
+        patch("alohamini_bridge.bridge_node.StateReceiver"),
+        patch(
+            "alohamini_bridge.bridge_node.load_mapper",
+            side_effect=AssertionError("arm mapping loaded"),
+        ),
+    ):
+        node = AlohaMiniBridge(
+            parameter_overrides=[
+                Parameter("expected_robot_model", value="alohamini2edu"),
+                Parameter("base_only", value=True),
+                Parameter("arm_mapping_dir", value=str(tmp_path / "missing")),
+            ]
+        )
+    try:
+        assert node.mapper is None and node.actions is None
+        assert node.commands.resources == {}
+        for name in (
+            "joint_pub",
+            "measured_joint_pub",
+            "derived_wheel_pub",
+            "base_velocity_pub",
+            "wheel_twist_pub",
+            "raw_pub",
+        ):
+            setattr(node, name, Mock())
+        snapshot = observation()
+        snapshot.payload["_robot_metadata"]["robot_model"] = "alohamini2edu"
+        for key in list(snapshot.payload):
+            if key.startswith("arm_") or key == "lift_axis.height_mm":
+                del snapshot.payload[key]
+        node.handle_observation(snapshot)
+        twist = node.wheel_twist_pub.publish.call_args.args[0]
+        assert twist.header.frame_id == "base_link"
+        assert twist.twist.twist.linear.x == 0.1
+        assert twist.twist.twist.angular.z == pytest.approx(math.pi / 2)
+        assert twist.twist.covariance[0] > 0 and twist.twist.covariance[35] > 0
+        node.measured_joint_pub.publish.assert_not_called()
+        assert node.joint_pub.publish.call_args.args[0].name == [
+            "wheel1_joint",
+            "wheel2_joint",
+            "wheel3_joint",
+        ]
+        # A duplicate response cannot refresh the ROS measurement timestamp.
+        node.handle_observation(snapshot)
+        assert node.wheel_twist_pub.publish.call_count == 1
+    finally:
+        node.destroy_node()

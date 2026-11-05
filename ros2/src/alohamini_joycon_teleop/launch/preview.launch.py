@@ -46,6 +46,7 @@ def generate_launch_description() -> LaunchDescription:
     moveit = Path(get_package_share_directory("alohamini_moveit_config"))
     return LaunchDescription(
         [
+            DeclareLaunchArgument("robot_model", default_value="alohamini2pro"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
             DeclareLaunchArgument("start_native_reader", default_value="true"),
             DeclareLaunchArgument(
@@ -56,6 +57,7 @@ def generate_launch_description() -> LaunchDescription:
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(moveit / "launch" / "plan_only.launch.py")),
                 launch_arguments={
+                    "robot_model": LaunchConfiguration("robot_model"),
                     "use_rviz": LaunchConfiguration("use_rviz"),
                     "joycon_preview": "true",
                 }.items(),
@@ -72,7 +74,7 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     str(package / "config" / "joycon.yaml"),
-                    {"hardware_mode": False},
+                    {"hardware_mode": False, "robot_model": LaunchConfiguration("robot_model")},
                 ],
             ),
         ]

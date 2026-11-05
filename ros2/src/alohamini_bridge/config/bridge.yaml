@@ -41,8 +41,9 @@ alohamini_lerobot_bridge:
     linear_y_scale: 1.0
     angular_z_scale: 1.0
     swap_xy: false
-    wheel_radius: 0.063
-    base_radius: 0.195
+    # Resolve nominal geometry from expected_robot_model.
+    wheel_radius: 0.0
+    base_radius: 0.0
     # Empty uses the workspace calibration/hardware directory.
     arm_mapping_dir: ""
     # Receipt time keeps MoveIt freshness checks on the ROS computer's clock.

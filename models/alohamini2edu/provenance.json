@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "authority": "alohamini-platform/models/alohamini2edu",
+  "base_model": "alohamini2pro",
+  "base_revision": 4,
+  "base_commit": "1e0719e74e636866f9412a0bee716e2d7f46da66",
+  "hardware_basis": "EDU is the 2 Pro platform with added LiDAR/IMU; installed hardware and sensor extrinsics require verification",
+  "upstream_provenance": "source_provenance.json",
+  "sensor_source": {
+    "repository": "https://github.com/AlohaMini/alohamini_lidar_imu",
+    "revision": "052b6f9c01935f76ed89a486b046559ce251097c"
+  },
+  "transformations": [
+    "Preserve Pro actuator geometry, kinematics and limits; model identity renamed to EDU",
+    "Navigation description removes planning virtual root; base description omits arm/lift transforms without measurements",
+    "Sensor mounts are configured separately; CAD-relative laser transform converted to REP-103 base_link",
+    "Legacy 0.05/0.125 m chassis geometry and ros2_control motor drivers are not imported"
+  ],
+  "files": [
+    {
+      "path": "config/kinematics/encoder_conventions.yaml",
+      "sha256": "5fd43c9ec708758cea8d63a3f3d317a279e9d426c682bd5157445fe89a01a303"
+    },
+    {
+      "path": "config/kinematics/joint_limits.yaml",
+      "sha256": "91a10045fc73c2d2555ef3b7485af3b18e60cc2aa591ae3426c3bd5f405725d1"
+    },
+    {
+      "path": "config/kinematics/kinematics.yaml",
+      "sha256": "7c937de3e803bc4827f162f759ae89e10400f8cd50b1d1482853fbdfcbc866c0"
+    },
+    {
+      "path": "config/kinematics/left_chain.json",
+      "sha256": "f23a9ec5a24f28c42574255b6d07903c2346ad1b2bd852b4e90dd62154bc8fda"
+    },
+    {
+      "path": "config/kinematics/physical_parameters.yaml",
+      "sha256": "75d8bf1c146dba82c2c48040e464ffe3564442a3aad0e17706a87eed68e1a1c7"
+    },
+    {
+      "path": "config/kinematics/right_arm_kinematics.yaml",
+      "sha256": "82466c69709d135ffd2dc883f57f31d322e56dd1b9bd7d9dbed74039af00c962"
+    },
+    {
+      "path": "config/kinematics/right_chain.json",
+      "sha256": "0acb6087dc442d6bb003bfb42338a21543973a11c55351e133a97d2df34fc5cd"
+    },
+    {
+      "path": "config/kinematics/upright_forward.json",
+      "sha256": "a916fde1e671c5fbc2370d91456f48712c7f81842f27205ac0bf8d68688d9b85"
+    },
+    {
+      "path": "config/navigation/collision.yaml",
+      "sha256": "dfae0c119a72cf871a591fb920bca2478d43a3833a74269e8b9b44f394ac4105"
+    },
+    {
+      "path": "config/navigation/nav2.yaml",
+      "sha256": "6082140816d1102247c0bc13d3aa8d15b44b5158804207680b25536e371fc5e5"
+    },
+    {
+      "path": "config/navigation/slam.yaml",
+      "sha256": "e2c555fab290944f5770fcad01a0a8a30b8c999d0e7973e283c899bdb07de08f"
+    },
+    {
+      "path": "config/sensors.yaml",
+      "sha256": "a1cb63f5123afe1d4724f4465a1ce4bd0731ba470be654fd6950d484f2c47f25"
+    },
+    {
+      "path": "meshes/collision/arm_base_vhacd.stl",
+      "sha256": "773088ef3625b4c4022e54f88bd566a69e6371cc87ef9354cdc8bfa1315d8d63"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd.stl",
+      "sha256": "fc691458592c01ffa4ae1bacca777f28e0180b9fa82bf10e10ba57c5e994d6e0"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_00.stl",
+      "sha256": "9e5f5e412cdd63ee0a4431eea23314f1a66b9f626f5ee442a3748f4453487e60"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_01.stl",
+      "sha256": "d9146778afb8ae9243a0833683a1bbe60c55d47318dd3530461139c510915d83"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_02.stl",
+      "sha256": "848a3aa72b1feb9ffd8a9648690f12bef79e1c1269f80b41e07fbec383388bcb"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_03.stl",
+      "sha256": "6db59d5c81e0ea0f24ded17909048611cb53500a9d9c8f11b6ac0761b0aa9561"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_04.stl",
+      "sha256": "3864d3cf2c24436c01a5da33615dc02a16507af31acb96df055d7ad7885b1132"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_05.stl",
+      "sha256": "9823ad92f3f538cfcd824295b34d2106b1394a133e2e32b6a7563209fec70b88"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_06.stl",
+      "sha256": "6e8d218e3ba94890204a65660a6c848c5ac47716d49abe55b7bbccd35fec5325"
+    },
+    {
+      "path": "meshes/collision/fixed_jaw_vhacd_07.stl",
+      "sha256": "1e8a16cd66585d9431bc7d8ed484d67131386d7a30425259087cc98a5618314f"
+    },
+    {
+      "path": "meshes/collision/lower_arm_vhacd.stl",
+      "sha256": "b0dfc9aabf57877d0b956bc0c312c7c94f458107a9683d5c1dc2d7b22e21713d"
+    },
+    {
+      "path": "meshes/collision/moving_jaw_vhacd_00.stl",
+      "sha256": "0da7c8d1b18b6454e4a34b56a055503a47c943fe3faef567bd72362c2c1822f8"
+    },
+    {
+      "path": "meshes/collision/moving_jaw_vhacd_01.stl",
+      "sha256": "dcbf7771c604342fdae0769305e8551b860a936e77cafdc85e0e3c9eddc9602b"
+    },
+    {
+      "path": "meshes/collision/moving_jaw_vhacd_02.stl",
+      "sha256": "7dedb768b305b318c8f3371f3fe255c0e1c30d25b839c3db4b313bec484227a1"
+    },
+    {
+      "path": "meshes/collision/moving_jaw_vhacd_03.stl",
+      "sha256": "7409829d7b005ac0ff2620b9e8b2dbb8f9a3fa541a3fc258fd8a644338e4cc6a"
+    },
+    {
+      "path": "meshes/collision/moving_jaw_vhacd_04.stl",
+      "sha256": "89ed4549b14633e040ba77f5c92821c28f5bea75736f4ec3b5384f59b472e27f"
+    },
+    {
+      "path": "meshes/collision/moving_jaw_vhacd_05.stl",
+      "sha256": "88d2b8700b62c58590e5eb98ecb3163a437220f47fe6a21244f0ba82615c1035"
+    },
+    {
+      "path": "meshes/collision/rotation_pitch_vhacd.stl",
+      "sha256": "e9d0bd018a6e9b15c429410dab05b4a4453cdd8161e6ce4004ebdd4dbf1c56c0"
+    },
+    {
+      "path": "meshes/collision/upper_arm_vhacd.stl",
+      "sha256": "3f44cf0df5a62e786067b585dcc9c52c6a0220069d5607fa664b1d010a5e5e40"
+    },
+    {
+      "path": "meshes/collision/wrist_camera_vhacd.stl",
+      "sha256": "eaa6f9c251e6768f9ed17d6f9132f6da4ba72ee0f8ada79494ef4637ac25891a"
+    },
+    {
+      "path": "meshes/collision/wrist_pitch_roll_vhacd.stl",
+      "sha256": "8a623fda5365e8a8b639b77818dbe4947824501b6c3a4af85c2d8de7bfaeb39f"
+    },
+    {
+      "path": "meshes/collision/wrist_yaw_vhacd.stl",
+      "sha256": "66afca76602ba797a75a6faaf5f2c94b59e88209cc05a467202b2095c290bebf"
+    },
+    {
+      "path": "meshes/visual/Link2_dp.STL",
+      "sha256": "1f89a81a2056a5e5b08e281d4aa0467b8652cbc646a1c7be8febb9d60fbcea03"
+    },
+    {
+      "path": "meshes/visual/Link3_dp.STL",
+      "sha256": "501190ed631c9f359ffc511ff1100ba1e22c91cbf386c673de14b40a8bf6b947"
+    },
+    {
+      "path": "meshes/visual/Link4_dp.STL",
+      "sha256": "2da7cf01ebd33da112eec412f923ee4280ae0a93c62efbf9d83e1213abfde799"
+    },
+    {
+      "path": "meshes/visual/back_camera.STL",
+      "sha256": "2c2baefbd92ef9ba8daf9f46b5a2757b1b101cf6cf53b2e41210ed7f8d35a7d1"
+    },
+    {
+      "path": "meshes/visual/base_link.STL",
+      "sha256": "3fd5f037e721b8cdfaf489e6280dcbb9b9cf5c96f7d6304f7bd3aa8bdace7f62"
+    },
+    {
+      "path": "meshes/visual/chest_camera.STL",
+      "sha256": "1d669640257cd80d35a8f4bb8b8a8f3faf7361d72740445890aaf9d2932ed3e3"
+    },
+    {
+      "path": "meshes/visual/front_camera.STL",
+      "sha256": "f84933fa72c1a17f0160eb39e003fa5f7e7f88d978524a2100bfd91eec725cee"
+    },
+    {
+      "path": "meshes/visual/left_Base.STL",
+      "sha256": "e434f4998e44e8ba1ffa2b90f97a3811e8be025dea779a66a5c7f365f46f6913"
+    },
+    {
+      "path": "meshes/visual/left_Fixed_Jaw.STL",
+      "sha256": "de4af3b62e96ea792137033c4322681cf929df7d563e64f2526c5edb0d2e7b69"
+    },
+    {
+      "path": "meshes/visual/left_Lower_Arm.STL",
+      "sha256": "a26bd76bb2b28df4aa175f3ee8b852d1b9a683af681d4b509deb21894e72de20"
+    },
+    {
+      "path": "meshes/visual/left_Moving_Jaw.STL",
+      "sha256": "01710e46191ba7e868cc78bdf34faafef7b154ee8869e2ec5a484ef13c81aea9"
+    },
+    {
+      "path": "meshes/visual/left_Rotation_Pitch.STL",
+      "sha256": "b0d45384570ce976bf5ec4773b822c650dc5e063484810592492443909bda767"
+    },
+    {
+      "path": "meshes/visual/left_Upper_Arm.STL",
+      "sha256": "e0ec84ba9c317f76ad153c79feed5c430a5d1ea7b161b1386ef93f98e0f6f079"
+    },
+    {
+      "path": "meshes/visual/left_Wrist_Pitch_Roll.STL",
+      "sha256": "912f3c1dcbde86bc6e088aef2e76ad65d10fd8b75e5cf075686ea4a5a5a44428"
+    },
+    {
+      "path": "meshes/visual/left_camera.STL",
+      "sha256": "d6573d3a98352ccf784996440a8299474f4c9692f9ed2ae5e44ac499e2b93e05"
+    },
+    {
+      "path": "meshes/visual/left_wrist_yaw.STL",
+      "sha256": "287208b4608245740a148f45c31668b3de975772fa15cdbfb910cd405d39b511"
+    },
+    {
+      "path": "meshes/visual/right_Base.STL",
+      "sha256": "e434f4998e44e8ba1ffa2b90f97a3811e8be025dea779a66a5c7f365f46f6913"
+    },
+    {
+      "path": "meshes/visual/right_Fixed_Jaw.STL",
+      "sha256": "de4af3b62e96ea792137033c4322681cf929df7d563e64f2526c5edb0d2e7b69"
+    },
+    {
+      "path": "meshes/visual/right_Lower_Arm.STL",
+      "sha256": "a26bd76bb2b28df4aa175f3ee8b852d1b9a683af681d4b509deb21894e72de20"
+    },
+    {
+      "path": "meshes/visual/right_Moving_Jaw.STL",
+      "sha256": "01710e46191ba7e868cc78bdf34faafef7b154ee8869e2ec5a484ef13c81aea9"
+    },
+    {
+      "path": "meshes/visual/right_Rotation_Pitch.STL",
+      "sha256": "b0d45384570ce976bf5ec4773b822c650dc5e063484810592492443909bda767"
+    },
+    {
+      "path": "meshes/visual/right_Upper_Arm.STL",
+      "sha256": "e0ec84ba9c317f76ad153c79feed5c430a5d1ea7b161b1386ef93f98e0f6f079"
+    },
+    {
+      "path": "meshes/visual/right_Wrist_Pitch_Roll.STL",
+      "sha256": "912f3c1dcbde86bc6e088aef2e76ad65d10fd8b75e5cf075686ea4a5a5a44428"
+    },
+    {
+      "path": "meshes/visual/right_camera.STL",
+      "sha256": "d6573d3a98352ccf784996440a8299474f4c9692f9ed2ae5e44ac499e2b93e05"
+    },
+    {
+      "path": "meshes/visual/right_wrist_yaw.STL",
+      "sha256": "287208b4608245740a148f45c31668b3de975772fa15cdbfb910cd405d39b511"
+    },
+    {
+      "path": "meshes/visual/vertical_link.STL",
+      "sha256": "ca0df2d2b789b805c808a7550d2974bf005571db91b2ac3bb929df770011da66"
+    },
+    {
+      "path": "model.json",
+      "sha256": "3531052238dda21133ac4732efe2c8c98f059cbbef3dac71db2287f81ea1df7e"
+    },
+    {
+      "path": "source_provenance.json",
+      "sha256": "2b47b1585b97e5b7b6c5906bf3e96032cf08dba84955da8f953ddc56c8fcdc9a"
+    },
+    {
+      "path": "srdf/alohamini2edu.srdf",
+      "sha256": "c61e1c9c104d465e9d39d287f35ac851a4895d5852a72e9f0a19f36a27dccf10"
+    },
+    {
+      "path": "urdf/alohamini2edu.urdf",
+      "sha256": "cc97b672a24fa98d54998f4969ebd86f402cddcdec789c4d9f4f313aea268d0c"
+    },
+    {
+      "path": "urdf/alohamini2edu_base.urdf",
+      "sha256": "c7727659dc548cc9109a600df8535c0f7bfe30c9c8b255cd8a634dd75d6656ef"
+    },
+    {
+      "path": "urdf/alohamini2edu_kinematic.urdf",
+      "sha256": "4c592be31149f3743b9461d8a4c481b92fcaed292bc3798088b518fc23db73ae"
+    },
+    {
+      "path": "urdf/alohamini2edu_left_kinematic.urdf",
+      "sha256": "1c17b0702fdb252fc902a37744db790735d20595030bbdf4c242f2ae22766a69"
+    },
+    {
+      "path": "urdf/alohamini2edu_navigation.urdf",
+      "sha256": "774c818b124c6449051232661081390b28826dd3a7b4f974f6d9dc6f3efab55c"
+    },
+    {
+      "path": "urdf/alohamini2edu_right_kinematic.urdf",
+      "sha256": "2a1c4b63da6f55b7e704d5eb6284d35d69b94662601a383d95fdc3eac216a92e"
+    },
+    {
+      "path": "urdf/source/alohamini2edu_cad.urdf",
+      "sha256": "91a53da62766b3b7768852990864466b2a5f0b27f134c161e71e98e372c2a800"
+    },
+    {
+      "path": "urdf/source/alohamini2edu_right_arm.urdf",
+      "sha256": "11d1455126fd76059630751ed25c97b8a36a0bcc3b2d3fc9102e73a451833506"
+    }
+  ]
+}

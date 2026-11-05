@@ -1,0 +1,7 @@
+# Stable device name for one specific Slamtec RPLIDAR C1 USB serial adapter.
+# Replace <c1_serial> with the value read from:
+#   udevadm info --attribute-walk --name=/dev/ttyUSB0 | awk -F'"' '/ATTRS{serial}/{print $2; exit}'
+# Keep this rule serial-number based so another CP210x device cannot claim the
+# lidar alias. The C1 adapter's common VID/PID is 10c4:ea60, but it is not used
+# as the identity because VID/PID alone is not unique on a robot.
+SUBSYSTEM=="tty", KERNEL=="ttyUSB[0-9]*", ATTRS{serial}=="<c1_serial>", MODE:="0660", GROUP="dialout", SYMLINK+="lidar_c1"
