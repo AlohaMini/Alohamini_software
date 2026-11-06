@@ -745,6 +745,52 @@ checkpoint 保存槽位、统计量、标定和 FK/IK 几何；部署时自动�
 恢复原 Host 动作顺序和单位，底盘／升降直接还原。退化旋转、不可达位姿或超出关节限位时拒绝该动作块。
 原 18 维 `recorded` checkpoint 不能通过改开关变成 `alpha80`，须从官方基座重新微调。
 
+### Xiaomi-Robotics-1
+
+使用 `xiaomi_robotics1`，本地基座目录包含官方 `model_states.pt`；`assets_path` 指向
+Qwen3-VL-4B-Instruct 的配置、tokenizer 和图像处理文件。
+
+```bash
+pip install -e '.[xiaomi_robotics1]'
+alohamini train --policy.type=xiaomi_robotics1 \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/xiaomi-robotics1" \
+  --policy.assets_path="$HOME/Alohamini_workspace/pretrained/qwen3-vl-4b-assets" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --batch_size=1 --gradient_accumulation_steps=8 \
+  --distributed_backend=fsdp2 --num_processes=4 \
+  --output_dir="$HOME/Alohamini_workspace/runs/xiaomi_01" --background
+```
+
+默认读取 `forward,wrist_left,wrist_right` 三路 RGB 和任务文本；使用 30 步动作块、BF16、同步执行。
+关节观测保留，动作经保存的标定转换为工具坐标系末端增量；旋转采用旋转向量，夹爪采用开度增量。
+统计量按训练集拟合，动作逐时间步计算 mean/std，状态使用 q01/q99。
+缺少运动学描述时，按[关节、TCP 与相对目标](#关节tcp-与相对目标)补充来源。
+升降轴保持当前高度，底盘使用数据中的速度标签。尚不支持官方异步动作前缀执行。
+
+### LingBot-VLA 2.0
+
+使用 `lingbot_vla_v2`，本地基座包含官方 LeRobot 格式 `config.json`、`model.safetensors`，
+以及 Qwen 配置、tokenizer、图像处理资源。教师目录包含 `moge/model.pt`、`depth/model.pt`、
+`dino_video/teacher_step_10000.pth` 和 `dino_video/config.yaml`。
+
+```bash
+pip install -e '.[lingbot_vla_v2]'
+alohamini train --policy.type=lingbot_vla_v2 \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/lingbot_vla_v2_base" \
+  --policy.teacher_root="$HOME/Alohamini_workspace/pretrained/lingbot_vla_v2_teachers" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --batch_size=1 --gradient_accumulation_steps=8 \
+  --distributed_backend=fsdp2 --num_processes=4 \
+  --output_dir="$HOME/Alohamini_workspace/runs/lingbot_01" --background
+```
+
+默认读取 `forward,wrist_left,wrist_right` 三路 RGB、完整 18 维状态与任务文本，映射到 55 维语义槽。
+关节动作相对当前观测，夹爪和底盘速度保留绝对值；动作转换后计算训练集 mean/std。
+升降轴默认保持当前高度；显式设置 `--policy.lift_mode=reserved` 时使用平台扩展槽训练升降动作。
+训练使用未来帧计算教师损失，推理只读取当前帧，部署无需教师权重。
+优化器采用平台 AdamW 并保留 MoE 专家学习率倍率；尚不支持 Muon 和 RTC 执行。
+显卡数和 batch 按模型显存需求调整。
+
 ### Spirit v1.5
 
 使用本地 Spirit 基座及 Qwen 配置、tokenizer 和图像处理资源：

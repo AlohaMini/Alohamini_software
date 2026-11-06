@@ -25,9 +25,11 @@ dit_policy = ["alohamini-platform[learning]"]
 acdit = ["alohamini-platform[learning]", "timm>=1.0,<2"]
 gr00t_n17 = ["alohamini-platform[learning]", "protobuf>=5"]
 lewm = ["alohamini-platform[learning]"]
+xiaomi_robotics1 = ["alohamini-platform[learning,kinematics]"]
+lingbot_vla_v2 = ["alohamini-platform[learning]", "pyyaml>=6"]
 learning = [
     "diffusers==0.39.0",
-    "transformers==5.0.0",
+    "transformers==5.21.0",
     "sentencepiece==0.2.0",
     "scipy>=1.14,<2",
     "num2words==0.5.14",
@@ -73,6 +75,9 @@ alohamini = "alohamini.cli:main"
 "alohamini.policies.hyvla05" = ["LICENSE.hyvla05", "SOURCE.json"]
 "alohamini.policies.openwam" = ["LICENSE.openwam", "SOURCE.json", "licenses/wan/*"]
 
+"alohamini.policies.xiaomi_robotics1" = ["LICENSE.xiaomi", "SOURCE.json"]
+"alohamini.policies.lingbot_vla_v2" = ["LICENSE.lingbot", "SOURCE.json"]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 100
@@ -96,3 +101,6 @@ select = ["E", "F", "I", "UP", "B"]
 "src/alohamini/policies/openwam/_vendor/**/*.py" = ["ALL"]
 "src/alohamini/policies/gr00t_n17/_vendor/**/*.py" = ["ALL"]
 "src/alohamini/policies/lewm/_vendor/**/*.py" = ["ALL"]
+
+"src/alohamini/policies/xiaomi_robotics1/_vendor/**/*.py" = ["ALL"]
+"src/alohamini/policies/lingbot_vla_v2/_vendor/**/*.py" = ["ALL"]

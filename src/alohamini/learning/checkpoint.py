@@ -9,6 +9,10 @@ from copy import deepcopy
 from pathlib import Path
 
 ASSET_FIELDS = {
+    "xiaomi_robotics1": ("assets_path",),
+    "lingbot_vla_v2": (
+        "tokenizer_path", "text_tokenizer_path", "image_processor_path", "teacher_root",
+    ),
     "gr00t_n17": ("assets_path",),
     "acdit": ("assets_path",),
     "hyvla05": ("assets_path",),

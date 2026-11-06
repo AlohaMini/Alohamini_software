@@ -73,6 +73,13 @@ def small_pi05(tmp_path, monkeypatch):
 def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     recording, tmp_path, monkeypatch, request, kind
 ):
+    if kind in ("xiaomi_robotics1", "lingbot_vla_v2"):
+        # These protocols require three views and named geometry. Exercise the
+        # same v3/trainer/checkpoint path with its calibrated three-view fixture.
+        from test_xiaomi_lingbot import check_native_dataset_checkpoint
+
+        check_native_dataset_checkpoint(tmp_path, kind)
+        return
     root = tmp_path / "original-v3"
     export_lerobot(recording, root)
     (root / "meta/alohamini.json").unlink()

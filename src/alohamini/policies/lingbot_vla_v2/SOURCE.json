@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/Robbyant/lingbot-vla-v2",
+  "revision": "be969b8fd117fb70550c5d4bf4bc328211b5b1b6",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "8cd02c155c21f98663482e84de6772e5e04e4ed1",
+    "snapshot_sha256": "83bee8330fb7b16750f36b84fdecb70b32e1af1abe53be4894fcb257a9d89bc2",
+    "patch_sha256": "3c8b7aaa6f279edef29ba8f28d0e561581dc1f468e0576368ee7b9a8e6e29980",
+    "path": "src/lerobot/policies/lingbot_vla_v2"
+  },
+  "changes": [
+    "Model core only; native platform training/data/checkpoint interfaces",
+    "Correct official canonical semantic order, explicit named AlohaMini mapping",
+    "Causal inference frames; future frames available only for teacher losses",
+    "Local-only teacher weights and Qwen assets; no implicit Hub download",
+    "FSDP-callable FP32 router; preserved upstream keys",
+    "AdamW expert LR multiplier; Muon and RTC executor unsupported",
+    "Qwen vision position helpers retained from Transformers 5.0.0 for checkpoint compatibility",
+    "DINOv2 teacher checkpoint namespace adaptation for Transformers 5.21",
+    "Disable retained full expert caches under FSDP; keep shard updates visible"
+  ],
+  "license": "Apache-2.0",
+  "pretrained_weights_included": false,
+  "embedded_licenses": [
+    "MIT: Microsoft MoGe, retained in depth_teachers.py",
+    "MIT: open_flamingo authors, retained in align_heads.py"
+  ]
+}
