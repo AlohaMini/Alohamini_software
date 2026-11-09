@@ -3,7 +3,7 @@
 python = "3.12"
 uv = "0.11.30"
 cooldown_days = 7
-pc_extras = ["pc", "analysis", "kinematics", "acdit", "hyvla05", "openwam", "gr00t_n17"]
+pc_extras = ["pc", "analysis", "kinematics", "acdit", "hyvla05", "openwam", "gr00t_n17", "xiaomi_robotics1", "lingbot_vla_v2"]
 pins = [
   "torch==2.11.0", "torchvision==0.26.0", "numpy==2.2.6",
   "pyzmq==27.1.0", "pyarrow==24.0.0",

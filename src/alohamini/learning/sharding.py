@@ -76,6 +76,14 @@ def prepare_sharded_model(model, optimizer, *, preferred=()):
     names = {id(p): name for name, p in model.named_parameters()}
     groups = [[names[id(p)] for p in group["params"]] for group in optimizer.param_groups]
     units = sharding_units(model, preferred)
+    # fully_shard replaces Parameters with DTensors. Keeping the old Parameters
+    # in optimizer groups retains their full CUDA storage until every unit has
+    # been processed, defeating CPU-to-shard initialization for large models.
+    # Rebind groups by name below, after all replacements are complete.
+    if optimizer.state:
+        raise ValueError("Prepare FSDP before initializing or restoring optimizer state")
+    for group in optimizer.param_groups:
+        group["params"] = []
     # Preserve BF16 backbones, FP32 norms/adapters, and batch target dtypes. AMP
     # remains controlled by Execution.autocast rather than FSDP input casting.
     precision = MixedPrecisionPolicy(reduce_dtype=torch.float32, cast_forward_inputs=False)

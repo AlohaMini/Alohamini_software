@@ -3,6 +3,8 @@
 from importlib import import_module
 
 ALGORITHMS = {
+    "xiaomi_robotics1": ("alohamini.policies.xiaomi_robotics1.adapter", "XiaomiAlgorithm"),
+    "lingbot_vla_v2": ("alohamini.policies.lingbot_vla_v2.adapter", "LingBotAlgorithm"),
     "gr00t_n17": ("alohamini.policies.gr00t_n17.adapter", "GR00TN17Algorithm"),
     "lewm": ("alohamini.policies.lewm.adapter", "LeWMAlgorithm"),
     "acdit": ("alohamini.policies.acdit.adapter", "ACDiTAlgorithm"),

@@ -1,4 +1,4 @@
-"""OpenWAM-alpha architecture and explicit recorded-coordinate fine-tuning."""
+"""OpenWAM-alpha architecture with recorded or official semantic coordinates."""
 
 import math
 from dataclasses import dataclass, field
@@ -38,6 +38,7 @@ class OpenWAMConfig(PolicyConfig):
     canvas_size: tuple = (384, 320)
     camera_layout: list = field(default_factory=list)
     action_representation: str = "recorded"
+    alpha80_layout: dict = field(default_factory=dict)
     num_steps: int = 10
     shift: float = 5.0
     lambda_video: float = 1.0
@@ -60,10 +61,24 @@ class OpenWAMConfig(PolicyConfig):
         super().__post_init__()
         if not self.assets_path or self.robot_state_feature is None or not self.image_features:
             raise ValueError("OpenWAM requires local assets, state and cameras")
-        if self.action_representation != "recorded":
-            raise ValueError(
-                "Native OpenWAM fine-tuning uses recorded coordinates, not inferred 80D slots"
+        if self.action_representation not in ("recorded", "alpha80"):
+            raise ValueError("OpenWAM action_representation must be recorded or alpha80")
+        if self.action_representation == "alpha80":
+            from .semantic import validate_layout
+
+            validate_layout(
+                self.alpha80_layout,
+                state_width=self.robot_state_feature.shape[0],
+                action_width=self.action_feature.shape[0],
             )
+            if self.normalization_mapping != {
+                "VISUAL": "IDENTITY",
+                "STATE": "MIN_MAX",
+                "ACTION": "MIN_MAX",
+            }:
+                raise ValueError("alpha80 requires its declared min/max normalization contract")
+        elif self.alpha80_layout:
+            raise ValueError("alpha80_layout requires action_representation=alpha80")
         for name in ("chunk_size", "n_action_steps", "video_stride", "num_steps"):
             if type(getattr(self, name)) is not int or getattr(self, name) < 1:
                 raise ValueError(f"{name} must be a positive integer")

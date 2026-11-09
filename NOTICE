@@ -478,3 +478,13 @@ SDK's BSD-2-Clause license in SLAMTEC_SDK_LICENSE and source headers.
 Source metadata is retained in each imported package's SOURCE.json.
 EDU mechanics derive from the platform's Pro model; models/alohamini2edu/
 provenance.json records its baseline and sensor configuration sources.
+
+The Xiaomi-Robotics-1 model and Qwen3-VL extensions adapt XiaomiRobotics/
+Xiaomi-Robotics-1 at 0dd7aef8dc87296246aae812a1f59ccb708e5546
+(Apache-2.0, Copyright 2026 Xiaomi Corporation and the Qwen/Hugging Face teams).
+The LingBot-VLA 2.0 model core adapts Robbyant/lingbot-vla-v2 through the
+pinned Hugging Face LeRobot port (Apache-2.0, Copyright 2026 HuggingFace Inc.
+and the Robbyant Team). Native platform data, trainer and checkpoint adapters
+replace the upstream framework wrappers. Retained licenses and full source
+metadata are in policies/xiaomi_robotics1/ and policies/lingbot_vla_v2/.
+No pretrained weights are distributed.

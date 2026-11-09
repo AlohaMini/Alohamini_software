@@ -95,7 +95,7 @@ jobs:
             tests/test_lerobot_algorithms.py tests/test_training_precision.py \
             tests/test_distributed_validation.py tests/test_validation_loading.py \
             tests/test_checkpoint_retention.py tests/test_resume_paths.py \
-            tests/test_acdit_training.py
+            tests/test_acdit_training.py tests/test_xiaomi_lingbot.py
       - name: Summarize compatibility results
         if: always() && steps.regression.outcome != 'skipped'
         run: python env/ci_summary.py reports/cpu.xml >> "$GITHUB_STEP_SUMMARY"

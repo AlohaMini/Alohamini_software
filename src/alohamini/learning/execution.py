@@ -291,9 +291,11 @@ class Execution:
         if not torch.isfinite(counts).all() or (counts < 0).any():
             raise ValueError("Loss denominators must be finite and nonnegative")
         totals = self.accelerator.reduce(counts.sum(0), reduction="sum")
-        if (totals <= 0).any():
-            raise ValueError("Each loss term needs a positive global denominator")
-        weights = (self.world_size * counts / totals).tolist()
+        if not (totals > 0).any():
+            raise ValueError("At least one loss term needs a positive global denominator")
+        # An optional objective can have no valid targets in an update (e.g. a
+        # frequency loss that excludes incomplete chunks). Its contribution is zero.
+        weights = (self.world_size * counts / torch.where(totals > 0, totals, 1)).tolist()
         metrics = torch.zeros((), device=self.device, dtype=torch.float64)
         diagnostics = MetricAccumulator(metric_specs, device=self.device)
         for index, raw in enumerate(batches):

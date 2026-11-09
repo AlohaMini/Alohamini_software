@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/XiaomiRobotics/Xiaomi-Robotics-1",
+  "revision": "0dd7aef8dc87296246aae812a1f59ccb708e5546",
+  "files": [
+    "xr1/mibot/models/VLA/XR1.py",
+    "xr1/mibot/models/VLM/qwen3vl.py",
+    "xr1/mibot/utils/io.py"
+  ],
+  "changes": [
+    "Native platform trainer/processor/checkpoint; no Lightning or MMEngine runtime",
+    "Native PyTorch RMSNorm/RoPE and SDPA; preserved state-dict names",
+    "Causal image/text conditioning excludes auxiliary future-action tokens",
+    "Valid coordinate masks and complete-window frequency reduction; calibrated AlohaMini FK/IK",
+    "Explicit synchronous preset; asynchronous prefix execution unsupported"
+  ],
+  "license": "Apache-2.0",
+  "pretrained_weights_included": false
+}

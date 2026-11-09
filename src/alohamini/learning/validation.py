@@ -118,8 +118,8 @@ def loss_denominators(samples, reduction):
             if not math.isfinite(value) or value < 0:
                 raise ValueError("Evaluation loss denominators must be finite and nonnegative")
             totals[key] = totals.get(key, 0) + value
-    if not totals or any(value <= 0 for value in totals.values()):
-        raise ValueError("Evaluation loss terms require positive denominators")
+    if not totals or not any(value > 0 for value in totals.values()):
+        raise ValueError("Evaluation requires at least one positive loss denominator")
     return totals
 
 
@@ -134,7 +134,10 @@ def evaluate_loss(
         counts = reduction(raw)
         batch = processor(raw)
         batch.update(
-            {key: 0.0 if padding else counts[key] / total for key, total in totals.items()}
+            {
+                key: 0.0 if padding or total == 0 else counts[key] / total
+                for key, total in totals.items()
+            }
         )
         loss, outputs = model(batch)
         if metrics is not None and not padding:

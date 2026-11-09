@@ -698,13 +698,98 @@ alohamini train --policy.type=openwam \
 `--policy.camera_layout='["observation.images.head","observation.images.left",null]'` 可显式指定，须覆盖全部所选相机。
 
 默认动作块 32 行、视频取 0、4、…、32 行；`chunk_size` 须为 `4 × video_stride` 的整数倍。
-保留记录 state/action 字段和单位，使用训练集 min/max；不同动作维度重新初始化机器人输入／输出投影。
+默认 `--policy.action_representation=recorded`，保留记录 state/action 字段和单位，使用训练集 min/max；
+从官方基座导入时重新初始化动作输入、动作输出和状态投影。
 视频与动作联合流匹配，VAE、umT5 冻结；未来图像仅作训练监督，推理使用当前图像，默认同步去噪 10 步、shift 5。
 默认 BF16、重计算开启；显存不足时使用通用 FSDP2。支持训练器 EMA 和普通远程动作块，未接入 RTC。
 
 运行时只读本地资源，checkpoint 含冻结编码器及 tokenizer，可独立迁移。
 保存时须预留两份完整 checkpoint 的空间；新文件写入成功后才清理旧文件。
 来源与预设见 [SOURCE.json](../src/alohamini/policies/openwam/SOURCE.json)。
+
+要保留官方 80 维末端语义，使用可选的 `alpha80` 模式：
+
+```bash
+alohamini train --policy.type=openwam \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/openwam" \
+  --policy.action_representation=alpha80 \
+  --state=joint_position,base_velocity,lift_height \
+  --run_name=openwam_tcp80 --batch_size=1 --steps=30000 \
+  --keep_last_checkpoints=1 --background
+```
+
+该模式自动设置 TCP state、绝对 TCP action 和 `rotation_6d_columns`，保留官方三个 80 维投影层。
+FK 使用数据集的运动学描述；标准 AlohaMini 数据可由记录的标定信息和机型参考姿态解析。
+非标准标定须用 `--data.kinematics.spec=/path/to/coordinates.json` 声明，
+参见[关节、TCP 与相对目标](#关节tcp-与相对目标)。缺少标定或字段不匹配时拒绝训练。
+双臂必须明确命名为 `left`、`right`，且所选 state 包含每臂完整关节位置与夹爪。
+
+| 内容 | 80 维槽位（从 0 开始，含两端） | 编码／单位 |
+| --- | --- | --- |
+| 左臂位置、旋转、夹爪 | 0–2、3–8、9 | m、旋转矩阵前两列、闭合 −1／张开 +1 |
+| 右臂位置、旋转、夹爪 | 34–36、37–42、43 | 同上 |
+| 底盘 x、y、yaw 速度 | 68、69、70 | m/s、m/s、deg/s；平台预留槽扩展 |
+| 升降高度 | 71 | mm；平台预留槽扩展 |
+| 未使用的手部及预留通道 | 10–33、44–67、72–79 | 不计入动作损失 |
+
+每臂末端仍为 6 自由度，但数值表示为位置 3＋旋转 6，共 9 个通道；加夹爪后每臂 10 个。
+18 维关节记录经 FK 得到 **24 个有效通道**，进入网络前按名称填入 **80 维接口**。
+夹爪保留官方专用槽，底盘和升降占用的 68–71 是本平台约定，官方未规定这些预留槽的含义。
+位姿遵循标定描述保存的参考系，例如 `left_Base`、`right_Base`，不会自动改成世界坐标。
+
+旋转 6D 保持原值；夹爪按标定的闭合／张开端点映射；其余通道使用训练集 min/max，输入截断到 [−1,1]。
+使用训练集 min/max 的动作通道若上下界相同，解码时还原为训练常数；
+例如底盘标签全零时，去噪残差不会转换成底盘速度。
+checkpoint 保存槽位、统计量、标定和 FK/IK 几何；部署时自动反归一化，并以当前关节反馈为起点连续求解 IK，
+恢复原 Host 动作顺序和单位，底盘／升降直接还原。退化旋转、不可达位姿或超出关节限位时拒绝该动作块。
+原 18 维 `recorded` checkpoint 不能通过改开关变成 `alpha80`，须从官方基座重新微调。
+
+### Xiaomi-Robotics-1
+
+使用 `xiaomi_robotics1`，本地基座目录包含官方 `model_states.pt`；`assets_path` 指向
+Qwen3-VL-4B-Instruct 的配置、tokenizer 和图像处理文件。
+
+```bash
+pip install -e '.[xiaomi_robotics1]'
+alohamini train --policy.type=xiaomi_robotics1 \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/xiaomi-robotics1" \
+  --policy.assets_path="$HOME/Alohamini_workspace/pretrained/qwen3-vl-4b-assets" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --batch_size=1 --gradient_accumulation_steps=8 \
+  --distributed_backend=fsdp2 --num_processes=4 \
+  --output_dir="$HOME/Alohamini_workspace/runs/xiaomi_01" --background
+```
+
+默认读取 `forward,wrist_left,wrist_right` 三路 RGB 和任务文本；使用 30 步动作块、BF16、同步执行。
+关节观测保留，动作经保存的标定转换为工具坐标系末端增量；旋转采用旋转向量，夹爪采用开度增量。
+统计量按训练集拟合，动作逐时间步计算 mean/std，状态使用 q01/q99。
+缺少运动学描述时，按[关节、TCP 与相对目标](#关节tcp-与相对目标)补充来源。
+升降轴保持当前高度，底盘使用数据中的速度标签。尚不支持官方异步动作前缀执行。
+
+### LingBot-VLA 2.0
+
+使用 `lingbot_vla_v2`，本地基座包含官方 LeRobot 格式 `config.json`、`model.safetensors`，
+以及 Qwen 配置、tokenizer、图像处理资源。教师目录包含 `moge/model.pt`、`depth/model.pt`、
+`dino_video/teacher_step_10000.pth` 和 `dino_video/config.yaml`。
+
+```bash
+pip install -e '.[lingbot_vla_v2]'
+alohamini train --policy.type=lingbot_vla_v2 \
+  --policy.path="$HOME/Alohamini_workspace/pretrained/lingbot_vla_v2_base" \
+  --policy.teacher_root="$HOME/Alohamini_workspace/pretrained/lingbot_vla_v2_teachers" \
+  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
+  --batch_size=1 --gradient_accumulation_steps=8 \
+  --distributed_backend=fsdp2 --num_processes=4 \
+  --output_dir="$HOME/Alohamini_workspace/runs/lingbot_01" --background
+```
+
+默认读取 `forward,wrist_left,wrist_right` 三路 RGB、完整 18 维状态与任务文本，映射到 55 维语义槽。
+关节动作相对当前观测，夹爪和底盘速度保留绝对值；动作转换后计算训练集 mean/std。
+升降轴默认保持当前高度；显式设置 `--policy.lift_mode=reserved` 时使用平台扩展槽训练升降动作。
+训练使用未来帧计算教师损失，推理只读取当前帧，部署无需教师权重。
+优化器采用平台 AdamW 并保留 MoE 专家学习率倍率；尚不支持 Muon 和 RTC 执行。
+显卡数和 batch 按模型显存需求调整。
 
 ### Spirit v1.5
 

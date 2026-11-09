@@ -17,6 +17,7 @@ from ._vendor.model.video_backbone.wan.models.text_encoder import (
 from ._vendor.model.video_backbone.wan.models.vae import WanVideoVAE38
 from ._vendor.model.video_backbone.wan.shared.diffusion.flow_match import FlowMatchScheduler
 from ._vendor.model.video_backbone.wan_backbone import Wan22Ti2v
+from .semantic import WIDTH, action_padding, scatter
 
 
 class AlphaArchitecture(DualSystemSelfAttnArchitecture):
@@ -48,13 +49,18 @@ class OpenWAMPolicy(ChunkPolicy):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.semantic = config.action_representation == "alpha80"
+        if self.semantic:
+            self.action_slots = config.alpha80_layout["features"]["action"]["slots"]
+            self.state_slots = config.alpha80_layout["features"]["observation.state"]["slots"]
+            self.inactive_slots = [slot for slot in range(WIDTH) if slot not in self.action_slots]
         self.network = AlphaArchitecture(
             dict(
                 native_config=config,
                 dim=config.action_hidden_dim,
                 ffn_dim=config.action_ffn_dim,
-                action_dim=config.action_feature.shape[0],
-                state_dim=config.robot_state_feature.shape[0],
+                action_dim=WIDTH if self.semantic else config.action_feature.shape[0],
+                state_dim=WIDTH if self.semantic else config.robot_state_feature.shape[0],
                 use_proprioception=True,
                 bridge_interval=1,
                 shift_action=config.shift,
@@ -143,6 +149,14 @@ class OpenWAMPolicy(ChunkPolicy):
             video_is_pad=downsample_video_mask_to_latent(pad, skip_first=True),
             use_gradient_checkpointing=self.config.gradient_checkpointing,
         )
+        if self.semantic:
+            inputs.update(
+                actions=scatter(batch["action"], self.action_slots),
+                proprio=scatter(batch["observation.state"], self.state_slots),
+                action_is_pad=action_padding(
+                    batch["action_is_pad"], batch["action"], self.action_slots
+                ),
+            )
         output = self.network.compute_loss(
             **inputs, lambda_video=self.config.lambda_video, lambda_action=self.config.lambda_action
         )
@@ -167,10 +181,14 @@ class OpenWAMPolicy(ChunkPolicy):
         action = torch.randn(
             b,
             self.config.chunk_size,
-            self.config.action_feature.shape[0],
+            WIDTH if self.semantic else self.config.action_feature.shape[0],
             dtype=first.dtype,
             device=first.device,
         )
+        proprio = batch["observation.state"].to(first.dtype)
+        if self.semantic:
+            proprio = scatter(proprio, self.state_slots)
+            inactive_noise = action[..., self.inactive_slots].clone()
         sigma = torch.linspace(1, 0, self.config.num_steps + 1, device=first.device)
         sigma = self.config.shift * sigma / (1 + (self.config.shift - 1) * sigma)
         for now, after in zip(sigma[:-1], sigma[1:], strict=True):
@@ -179,13 +197,18 @@ class OpenWAMPolicy(ChunkPolicy):
             v_video, v_action = self.network(
                 action,
                 t,
-                proprio=batch["observation.state"].to(first.dtype),
+                proprio=proprio,
                 latents=video,
                 timestep=t,
                 **inputs,
             )
             video = video + (after - now) * v_video
             action = action + (after - now) * v_action
+            if self.semantic:
+                # Upstream clamps unused clean targets to zero along their noise path.
+                action[..., self.inactive_slots] = after * inactive_noise
+        if self.semantic:
+            action = action[..., self.action_slots]
         return action.float()
 
     def save_assets(self, path):

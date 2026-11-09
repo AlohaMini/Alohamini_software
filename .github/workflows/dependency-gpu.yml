@@ -70,7 +70,8 @@ jobs:
           python3 env/gpu_preflight.py
           conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python env/verify_pc.py
           conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python -m pytest -q --tb=short --junitxml=reports/gpu.xml \
-            tests/test_distributed_validation.py tests/test_gr00t_lewm_distributed.py tests/test_training_precision.py
+            tests/test_distributed_validation.py tests/test_gr00t_lewm_distributed.py tests/test_training_precision.py \
+            tests/test_xiaomi_lingbot.py tests/test_xiaomi_lingbot_distributed.py
       - name: Compare existing checkpoints on identical inputs
         run: |
           for variant in baseline candidate; do

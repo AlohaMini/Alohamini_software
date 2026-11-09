@@ -71,7 +71,7 @@ def parse_training_args(argv=None):
         parser.add_argument(f"--data.kinematics.{name}", default=argparse.SUPPRESS)
     parser.add_argument(
         "--data.rotation_representation",
-        choices=("rotvec", "rotation_6d"),
+        choices=("rotvec", "rotation_6d", "rotation_6d_columns"),
         default=argparse.SUPPRESS,
     )
     parser.add_argument(
