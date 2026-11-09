@@ -7,6 +7,7 @@
   "changes": [
     "Use platform robot description and Host camera topics",
     "Show scan sector, global/local costmaps and both paths",
-    "Use Nav2 goal tool and a new three-column dock layout"
+    "Use Nav2 goal tool and a new three-column dock layout",
+    "Use alohamini_rviz/Image for repeatable Humble subscription cleanup"
   ]
 }

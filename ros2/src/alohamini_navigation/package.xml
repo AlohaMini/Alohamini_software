@@ -11,6 +11,7 @@
   <exec_depend>alohamini_sensors</exec_depend>
   <exec_depend>alohamini_camera</exec_depend>
   <exec_depend>rviz2</exec_depend>
+  <exec_depend>alohamini_rviz</exec_depend>
   <exec_depend>compressed_image_transport</exec_depend>
   <exec_depend>nav2_rviz_plugins</exec_depend>
   <exec_depend>std_msgs</exec_depend>

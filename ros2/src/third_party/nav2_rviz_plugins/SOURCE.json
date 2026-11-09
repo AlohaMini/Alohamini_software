@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/ros-navigation/navigation2",
+  "revision": "a097086719c88f781aa59788eca29ac6ca5e56db",
+  "tag": "1.1.20",
+  "path": "nav2_rviz_plugins",
+  "license": "Apache-2.0 (package declaration and panel/tool); BSD-3-Clause AND Apache-2.0 (particle cloud display source headers)",
+  "changes": [
+    "Own, interrupt and join the status worker before destroying the panel or unloading its plugin.",
+    "Deliver status callbacks through the panel GUI context.",
+    "Bound service discovery and response waits, including missing or disappearing servers.",
+    "Own and join lifecycle request workers; cancel goals and stop timers on the GUI thread.",
+    "Add panel lifetime and service deadline regression tests."
+  ]
+}

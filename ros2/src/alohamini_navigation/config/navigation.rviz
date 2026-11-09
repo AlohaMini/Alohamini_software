@@ -60,7 +60,7 @@ Visualization Manager:
     Update Interval: 0.2
     Value: true
     Visual Enabled: true
-  - Class: rviz_default_plugins/Image
+  - Class: alohamini_rviz/Image
     Enabled: true
     Max Value: 1
     Median window: 1

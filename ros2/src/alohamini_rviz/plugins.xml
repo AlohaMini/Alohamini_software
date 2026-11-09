@@ -1,0 +1,6 @@
+<library path="alohamini_rviz">
+  <class name="alohamini_rviz/Image" type="alohamini_rviz::ImageDisplay"
+         base_class_type="rviz_common::Display">
+    <description>Image display with repeatable subscription cleanup on ROS Humble.</description>
+  </class>
+</library>

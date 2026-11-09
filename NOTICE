@@ -491,3 +491,11 @@ and the Robbyant Team). Native platform data, trainer and checkpoint adapters
 replace the upstream framework wrappers. Retained licenses and full source
 metadata are in policies/xiaomi_robotics1/ and policies/lingbot_vla_v2/.
 No pretrained weights are distributed.
+
+ros2/src/third_party/nav2_rviz_plugins vendors Navigation2 1.1.20 at
+a097086719c88f781aa59788eca29ac6ca5e56db (Apache-2.0 package declaration;
+particle-cloud files also retain BSD-3-Clause notices from Willow Garage and
+Bosch). Source: https://github.com/ros-navigation/navigation2
+Local changes own and join panel workers, bound service waits, deliver status
+updates on the GUI thread and add shutdown regression tests. The package retains
+its upstream license and source headers; SOURCE.json identifies the pinned source.

@@ -56,6 +56,8 @@ export ROS_DOMAIN_ID=5 ROS_LOCALHOST_ONLY=0
 
 树莓派只构建 `--packages-up-to alohamini_sensors`，不必为传感器安装 SLAM／Nav2。Host 使用原有 `alohamini_host` 环境和启动参数，机型改为 `--robot_model alohamini2edu`。仅注册型号不会改变已有舵机 EEPROM 标定。
 
+PC 构建包含 `third_party/nav2_rviz_plugins`（固定为 Nav2 1.1.20，修复面板线程清理）和 `alohamini_rviz`（修复 Humble 相机显示重复取消订阅）。`build-pc.sh` 显式覆盖系统同名 Nav2 插件；运行前须 source 本工作区的 `install/local_setup.bash`。这些界面包不进入树莓派传感器容器。升级 ROS／Nav2 时须检查对应源码兼容性并重跑退出检查。
+
 默认设备为 `/dev/lidar_c1`（460800）和 `/dev/imu_usb`（115200）；可用启动参数指定 `/dev/serial/by-id/...`。串口用户须有 `dialout` 权限。C1 的 udev 模板位于 `alohamini_rplidar_c1/udev/`，填写实际 USB 序列号后安装；不能仅凭相同 VID/PID 区分多个适配器。没有唯一序列号的 IMU 可使用固定 USB 插口的 `/dev/serial/by-path/...`。
 
 传感器安装配置为 `models/alohamini2edu/config/sensors.yaml`。以 Pro 的 REP-103 `base_link` 为基准：X 前、Y 左、Z 上。雷达的旧 CAD 安装变换已换算到此坐标系，不再额外旋转底盘。默认雷达位置是名义值；IMU 平移尚未实测，只使用不依赖平移的 Z 轴角速度。实际外参放入工作区 `calibration/sensors/` 的配置副本，通过 `sensor_profile:=/绝对路径/sensors.yaml` 指定。
@@ -206,7 +208,7 @@ RViz 预置地图、扫描、覆盖范围、全局／局部路径、全局／局
 
 导航模式由 Nav2 发布速度，不接受键盘方向键；空格／`0` 会禁用运动并取消导航目标。手动驾驶与保存快捷键用于建图模式，避免两个速度发布者互相覆盖。
 
-Humble 的部分图形环境下，RViz 信号退出仍可能卡住或异常结束；上游的[退出顺序修复](https://github.com/ros2/rviz/pull/1881)尚不能视为本项目已验证的修复。统一入口先禁用运动，界面超时后结束该子进程，再关闭导航并刷新录包。无桌面或无人值守任务用 `--no-rviz`；录制是否完整以对应 `manifest.json` 的 `status` 为准。
+无桌面或无人值守任务用 `--no-rviz`；录制是否完整以对应 `manifest.json` 的 `status` 为准。
 
 
 独立 mapping/navigation launch 同样支持 `enable_cameras:=true use_rviz:=true`；相机使用 Host 图像流，不另开 USB 摄像头。可用 `ekf_params`、`collision_params` 覆盖配置；建图用 `slam_params`，导航用 `nav2_params`。
@@ -278,5 +280,13 @@ ROS_DOMAIN_ID=43 ROS_LOCALHOST_ONLY=1 /usr/bin/python3 \
 ```
 
 终端快捷键与退出检查使用 `simulation/navigation/test/session_check.py`，指定新的 `--output` 和上一检查生成的 `--navigation-map /路径/workspace/maps/room/v1/map.yaml`；有 X 显示环境时增加 `--screenshot` 检查 RViz。相机画面为带标识的离线测试图。
+
+RViz 独立退出检查需要 `xvfb`、`python3-xlib`，覆盖 SIGINT、SIGTERM 和窗口关闭，每种重复三次：
+
+```bash
+ROS_DOMAIN_ID=52 ROS_LOCALHOST_ONLY=1 xvfb-run -a /usr/bin/python3 \
+  simulation/navigation/test/rviz_shutdown_check.py \
+  --output ~/Alohamini_workspace/logs/rviz-shutdown-check
+```
 
 实机验收仍须核对外参、底盘几何、停止距离、异常恢复和双机时钟；仿真结果不替代这些测量。

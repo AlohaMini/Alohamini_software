@@ -201,7 +201,8 @@ def main():
         if args.screenshot:
             logs = list((output / "workspace/logs/navigation").glob("*/rviz.log"))
             result["rviz_shutdown_clean"] = len(logs) == 2 and all(
-                not re.search(r"process has died|failed to terminate", path.read_text())
+                "process has finished cleanly" in path.read_text()
+                and not re.search(r"process has died|failed to terminate", path.read_text())
                 for path in logs
             )
             assert result["rviz_shutdown_clean"], "RViz shutdown failed; inspect rviz.log"
