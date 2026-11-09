@@ -42,7 +42,7 @@ learning = [
     "safetensors==0.8.0",
     "numpy>=2,<3",
     "pyarrow>=18",
-    "opencv-python-headless==4.13.0.92",
+    "opencv-python-headless==4.14.0.94",
     "pillow>=11",
 ]
 pc = ["alohamini-platform[learning,notebook,zmq,feetech]", "pynput==1.8.2", "rerun-sdk==0.26.2", "av==15.1.0", "torchcodec==0.11.1", "pandas==2.3.3", "scipy==1.18.0"]
@@ -59,7 +59,7 @@ host = [
     "feetech-servo-sdk==1.0.0",
     "pyserial==3.5",
     "numpy>=2,<3",
-    "opencv-python-headless==4.13.0.92",
+    "opencv-python-headless==4.14.0.94",
 ]
 
 [project.scripts]

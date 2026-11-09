@@ -11,8 +11,8 @@ matplotlib==3.10.8
 nbclient==0.10.2
 nbformat==5.10.4
 num2words==0.5.14
-numpy==2.2.6
-opencv-python-headless==4.13.0.92
+numpy==2.5.4
+opencv-python-headless==4.14.0.94
 packaging==25.0
 pandas==2.3.3
 pillow>=11
@@ -22,7 +22,7 @@ pynput==1.8.2
 pyserial==3.5
 pytest==8.4.2
 pyyaml>=6
-pyzmq==27.1.0
+pyzmq==27.2.0
 rerun-sdk==0.26.2
 ruff==0.15.20
 safetensors==0.8.0
