@@ -2,6 +2,17 @@
 
 EDU 按 2 Pro 的机械、电机与运动学配置增加 C1 雷达和幻尔 USB IMU，机型 ID 为 `alohamini2edu`。设备标定独立保存，不自动复用其他机器的零偏和行程。原生遥操／策略与 ROS 运动控制择一运行。
 
+仅指定 `--robot_model alohamini2edu` 启动原生 Host，不会自动开启雷达、SLAM、录包或避障。
+
+| 入口 | 自动启动的功能 |
+| --- | --- |
+| `sensors.launch.py` | 雷达、IMU、安装 TF、扫描过滤及覆盖范围显示；不连接 Host |
+| `mapping.launch.py` | Bridge、EKF、碰撞监测、SLAM、地图保存；默认使用外部传感器 |
+| `navigation.launch.py` | Bridge、EKF、碰撞监测、AMCL、Nav2；需要地图 |
+| `edu_session` | 上述建图／导航流程、键盘、专用 RViz、Host 相机订阅；`--record` 才开启录制 |
+
+ROS 控制默认禁用，须显式使能；导航还需要初始位姿和目标。原生遥操命令不经过 ROS 碰撞监测。
+
 | 层级 | 位置与职责 |
 | --- | --- |
 | 机型资源 | `models/alohamini2edu/`：电机清单、URDF／网格、双臂运动学、传感器安装与导航预设 |
@@ -14,22 +25,33 @@ EDU 按 2 Pro 的机械、电机与运动学配置增加 C1 雷达和幻尔 USB 
 ROS /cmd_vel → collision_monitor → /cmd_vel_safe → Bridge → ZMQ → Host → 电机总线
 Host 实测轮速 → Bridge /wheel/twist ─┐
 USB IMU → /imu/data_raw ───────────┴→ EKF → /odom、odom→base_link
-USB C1 → /scan → /scan_filtered ─────→ SLAM 或 AMCL → map→odom
+USB C1 → /scan → /scan_filtered ─────→ AMCL → map→odom
+                  └→ scan_gate → /scan_slam → SLAM → map→odom
 ```
 
 雷达／IMU 独立接树莓派 USB，不接入 Feetech 电机总线，也不放入 Host 电机状态 JSON。两端使用同一 ROS_DOMAIN_ID 并保证 DDS 可达；Host 仍用 ZMQ。PC 运行 Bridge、EKF、SLAM／Nav2，树莓派只需运行 Host 和所需传感器驱动。
+
+ROS 域建议使用 0–101（本流程实机用 5、离线用 42–44），避免 Linux 临时端口范围的冲突，参见 [ROS 2 域编号说明](https://github.com/ros2/ros2_documentation/blob/humble/source/Concepts/Intermediate/About-Domain-ID.rst)。
 
 ## 安装与设备
 
 ROS 节点使用 Humble 的系统 Python。已有 Debian 树莓派可使用 Humble 对应容器，不直接套用 Ubuntu apt 源。Ubuntu 22.04／Humble 环境中的 PC 构建：
 
+PC 使用 `tf2_ros >= 0.25.24` 及配套 RViz 包，包含 [TF 等待死锁修复](https://github.com/ros2/geometry2/pull/990)。已装旧版 Humble 的 PC 先更新：
+
+```bash
+sudo apt-get update
+sudo apt-get install ros-humble-tf2-ros ros-humble-rviz2 \
+  ros-humble-rviz-common ros-humble-rviz-default-plugins
+```
+
 ```bash
 source /opt/ros/humble/setup.bash
 cd ~/Alohamini/ros2
-rosdep install --from-paths src --ignore-src -r -y
-/usr/bin/python3 -m colcon build --packages-up-to alohamini_navigation \
-  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+rosdep install --from-paths src ../simulation/navigation --ignore-src -r -y
+bash ../deploy/edu/build-pc.sh
 source install/local_setup.bash
+export ROS_DOMAIN_ID=5 ROS_LOCALHOST_ONLY=0
 ```
 
 树莓派只构建 `--packages-up-to alohamini_sensors`，不必为传感器安装 SLAM／Nav2。Host 使用原有 `alohamini_host` 环境和启动参数，机型改为 `--robot_model alohamini2edu`。仅注册型号不会改变已有舵机 EEPROM 标定。
@@ -72,7 +94,7 @@ ros2 run alohamini_navigation base_teleop
 
 `w/s` 前后、`a/d` 旋转、`z/x` 横移，空格停、`q` 退出。最后一次按键重复后 0.35 s 归零，Bridge 的 `/cmd_vel` 另有 0.5 s 超时。键盘不自动使能控制，也不依赖主臂遥操。
 
-建图使用 slam_toolbox 的异步 2D 扫描匹配，默认 5 cm 分辨率、8 m 最大范围并启用回环。参数位于模型的 `config/navigation/slam.yaml`。RViz 可显示 `/map`、`/scan_filtered`、TF，固定坐标系选 `map`。
+建图使用 slam_toolbox 的异步 2D 扫描匹配，默认 5 cm 分辨率、8 m 最大范围并启用回环。`slam_scan_gate` 根据 `/odom` 筛选 `/scan_filtered`，移动达到 5 cm 或转动达到 0.05 rad 时发布 `/scan_slam`，支持原地旋转建图；碰撞监测继续使用完整频率的 `/scan_filtered`。SLAM 参数位于模型的 `config/navigation/slam.yaml`，应保留 `/scan_slam` 输入和为零的内部平移门限。RViz 固定坐标系选 `map`。
 
 ## 保存、继续建图与使用地图
 
@@ -122,6 +144,139 @@ ros2 launch alohamini_navigation navigation.launch.py host:=192.168.44.4 \
 ros2 run alohamini_navigation map_session record office_episode_001
 ```
 
-写入工作区 `runs/office_episode_001/`，记录扫描、IMU、轮速、里程计、TF、ROS 命令、Host 状态和诊断；Ctrl+C 结束 rosbag。录制器不创建 HostClient、不启用运动。仅启动传感器时也可录制，但不存在的话题不会产生数据。这是 ROS 原始记录，尚未转换为平台训练数据集或自动与原生数采回合对齐。
+写入工作区 `runs/office_episode_001/bag/`，记录扫描、IMU、轮速、里程计、TF、关节、相机 JPEG／内参、采样时钟关联、地图、ROS 命令和诊断。Ctrl+C 正常刷新文件；结束清单列出各话题消息数和缺失项。可用 `--cameras forward wrist_left wrist_right` 选择相机，`--duration 30` 定时结束，`--require-topics /scan /imu/data_raw` 检查必需话题。录制器不创建 HostClient、不启用运动，不存在的话题不会产生数据。
 
 双臂 FK／IK 使用平台的同一套算法，EDU 通过自己的模型资源加载。完整 ROS 整机入口用 `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu`；MoveIt／Joy-Con 预览同样支持该参数。关节映射须属于 EDU，`sync_arm_mapping` 根据实际 Host 型号生成模板，不能直接更改另一台机器标定文件中的型号来复用。
+
+## 树莓派容器与设备检查
+
+PC 已有 Humble 时无需 Docker。树莓派已有 Humble 时直接构建传感器包；Debian 主机可使用传感器容器。将本仓库源码放到树莓派 `~/Alohamini`，在树莓派执行：
+
+```bash
+cd ~/Alohamini
+python3 deploy/edu/sensors-container build
+python3 deploy/edu/sensors-container run --domain 5 \
+  --lidar /dev/serial/by-id/实际雷达设备 \
+  --imu /dev/serial/by-path/实际IMU设备
+```
+
+容器只运行传感器，不安装 SLAM／Nav2，不启动 Host，也不映射电机串口；使用 host 网络和 IPC。原生 Host 继续在现有环境中运行，相机须在 Host 启动时显式开启，例如原有 `--cameras forward` 参数。`--dry-run` 查看容器命令；另一个终端用 `python3 deploy/edu/sensors-container stop` 停止。
+
+镜像在运行 USB 驱动的机器上构建，PC 的 x86-64 程序不能直接作为树莓派 ARM64 程序使用。容器只映射选定设备，拔插后若设备节点改变，须重启容器刷新映射。实际安装配置用 `--profile /绝对路径/sensors.yaml` 挂载。
+
+两端宿主机用 `timedatectl status` 检查时钟同步。启动后在 PC 执行只读检查：
+
+```bash
+ros2 run alohamini_navigation edu_check
+# mapping/navigation 已启动时增加轮速检查：
+ros2 run alohamini_navigation edu_check --require-wheel
+```
+
+检查关注消息新鲜度、有效扫描和 IMU 数值，不使能电机。静止时 IMU 加速度模长应约为 9.81 m/s²、角速度接近零；安装轴向、零偏、轮速符号、里程计尺度和停止距离仍需实机验收。
+
+## 统一会话、相机与导航 RViz
+
+Host 和树莓派传感器启动后，在 PC 执行：
+
+```bash
+ros2 run alohamini_navigation edu_session --host 192.168.44.4 \
+  --map-name office --record office_run_001
+```
+
+默认启动建图、专用 RViz 和 Host 相机订阅。`--no-camera` 关闭图像订阅，`--no-rviz` 用于无桌面环境；传感器接在 PC 时用 `--start-sensors`。运行日志位于工作区 `logs/navigation/`。
+
+| 按键 | 功能 |
+| --- | --- |
+| `e` | 显式使能当前 ROS 控制 |
+| `w/s`、`a/d`、`z/x` | 前后、旋转、横移 |
+| `r/f` | 提高／降低线速度，范围 0.03–0.20 m/s |
+| 空格、`0` | 停止；最后按键重复后 0.35 s 也会归零 |
+| `Shift+S` | 停用控制、确认静止、保存；继续运动需再按 `e` |
+| `Shift+X` | 保存成功后停止并退出 |
+| `q`、Ctrl+C | 停止并退出，不保存地图 |
+
+退出时先禁用运动、关闭 RViz，再停止导航生命周期节点和 launch，并结束、刷新录包。导航模式：
+
+```bash
+ros2 run alohamini_navigation edu_session --mode navigation \
+  --host 192.168.44.4 --map /绝对路径/maps/office/版本/map.yaml
+```
+
+RViz 预置地图、扫描、覆盖范围、全局／局部路径、全局／局部代价地图、TF、机器人和前置相机。用 **2D Pose Estimate** 设置初始位姿，检查地图与扫描重合后按 `e`，再用 **Nav2 Goal** 发送目标。建图期间尚未产生的导航话题不会显示数据。
+
+导航模式由 Nav2 发布速度，不接受键盘方向键；空格／`0` 会禁用运动并取消导航目标。手动驾驶与保存快捷键用于建图模式，避免两个速度发布者互相覆盖。
+
+Humble 的部分图形环境下，RViz 信号退出仍可能卡住或异常结束；上游的[退出顺序修复](https://github.com/ros2/rviz/pull/1881)尚不能视为本项目已验证的修复。统一入口先禁用运动，界面超时后结束该子进程，再关闭导航并刷新录包。无桌面或无人值守任务用 `--no-rviz`；录制是否完整以对应 `manifest.json` 的 `status` 为准。
+
+
+独立 mapping/navigation launch 同样支持 `enable_cameras:=true use_rviz:=true`；相机使用 Host 图像流，不另开 USB 摄像头。可用 `ekf_params`、`collision_params` 覆盖配置；建图用 `slam_params`，导航用 `nav2_params`。
+
+## 对齐原生数采回合
+
+与原生遥操数采并行时，只启动传感器和相机订阅，不启动 mapping/navigation：
+
+```bash
+ros2 launch alohamini_camera camera.launch.py host:=192.168.44.4 \
+  timestamp_mode:=host_wall publish_raw:=false
+```
+
+相机节点发布 Host 会话及单调时钟／Unix 时钟关联，不额外创建 HostClient。原生回合和 rosbag 保存结束后，用同一 Host 会话的记录对齐：
+
+```bash
+ros2 run alohamini_navigation map_session attach /绝对路径/记录/bag \
+  /绝对路径/原生数据集 --episode-index 0
+```
+
+也可在 `record` 时指定 `--dataset /路径 --episode-index 0`，录包结束后自动对齐；此时原生回合必须已保存完成。支持平台 v3 的 `meta/safety/` 和本地 `episodes/` 布局。
+
+结果位于数据集 `ros_sensors/episode_000000/`，按原生回合／帧索引关联，保留采样时间、坐标系、单位及有效性。扫描最多取前 150 ms、IMU 最多取前 50 ms 的样本，不取未来数据；缺失标为无效，扫描无效距离保留为空值。Host 会话不同、时钟关联缺失／跳变或原生回合不完整时拒绝对齐。相机关闭且未记录 Bridge 状态时，没有时钟关联，不能自动对齐。
+
+```python
+from alohamini.datasets.ros_sensors import iter_sensor_frames
+for frame in iter_sensor_frames(dataset_path, 0):
+    scan = frame["sensors"]["scan"]  # valid、sample、age_ns
+    imu = frame["sensors"]["imu"]
+```
+
+该扩展保持原生动作、图像数据格式，不自动改变策略输入维度；策略须显式读取传感器字段及有效性。加速度含重力，不直接当作平移加速度。
+
+## 仿真与回放
+
+在单独终端使用专用本机 ROS 域，避免与实机话题混用：
+
+```bash
+export ROS_DOMAIN_ID=42 ROS_LOCALHOST_ONLY=1
+ros2 run alohamini_navigation edu_session --simulation \
+  --map-name simulated_room --record simulated_run_001
+```
+
+`simulation/navigation/` 提供几何环境、雷达射线、IMU、模拟实测速度和 `/clock`，运行真实 EKF、SLAM、碰撞监测与 Nav2；没有 HostClient、USB 驱动或相机网络连接。使用平面运动学及圆形轮廓碰撞约束，不模拟轮胎接触、打滑、IMU 噪声和伸展手臂。默认环境在 `worlds/room.yaml`。
+
+```bash
+ros2 launch alohamini_nav_sim simulation.launch.py mode:=navigation \
+  map:=/绝对路径/maps/simulated_room/版本/map.yaml use_rviz:=true
+ros2 run alohamini_navigation map_session stop --runtime-mode simulation
+```
+
+观察录包或用原始数据重新建图：
+
+```bash
+ros2 launch alohamini_navigation replay.launch.py bag:=/绝对路径/记录/bag
+ros2 launch alohamini_navigation replay.launch.py bag:=/绝对路径/记录/bag mode:=mapping
+ros2 run alohamini_navigation map_session save replayed --runtime-mode replay
+ros2 run alohamini_navigation map_session stop --runtime-mode replay
+```
+
+回放统一使用 `/clock`，不会重发运动命令。重新建图输入原始扫描、IMU、轮速和静态 TF，不重播旧动态 TF、里程计及地图。缺少 `/wheel/twist` 或安装 TF 的纯传感器记录只能观察，不能恢复移动轨迹。
+
+离线集成检查：
+
+```bash
+ROS_DOMAIN_ID=43 ROS_LOCALHOST_ONLY=1 /usr/bin/python3 \
+  simulation/navigation/test/stack_check.py \
+  --output ~/Alohamini_workspace/logs/edu-navigation-check-新目录
+```
+
+终端快捷键与退出检查使用 `simulation/navigation/test/session_check.py`，指定新的 `--output` 和上一检查生成的 `--navigation-map /路径/workspace/maps/room/v1/map.yaml`；有 X 显示环境时增加 `--screenshot` 检查 RViz。相机画面为带标识的离线测试图。
+
+实机验收仍须核对外参、底盘几何、停止距离、异常恢复和双机时钟；仿真结果不替代这些测量。

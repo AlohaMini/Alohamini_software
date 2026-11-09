@@ -10,7 +10,13 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/alohamini_navigation"]),
         ("share/alohamini_navigation", ["package.xml"]),
         ("share/alohamini_navigation/launch", glob("launch/*.launch.py")),
-        ("share/alohamini_navigation/config", glob("config/*.yaml") + glob("config/*.xml")),
+        (
+            "share/alohamini_navigation/config",
+            glob("config/*.yaml")
+            + glob("config/*.xml")
+            + glob("config/*.rviz")
+            + glob("config/*.json"),
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -22,6 +28,9 @@ setup(
         "console_scripts": [
             "map_session = alohamini_navigation.map_session:main",
             "base_teleop = alohamini_navigation.base_teleop:main",
+            "edu_session = alohamini_navigation.session:main",
+            "edu_check = alohamini_navigation.check:main",
+            "scan_gate = alohamini_navigation.scan_gate:main",
         ]
     },
 )

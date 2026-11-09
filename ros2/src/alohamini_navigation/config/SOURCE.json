@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/AlohaMini/alohamini_lidar_imu",
+  "revision": "052b6f9c01935f76ed89a486b046559ce251097c",
+  "path": "ros2_ws/src/alohamini_bringup/rviz/alohamini_nav.rviz",
+  "license": "BSD-3-Clause (upstream package declaration)",
+  "adapted_file": "navigation.rviz",
+  "changes": [
+    "Use platform robot description and Host camera topics",
+    "Show scan sector, global/local costmaps and both paths",
+    "Use Nav2 goal tool and a new three-column dock layout"
+  ]
+}

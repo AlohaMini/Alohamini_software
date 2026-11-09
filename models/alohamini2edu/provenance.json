@@ -59,7 +59,7 @@
     },
     {
       "path": "config/navigation/slam.yaml",
-      "sha256": "e2c555fab290944f5770fcad01a0a8a30b8c999d0e7973e283c899bdb07de08f"
+      "sha256": "c96b8d1e2465a74334974ffe3992aa9c57b231109326f476ec85252aada0a9bf"
     },
     {
       "path": "config/sensors.yaml",

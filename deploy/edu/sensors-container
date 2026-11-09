@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Build/run the sensor-only container on the USB host; never start motor control."""
+
+import argparse
+import os
+import subprocess
+from pathlib import Path
+
+
+def command(args):
+    root = Path(__file__).resolve().parents[2]
+    if args.action == "build":
+        return [
+            "docker",
+            "build",
+            "-t",
+            args.image,
+            "-f",
+            str(root / "deploy/edu/Dockerfile"),
+            str(root),
+        ]
+    if args.action == "stop":
+        return ["docker", "stop", "--time", "15", "alohamini-edu-sensors"]
+    result = [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        "alohamini-edu-sensors",
+        "--network",
+        "host",
+        "--ipc",
+        "host",
+        "-e",
+        f"ROS_DOMAIN_ID={args.domain}",
+        "-e",
+        "ROS_LOCALHOST_ONLY=0",
+        "-e",
+        "RMW_IMPLEMENTATION=rmw_fastrtps_cpp",
+    ]
+    for name, value in (("lidar_c1", args.lidar), ("imu_usb", args.imu)):
+        path = Path(value).resolve(strict=not args.dry_run)
+        if not args.dry_run and not path.is_char_device():
+            raise ValueError(f"Serial device is not a character device: {path}")
+        result += ["--device", f"{path}:/dev/{name}"]
+    if args.profile:
+        path = Path(args.profile).expanduser().resolve(strict=not args.dry_run)
+        result += ["--mount", f"type=bind,src={path},dst=/sensor-profile.yaml,readonly"]
+    result += [args.image, "ros2", "launch", "alohamini_sensors", "sensors.launch.py"]
+    if args.profile:
+        result.append("sensor_profile:=/sensor-profile.yaml")
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=("build", "run", "stop"))
+    parser.add_argument("--image", default="alohamini-edu-sensors:humble")
+    parser.add_argument("--domain", type=int, default=int(os.environ.get("ROS_DOMAIN_ID", "5")))
+    parser.add_argument("--lidar", default="/dev/lidar_c1")
+    parser.add_argument("--imu", default="/dev/imu_usb")
+    parser.add_argument("--profile")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    if not 0 <= args.domain <= 232:
+        parser.error("--domain must be between 0 and 232")
+    cmd = command(args)
+    if args.dry_run:
+        import shlex
+
+        print(shlex.join(cmd))
+        return 0
+    return subprocess.call(cmd)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

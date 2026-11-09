@@ -1,6 +1,6 @@
 """Wheel/IMU odometry and gated base control, without SLAM or Nav2 planning."""
 
-from alohamini_navigation.launching import runtime
+from alohamini_navigation.launching import runtime, runtime_defaults
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
@@ -22,23 +22,18 @@ def _nodes(context):
         observation_port=value("observation_port"),
         command_port=value("command_port"),
         collision_params=value("collision_params"),
+        ekf_params=value("ekf_params"),
+        runtime_mode=value("runtime_mode"),
+        use_sim_time=value("use_sim_time") == "true",
+        enable_cameras=value("enable_cameras") == "true",
+        cameras=value("cameras"),
+        camera_stream_port=value("camera_stream_port"),
+        use_rviz=value("use_rviz") == "true",
     )
 
 
 def generate_launch_description():
-    defaults = dict(
-        robot_model="alohamini2edu",
-        host="127.0.0.1",
-        start_sensors="false",
-        use_imu="true",
-        base_only="true",
-        sensor_profile="",
-        arm_mapping_dir="",
-        state_timestamp_mode="host_wall",
-        observation_port="5556",
-        command_port="5555",
-        collision_params="",
-    )
+    defaults = runtime_defaults()
     return LaunchDescription(
         [
             *[DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()],

@@ -6,26 +6,8 @@ import math
 import os
 import sys
 import time
-from datetime import datetime, timezone
-
-from alohamini.paths import WorkspacePaths
 
 from .maps import MapRevision
-
-RECORD_TOPICS = [
-    "/scan",
-    "/scan_filtered",
-    "/imu/data_raw",
-    "/imu/temperature",
-    "/wheel/twist",
-    "/odom",
-    "/tf",
-    "/tf_static",
-    "/cmd_vel",
-    "/cmd_vel_safe",
-    "/alohamini_lerobot_bridge/state_json",
-    "/diagnostics",
-]
 
 
 def call(node, service, name, request, timeout):
@@ -45,17 +27,20 @@ def call(node, service, name, request, timeout):
         node.destroy_client(client)
 
 
-def stop_and_wait(node, model, timeout):
+def stop_and_wait(node, model, timeout, runtime_mode="hardware"):
     """Disable the Bridge first, then require new, measured stationary feedback."""
     import rclpy
     from geometry_msgs.msg import TwistWithCovarianceStamped
     from std_msgs.msg import String
     from std_srvs.srv import SetBool
 
+    if runtime_mode == "replay":
+        return "replay"
+    prefix = "/alohamini_lerobot_bridge" if runtime_mode == "hardware" else "/alohamini_nav_sim"
     response = call(
         node,
         SetBool,
-        "/alohamini_lerobot_bridge/command_enable",
+        prefix + "/command_enable",
         SetBool.Request(data=False),
         timeout,
     )
@@ -85,7 +70,7 @@ def stop_and_wait(node, model, timeout):
 
     subscriptions = [
         node.create_subscription(TwistWithCovarianceStamped, "/wheel/twist", velocity, 1),
-        node.create_subscription(String, "/alohamini_lerobot_bridge/state_json", host, 1),
+        node.create_subscription(String, prefix + "/state_json", host, 1),
     ]
     try:
         deadline = time.monotonic() + timeout
@@ -107,11 +92,16 @@ def save(args):
     from slam_toolbox.srv import SerializePoseGraph
 
     rclpy.init()
-    node = rclpy.create_node("alohamini_map_session")
+    from rclpy.parameter import Parameter
+
+    node = rclpy.create_node(
+        "alohamini_map_session",
+        parameter_overrides=[Parameter("use_sim_time", value=args.runtime_mode != "hardware")],
+    )
     revision = None
     try:
         # This precedes file I/O and potentially blocking service calls.
-        session = stop_and_wait(node, args.robot_model, args.timeout)
+        session = stop_and_wait(node, args.robot_model, args.timeout, args.runtime_mode)
         revision = MapRevision(args.name, args.revision, model=args.robot_model)
         response = call(
             node,
@@ -168,36 +158,20 @@ def save(args):
         rclpy.try_shutdown()
 
 
-def record(args):
-    directory = WorkspacePaths().run(args.name)
-    directory.mkdir(parents=True, exist_ok=False)
-    (directory / "manifest.json").write_text(
-        json.dumps(
-            dict(
-                schema_version=1,
-                episode_id=args.name,
-                robot_model=args.robot_model,
-                started_at=datetime.now(timezone.utc).isoformat(),
-                topics=RECORD_TOPICS,
-                format="rosbag2",
-                training_dataset=False,
-            ),
-            indent=2,
-        )
-        + "\n"
-    )
-    os.execvp("ros2", ["ros2", "bag", "record", "-o", str(directory / "bag"), *RECORD_TOPICS])
-
-
 def stop_runtime(args):
     """Stop commands, then clean lifecycle consumers while their TF providers still run."""
     import rclpy
     from nav2_msgs.srv import ManageLifecycleNodes
 
     rclpy.init()
-    node = rclpy.create_node("alohamini_navigation_stop")
+    from rclpy.parameter import Parameter
+
+    node = rclpy.create_node(
+        "alohamini_navigation_stop",
+        parameter_overrides=[Parameter("use_sim_time", value=args.runtime_mode != "hardware")],
+    )
     try:
-        stop_and_wait(node, args.robot_model, args.timeout)
+        stop_and_wait(node, args.robot_model, args.timeout, args.runtime_mode)
         for manager in (
             "lifecycle_manager_navigation",
             "lifecycle_manager_collision_monitor",
@@ -230,6 +204,8 @@ def stop_runtime(args):
 
 
 def main(argv=None):
+    from .recording import CAMERAS, record
+
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     saver = commands.add_parser("save")
@@ -239,17 +215,45 @@ def main(argv=None):
     saver.add_argument("--timeout", type=float, default=15.0)
     recorder = commands.add_parser("record")
     recorder.add_argument("name", help="New recording/episode name under workspace runs/")
+    recorder.add_argument("--cameras", nargs="*", choices=CAMERAS, default=list(CAMERAS))
+    recorder.add_argument("--duration", type=float)
+    recorder.add_argument("--require-topics", nargs="*", default=[])
+    recorder.add_argument("--dataset", help="Attach sensor samples to a completed native dataset")
+    recorder.add_argument("--episode-index", type=int)
+    attach = commands.add_parser("attach", help="Align a bag to one completed native episode")
+    attach.add_argument("bag")
+    attach.add_argument("dataset")
+    attach.add_argument("--episode-index", type=int, required=True)
     stopper = commands.add_parser(
         "stop", help="Stop ROS control and lifecycle nodes before closing launch"
     )
     stopper.add_argument("--timeout", type=float, default=15.0)
-    for command in (saver, recorder, stopper):
+    for command in (saver, recorder, stopper, attach):
         command.add_argument("--robot-model", default="alohamini2edu")
+        command.add_argument(
+            "--runtime-mode", choices=("hardware", "simulation", "replay"), default="hardware"
+        )
     args = parser.parse_args(argv)
+    if args.command == "record":
+        if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0):
+            parser.error("--duration must be finite and positive")
+        if bool(args.dataset) != (args.episode_index is not None):
+            parser.error("--dataset and --episode-index must be used together")
     if args.command in ("save", "stop") and (not math.isfinite(args.timeout) or args.timeout <= 0):
         parser.error("--timeout must be finite and positive")
     try:
-        {"save": save, "record": record, "stop": stop_runtime}[args.command](args)
+        if args.command == "attach":
+            from pathlib import Path
+
+            from .sensor_dataset import attach_episode
+
+            print(
+                attach_episode(
+                    Path(args.bag), Path(args.dataset), args.episode_index, args.robot_model
+                )
+            )
+        else:
+            {"save": save, "record": record, "stop": stop_runtime}[args.command](args)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"map_session: {exc}", file=sys.stderr)
         return 1

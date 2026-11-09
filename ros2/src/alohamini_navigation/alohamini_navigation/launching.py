@@ -21,11 +21,11 @@ def model_config(model, name):
     return str(get_robot_model(model).asset_path(f"config/navigation/{name}.yaml"))
 
 
-def ekf_parameters(use_imu):
+def ekf_parameters(use_imu, use_sim_time=False):
     # Input order: xyz, rpy, vxyz, vrpy, axyz. Do not fuse an integrated wheel
     # pose a second time or use gravity-containing acceleration as planar motion.
     config = dict(
-        use_sim_time=False,
+        use_sim_time=use_sim_time,
         frequency=30.0,
         sensor_timeout=0.2,
         two_d_mode=True,
@@ -53,6 +53,29 @@ def ekf_parameters(use_imu):
     return config
 
 
+def runtime_defaults():
+    return dict(
+        robot_model="alohamini2edu",
+        host="127.0.0.1",
+        start_sensors="false",
+        use_imu="true",
+        base_only="true",
+        sensor_profile="",
+        arm_mapping_dir="",
+        state_timestamp_mode="host_wall",
+        observation_port="5556",
+        command_port="5555",
+        collision_params="",
+        ekf_params="",
+        runtime_mode="hardware",
+        use_sim_time="false",
+        enable_cameras="false",
+        cameras="[auto]",
+        camera_stream_port="5557",
+        use_rviz="false",
+    )
+
+
 def runtime(
     model,
     host,
@@ -66,50 +89,86 @@ def runtime(
     observation_port="5556",
     command_port="5555",
     collision_params="",
+    ekf_params="",
+    runtime_mode="hardware",
+    use_sim_time=False,
+    enable_cameras=False,
+    cameras="[auto]",
+    camera_stream_port="5557",
+    use_rviz=False,
 ):
-    actions = [
-        include(
-            "alohamini_description",
-            "description.launch.py",
-            robot_model=model,
-            description="base" if base_only else "navigation",
-        ),
-        include(
-            "alohamini_bridge",
-            "bridge.launch.py",
-            host=host,
-            robot_model=model,
-            base_only=str(base_only).lower(),
-            arm_mapping_dir=arm_mapping_dir,
-            state_timestamp_mode=state_timestamp_mode,
-            cmd_vel_topic="/cmd_vel_safe",
-            observation_port=observation_port,
-            command_port=command_port,
-        ),
-        Node(
-            package="robot_localization",
-            executable="ekf_node",
-            name="ekf_filter_node",
-            parameters=[ekf_parameters(use_imu)],
-            remappings=[("odometry/filtered", "/odom")],
-            output="screen",
-        ),
-        Node(
-            package="nav2_collision_monitor",
-            executable="collision_monitor",
-            name="collision_monitor",
-            parameters=[collision_params or model_config(model, "collision")],
-            output="screen",
-        ),
-        Node(
-            package="nav2_lifecycle_manager",
-            executable="lifecycle_manager",
-            name="lifecycle_manager_collision_monitor",
-            parameters=[{"autostart": True, "node_names": ["collision_monitor"]}],
-            output="screen",
-        ),
-    ]
-    if start_sensors:
+    if runtime_mode not in ("hardware", "simulation", "replay"):
+        raise ValueError("runtime_mode must be hardware, simulation or replay")
+    if runtime_mode != "hardware" and (not use_sim_time or start_sensors or enable_cameras):
+        raise ValueError("Offline modes require sim time and forbid hardware sensors/cameras")
+    if runtime_mode == "hardware" and use_sim_time:
+        raise ValueError("Hardware mode requires wall time")
+    actions = []
+    if runtime_mode != "replay":
+        actions.append(
+            include(
+                "alohamini_description",
+                "description.launch.py",
+                robot_model=model,
+                description="base" if base_only else "navigation",
+                use_sim_time=str(use_sim_time).lower(),
+            )
+        )
+    if runtime_mode == "hardware":
+        actions.append(
+            include(
+                "alohamini_bridge",
+                "bridge.launch.py",
+                host=host,
+                robot_model=model,
+                base_only=str(base_only).lower(),
+                arm_mapping_dir=arm_mapping_dir,
+                state_timestamp_mode=state_timestamp_mode,
+                cmd_vel_topic="/cmd_vel_safe",
+                observation_port=observation_port,
+                command_port=command_port,
+            )
+        )
+    actions.extend(
+        [
+            Node(
+                package="robot_localization",
+                executable="ekf_node",
+                name="ekf_filter_node",
+                parameters=[
+                    ekf_parameters(use_imu, use_sim_time),
+                    *([ekf_params] if ekf_params else []),
+                    {"use_sim_time": use_sim_time},
+                ],
+                remappings=[("odometry/filtered", "/odom")],
+                output="screen",
+            ),
+            Node(
+                package="nav2_collision_monitor",
+                executable="collision_monitor",
+                name="collision_monitor",
+                parameters=[
+                    collision_params or model_config(model, "collision"),
+                    {"use_sim_time": use_sim_time},
+                ],
+                output="screen",
+            ),
+            Node(
+                package="nav2_lifecycle_manager",
+                executable="lifecycle_manager",
+                name="lifecycle_manager_collision_monitor",
+                parameters=[
+                    {
+                        "autostart": True,
+                        "node_names": ["collision_monitor"],
+                        "use_sim_time": use_sim_time,
+                    }
+                ],
+                output="screen",
+            ),
+        ]
+    )
+    if start_sensors or runtime_mode == "simulation":
         actions.append(
             include(
                 "alohamini_sensors",
@@ -117,6 +176,39 @@ def runtime(
                 robot_model=model,
                 sensor_profile=sensor_profile,
                 enable_imu=str(use_imu).lower(),
+                start_drivers=str(runtime_mode == "hardware").lower(),
+                use_sim_time=str(use_sim_time).lower(),
+            )
+        )
+    elif runtime_mode == "replay":
+        from alohamini_sensors.profile import sensor_profile as load_profile
+
+        actions.append(
+            Node(
+                package="alohamini_sensors",
+                executable="scan_filter",
+                parameters=[
+                    load_profile(model, sensor_profile)["scan_filter"],
+                    {"use_sim_time": True},
+                ],
+            )
+        )
+    if enable_cameras:
+        actions.append(
+            include(
+                "alohamini_camera",
+                "camera.launch.py",
+                host=host,
+                port=camera_stream_port,
+                cameras=cameras,
+                publish_raw="false",
+                timestamp_mode="host_wall",
+            )
+        )
+    if use_rviz:
+        actions.append(
+            include(
+                "alohamini_navigation", "rviz.launch.py", use_sim_time=str(use_sim_time).lower()
             )
         )
     return actions

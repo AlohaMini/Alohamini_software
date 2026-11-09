@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import math
 import time
 from collections import deque
@@ -13,6 +14,7 @@ from PIL import Image as PilImage
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image
+from std_msgs.msg import String
 
 from alohamini.paths import WorkspacePaths
 
@@ -88,6 +90,7 @@ class AlohaMiniCameraNode(Node):
         self.raw_publishers = {}
         self.compressed_publishers = {}
         self.info_publishers = {}
+        self.clock_publisher = self.create_publisher(String, "/alohamini/camera_clock", 10)
         for camera_name in self.camera_names:
             default_frame, default_file = CAMERA_DEFAULTS[camera_name]
             self.declare_parameter(f"{camera_name}.frame_id", default_frame)
@@ -235,6 +238,19 @@ class AlohaMiniCameraNode(Node):
         compressed.format = "jpeg"
         compressed.data = frame.jpeg
         self.compressed_publishers[frame.camera_name].publish(compressed)
+        if frame.host_session_id:
+            self.clock_publisher.publish(
+                String(
+                    data=json.dumps(
+                        {
+                            "host_session_id": frame.host_session_id,
+                            "camera_name": frame.camera_name,
+                            "capture_monotonic_s": frame.capture_monotonic_s,
+                            "capture_unix_ns": frame.capture_unix_ns,
+                        }
+                    )
+                )
+            )
 
         if raw_data is not None:
             image = Image()

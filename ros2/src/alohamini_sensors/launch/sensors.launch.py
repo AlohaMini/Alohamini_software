@@ -26,17 +26,18 @@ def _nodes(context):
             parameters.update(
                 {key: sensor[key] for key in ("scan_mode", "scan_frequency", "inverted")}
             )
-        nodes.append(
-            Node(
-                package=package,
-                executable=executable,
-                name=executable,
-                parameters=[parameters],
-                output="screen",
-                respawn=True,
-                respawn_delay=2.0,
+        if value("start_drivers").lower() == "true":
+            nodes.append(
+                Node(
+                    package=package,
+                    executable=executable,
+                    name=executable,
+                    parameters=[parameters, {"use_sim_time": value("use_sim_time") == "true"}],
+                    output="screen",
+                    respawn=True,
+                    respawn_delay=2.0,
+                )
             )
-        )
         if value("publish_mounts").lower() == "true":
             x, y, z = sensor["xyz"]
             roll, pitch, yaw = sensor["rpy"]
@@ -63,6 +64,7 @@ def _nodes(context):
                         "--child-frame-id",
                         sensor["frame_id"],
                     ],
+                    parameters=[{"use_sim_time": value("use_sim_time") == "true"}],
                     output="screen",
                 )
             )
@@ -72,7 +74,10 @@ def _nodes(context):
                 package="alohamini_sensors",
                 executable="scan_filter",
                 name="scan_filter",
-                parameters=[profile["scan_filter"]],
+                parameters=[
+                    profile["scan_filter"],
+                    {"use_sim_time": value("use_sim_time") == "true"},
+                ],
                 output="screen",
             )
         )
@@ -88,6 +93,8 @@ def generate_launch_description():
         "enable_lidar": "true",
         "enable_imu": "true",
         "publish_mounts": "true",
+        "start_drivers": "true",
+        "use_sim_time": "false",
     }
     return LaunchDescription(
         [

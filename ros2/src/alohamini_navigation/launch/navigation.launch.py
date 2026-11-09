@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from alohamini_navigation.launching import include, model_config
+from alohamini_navigation.launching import include, model_config, runtime_defaults
 from alohamini_navigation.maps import validate_map_revision
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -25,7 +25,7 @@ def _nodes(context):
             "localization_launch.py",
             map=str(path),
             params_file=params,
-            use_sim_time="false",
+            use_sim_time=value("use_sim_time"),
             autostart="true",
             use_composition="False",
         ),
@@ -33,7 +33,7 @@ def _nodes(context):
             "nav2_bringup",
             "navigation_launch.py",
             params_file=params,
-            use_sim_time="false",
+            use_sim_time=value("use_sim_time"),
             autostart="true",
             use_composition="False",
         ),
@@ -41,20 +41,7 @@ def _nodes(context):
 
 
 def generate_launch_description():
-    defaults = dict(
-        robot_model="alohamini2edu",
-        nav2_params="",
-        host="127.0.0.1",
-        start_sensors="false",
-        use_imu="true",
-        base_only="true",
-        sensor_profile="",
-        arm_mapping_dir="",
-        state_timestamp_mode="host_wall",
-        observation_port="5556",
-        command_port="5555",
-        collision_params="",
-    )
+    defaults = dict(runtime_defaults(), nav2_params="")
     return LaunchDescription(
         [
             DeclareLaunchArgument("map"),

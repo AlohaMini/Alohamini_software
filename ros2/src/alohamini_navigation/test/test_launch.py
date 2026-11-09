@@ -80,3 +80,74 @@ def test_edu_full_hardware_and_moveit_follow_selected_model():
             assert "alohamini2edu_moveit" in params["robot_description"]
         if package == "alohamini_bridge":
             assert params["expected_robot_model"] == "alohamini2edu"
+
+
+def test_simulation_graph_has_no_hardware_clients_and_all_consumers_use_sim_clock():
+    nodes, _ = launch_graph(
+        "alohamini_navigation", "mapping.launch.py", runtime_mode="simulation", use_sim_time="true"
+    )
+    assert not (
+        {"alohamini_bridge", "alohamini_camera", "alohamini_imu", "alohamini_rplidar_c1"}
+        & {p for p, _, _ in nodes}
+    )
+    assert all(params.get("use_sim_time") is True for _, _, params in nodes)
+
+
+def test_camera_and_navigation_rviz_are_composed_without_another_bridge():
+    nodes, _ = launch_graph(
+        "alohamini_navigation", "mapping.launch.py", enable_cameras="true", use_rviz="true"
+    )
+    packages = [p for p, _, _ in nodes]
+    assert packages.count("alohamini_bridge") == 1
+    assert packages.count("alohamini_camera") == 1
+    assert packages.count("rviz2") == 1
+    camera = next(params for package, _, params in nodes if package == "alohamini_camera")
+    assert camera["timestamp_mode"] == "host_wall" and not camera["publish_raw"]
+
+
+@pytest.mark.parametrize("mode", ["simulation", "replay"])
+def test_offline_modes_reject_hardware_start(mode):
+    with pytest.raises(ValueError, match="forbid hardware"):
+        launch_graph(
+            "alohamini_navigation",
+            "mapping.launch.py",
+            runtime_mode=mode,
+            use_sim_time="true",
+            start_sensors="true",
+        )
+
+
+def test_replay_excludes_motor_commands_and_duplicate_odom_tf(tmp_path):
+    import yaml
+
+    bag = tmp_path / "bag"
+    bag.mkdir()
+    topics = [
+        "/scan",
+        "/imu/data_raw",
+        "/wheel/twist",
+        "/tf_static",
+        "/tf",
+        "/odom",
+        "/cmd_vel",
+        "/cmd_vel_safe",
+    ]
+    (bag / "metadata.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "rosbag2_bagfile_information": {
+                    "topics_with_message_count": [
+                        {"topic_metadata": {"name": topic}, "message_count": 10} for topic in topics
+                    ]
+                }
+            }
+        )
+    )
+    nodes, processes = launch_graph(
+        "alohamini_navigation", "replay.launch.py", bag=str(bag), mode="mapping", use_rviz="false"
+    )
+    assert not any(package == "alohamini_bridge" for package, _, _ in nodes)
+    command = processes[0]
+    selected = command[command.index("--topics") + 1 :]
+    assert not {"/cmd_vel", "/cmd_vel_safe", "/tf", "/odom"} & set(selected)
+    assert "/tf_static" in selected and "/scan" in selected
