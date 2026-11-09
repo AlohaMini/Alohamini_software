@@ -16,7 +16,7 @@ analysis = ["numpy>=2,<3", "pyarrow>=18", "pillow>=11", "rerun-sdk==0.26.2", "av
 kinematics = ["numpy>=2,<3", "scipy>=1.14,<2", "pyyaml>=6"]
 smolvla = ["alohamini-platform[learning]"]
 spirit = ["alohamini-platform[learning,kinematics]"]
-hyvla05 = ["alohamini-platform[learning]", "timm==1.0.21"]
+hyvla05 = ["alohamini-platform[learning]", "timm==1.0.30"]
 openwam = ["alohamini-platform[learning]", "ftfy==6.3.1"]
 pi05 = ["alohamini-platform[learning]"]
 multi_task_dit = ["alohamini-platform[learning]"]
@@ -28,9 +28,9 @@ lewm = ["alohamini-platform[learning]"]
 xiaomi_robotics1 = ["alohamini-platform[learning,kinematics]"]
 lingbot_vla_v2 = ["alohamini-platform[learning]", "pyyaml>=6"]
 learning = [
-    "diffusers==0.39.0",
-    "transformers==5.21.0",
-    "sentencepiece==0.2.0",
+    "diffusers==0.42.1",
+    "transformers==5.22.1",
+    "sentencepiece==0.2.2",
     "scipy>=1.14,<2",
     "num2words==0.5.14",
     "typing-extensions>=4.10",
