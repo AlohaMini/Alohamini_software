@@ -271,7 +271,9 @@ def evaluate_policy(
         "device": str(device),
         "torch_version": torch.__version__,
     }
-    with mujoco.Renderer(robot.model, height=shapes[0][0], width=shapes[0][1]) as renderer:
+    from .cameras import CameraCapture
+
+    with CameraCapture(robot, cameras, height=shapes[0][0], width=shapes[0][1]) as capture:
 
         def action(data):
             sample = {}
@@ -280,9 +282,8 @@ def evaluate_policy(
                     policy.selection.frame({"observation.state": data.qpos[follower.qpos_ids]})
                 )
             for camera in policy.manifest["cameras"]:
-                renderer.update_scene(data, camera=camera, scene_option=options)
                 sample[f"observation.images.{camera}"] = image_tensor(
-                    renderer.render(),
+                    capture.image(data, camera, options),
                     policy.manifest["image_size"],
                     resize_mode=policy.manifest.get("image_resize_mode", "stretch"),
                     pad_value=policy.manifest.get("image_pad_value", 0.0),

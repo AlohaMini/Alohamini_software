@@ -111,7 +111,9 @@ def main(argv=None):
         "--resume", action="store_true", help="resume an unchanged reference batch"
     )
     collect.add_argument("--cameras", nargs="+", default=["agentview", "left_wrist", "right_wrist"])
-    collect.add_argument("--image-size", type=int, default=128)
+    collect.add_argument(
+        "--image-size", type=int, nargs="+", default=[128], help="square size or HEIGHT WIDTH"
+    )
     collect.add_argument("--output", required=True, type=_path_argument)
     replay = commands.add_parser("replay", help="verify or view a collected episode")
     replay.add_argument("dataset", type=_path_argument)
@@ -135,7 +137,9 @@ def main(argv=None):
     importer.add_argument("--output", type=_path_argument, required=True)
     for command in (view, replay, evaluate):
         command.add_argument(
-            "--window-egl-device", type=int, metavar="INDEX",
+            "--window-egl-device",
+            type=int,
+            metavar="INDEX",
             help="render the native window on an EGL GPU using VirtualGL",
         )
     for command in (view, collect, evaluate):
@@ -254,7 +258,8 @@ def main(argv=None):
             return 0
         from .collection import CollectionSettings, collect_episode, collect_reference_batch
 
-        settings = CollectionSettings(image_size=args.image_size)
+        image_size = args.image_size[0] if len(args.image_size) == 1 else tuple(args.image_size)
+        settings = CollectionSettings(image_size=image_size)
         if args.reference is not None:
             from .retarget import MotionRecipe, ReferenceMotion
 

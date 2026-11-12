@@ -841,6 +841,18 @@ def test_collection_rejects_failure_preserves_alignment_and_replays(
             renderer.update_scene(initial, camera="agentview", scene_option=options)
             clean = renderer.render().copy()
         np.testing.assert_array_equal(group["obs/agentview_rgb"][0], clean)
+        from alohamini.calibration.joint_space import StandardJointSpace
+
+        space = StandardJointSpace(json.loads(group.attrs["standard_joint_space"]))
+        assert space.signature == group.attrs["standard_joint_space_sha256"]
+        names = json.loads(group.attrs["joint_names"])
+        decoded = space.decode_targets(dict(zip(names, group["actions_standard"][0], strict=True)))
+        np.testing.assert_allclose([decoded[n] for n in names], group["actions"][0], atol=1e-12)
+        np.testing.assert_allclose(
+            group["camera/agentview/T_world_camera_optical"][0],
+            group["camera/agentview/T_world_camera"][0] @ np.diag([1, -1, -1, 1]),
+        )
+        assert manifest["camera_models"]["agentview"]["resolution"] == [128, 128]
         assert not np.array_equal(marked, clean)
         assert manifest["observation_rendering"]["site_groups"] == []
         data = scene_robot.data()

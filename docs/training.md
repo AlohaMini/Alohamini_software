@@ -74,6 +74,33 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 缺少平台标定和安全记录的外部 v3 数据，训练时加 `--dataset.allow_unannotated=true`。
 有 state 时可用 `--state=recorded` 读取原向量，保留字段顺序和数值；纯视觉任务使用 `--state=none`。
 
+### 标准关节坐标
+
+接口：`alohamini.calibration.joint_space`。按机器人型号加载 URDF 限位与 SRDF 开合姿态，生成固定标准范围。
+
+| 关节 | 标准范围 | 端点含义 |
+| --- | --- | --- |
+| 手臂旋转关节 | `[-1, 1]` | URDF 下限、上限；`0` 为限位中点 |
+| 夹爪 | `[0, 1]` | 闭合、张开 |
+| 升降 | `[0, 1]` | URDF 最低、最高位置 |
+
+```python
+from alohamini.calibration.joint_space import StandardJointSpace
+
+space = StandardJointSpace.from_model("alohamini2pro")
+positions = space.decode_targets({"left_gripper": 0.0, "vertical_move": 0.5})
+standard = space.encode_positions(positions)
+descriptor = space.descriptor  # 随数据或 checkpoint 保存；包含模型版本及坐标定义
+```
+
+`DeviceJointSpace.from_mappings(space, arm_mappings, lift_mapping, robot_metadata)` 加载本机左右臂、升降标定及当前 Host 元数据；臂标定包含采集时的 `motor_calibration`。
+
+- 读取：`positions_from_observation()` → `encode_positions()`；原始反馈通过 `post_offset_ticks` 传入具名的零偏后计数。
+- 目标转换：`host_targets_from_standard()` 或 `host_targets_from_positions()`，输出具名 Host 目标。
+- 重连或反馈中断：调用 `reset()`。
+
+夹爪数值表示活动指角度比例。目标按设备安全行程校验，升降保持米制比例；推理时匹配 checkpoint 的坐标描述与目标设备标定。
+
 ### MuJoCo 仿真数据
 
 支持读取已收录的 `alohamini-sim-v1` 回合或完成的 `alohamini-sim-batch-v1` 批次，无需转换为 LeRobot。`--dataset.root` 指向含 `dataset.json` 或 `index.json` 的目录；批次中的拒收回合及评估组不参与训练。回合按收录顺序从 0 编号，原任务与初态保存在 `episode_groups`，同组不能跨训练与验证。

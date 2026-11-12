@@ -111,9 +111,11 @@ MUJOCO_GL=egl alohamini-mujoco collect "$REFERENCE_DATASET/trajectory.json" \
 
 输出目录必须不存在；再次采集时修改 `DATASET`。更换布局或初态后需重新生成匹配轨迹。
 
-采集使用 20 Hz 绝对关节位置命令，每条命令保持 50 个 1 ms 物理步，参考速度为零。默认保存三路 128×128 无损 RGB；可用 `--cameras` 选择相机，用 `--image-size` 修改分辨率。图像不含 TCP、任务标记或坐标轴。
+采集使用 20 Hz 绝对关节位置命令，每条命令保持 50 个 1 ms 物理步，参考速度为零。默认保存三路 128×128 无损 RGB；`--cameras` 选择相机，`--image-size 256` 设置正方形分辨率，`--image-size 480 640` 设置高和宽。图像不含 TCP、任务标记或坐标轴。
 
-每帧保存控制前的关节位置、速度、图像及相机内外参；`actions` 为该周期的 rad/m 命令，`states` 保存 N+1 个完整积分状态。相机采用 OpenGL 坐标，图像原点在左上角。
+每帧保存控制前的关节位置、速度、图像及相机内外参；`actions` 为该周期的 rad/m 命令，`states` 保存 N+1 个完整积分状态。`actions_standard` 和 `obs/joint_positions_standard` 保存固定标准范围的动作和反馈，其关节名称、转换定义及校验值随回合保存。
+
+`camera/<相机名>/` 保存 `K_opencv`、畸变系数 `D` 和逐帧 `T_world_camera_optical`：光学坐标 X 向右、Y 向下、Z 向前，像素中心为整数坐标。`K` 和 `T_world_camera` 保留原有半整数像素中心及 OpenGL 坐标约定。
 
 收录要求：原始任务成功、双指接触至少 0.1 s、夹持时抬升至少 2 cm、释放后稳定至少 0.5 s、穿透不超过 0.5 mm，并通过关节速度、限位和完整状态回放检查。失败退出码为 1。
 
@@ -148,9 +150,15 @@ MUJOCO_GL=egl alohamini-mujoco collect \
 | `T_world_libero` | 场景坐标到世界坐标的刚体变换，保持 Z 轴向上 |
 | `initial_object_translation_world_m` | 活动物体初始位置的世界坐标平移，单位 m，Z 须为 0 |
 | `initial_positions` | 以 URDF 关节名指定初态，覆盖 SRDF Home；命令行同名值优先 |
-| `cameras` | 相机父刚体、局部位姿和垂直视场角 |
+| `cameras` | 相机名称、父刚体、局部位姿与投影参数 |
 
 修改布局或初态后须重新验证可达性和碰撞间隙。
+
+标定相机使用 `name`、`body`、`T_body_camera_optical` 和 `intrinsics`。`intrinsics` 包含 `resolution: [宽, 高]`、3×3 的 `K`、`D` 及 `distortion_model`（`plumb_bob` 对应 5 项，`equidistant` 对应 4 项）。图像按标定畸变生成，完整参数、标定状态和来源写入回合及导出的模型。父刚体上的安装变换固定，世界位姿随机器人运动更新。
+
+虚拟相机继续使用 `T_body_camera`（OpenGL 坐标）和 `fovy_deg`。
+
+全局相机添加 `role: "workspace"` 后，采集会逐帧检查目标物体完整落在画幅内，并保存投影边界；裁切物体的回合按拒收保存。腕部相机允许任务物体随手臂运动进出画面。
 
 轨迹 JSON 示例：
 
