@@ -270,11 +270,14 @@ def analyze(
         ):
             series[f"currents_ma/{name}"] = {"value": currents[:, j]}
     notes = [
-        "action 与同帧 state 的差不是执行误差：state 在本次请求发出前采样。",
-        "Host accepted target 属于反馈中的旧命令；这里只展示，不与新请求冒充配对。",
-        "select_action 耗时包含预处理/队列取动作，不能当成每帧模型推理耗时。",
-        "policy_action 可能已包含固定覆盖；此记录没有覆盖前网络输出或完整 Chunk。",
-        "未提供任务成功标签；动作变化排名不判断任务成败或失败原因。",
+        "同帧 state 记录的是发送当前 action 之前的状态，"
+        "Host accepted target 则对应反馈中的已接收命令。"
+        "分析执行跟踪时，需要先按命令身份和采样时间配对请求与后续反馈。",
+        "select_action 耗时覆盖预处理、模型计算或队列取动作。"
+        "解读耗时分布时，应结合动作块计算日志区分这些调用。",
+        "policy_action 保存策略接口返回的动作，其中可能已应用固定维度覆盖。"
+        "分析覆盖前的网络输出和完整动作块，需要对应的预测记录。",
+        "动作变化事件可帮助定位需要复查的片段，任务完成情况则由画面及结果标注确认。",
     ]
     duration = float(times[-1] - times[0])
     fixed = next((s["fixed_dimensions"] for s in sides if "fixed_dimensions" in s), None)

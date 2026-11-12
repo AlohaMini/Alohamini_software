@@ -11,6 +11,18 @@ import numpy as np
 from .source import feature_names, file_signature, unit
 
 
+def probe_interpretation(split):
+    label = {"train": "训练", "val": "验证"}.get(split, "所选")
+    description = (
+        f"从{label}示范中抽取观测，使用 checkpoint 重新预测后续动作，并与同一回合的动作标签比较。"
+    )
+    if split == "train":
+        return description + "这组结果用于检查模型对训练示范的拟合情况。"
+    if split == "val":
+        return description + "这组结果用于观察模型在未参与训练的示范上的预测表现。"
+    return description
+
+
 def _offsets(windows):
     result = {}
     for key, values in windows.items():
@@ -77,7 +89,8 @@ class _Inputs:
                         raise ValueError(f"示范缺少模型相机：{camera}, frame {row['frame_index']}")
                     with Image.open(self.reader.keyframe(refs[i], camera)) as image:
                         result = image_tensor(
-                            np.array(image.convert("RGB")), policy.manifest["image_size"],
+                            np.array(image.convert("RGB")),
+                            policy.manifest["image_size"],
                             resize_mode=policy.manifest.get("image_resize_mode", "stretch"),
                             pad_value=policy.manifest.get("image_pad_value", 0.0),
                         )
@@ -202,15 +215,12 @@ def probe_reference(context, reference, reader, output, *, samples, device, seed
         windows, include_task = _spec(policy)
         input_features = getattr(getattr(policy, "config", None), "input_features", {})
         auxiliary = {
-            key: feature
-            for key, feature in input_features.items()
-            if feature.type == "ENV"
+            key: feature for key, feature in input_features.items() if feature.type == "ENV"
         }
         for key in auxiliary:
-            if (
-                policy.manifest["source_info"]["features"].get(key)
-                != reference.data.info["features"].get(key)
-            ):
+            if policy.manifest["source_info"]["features"].get(key) != reference.data.info[
+                "features"
+            ].get(key):
                 raise ValueError(f"{key}: 示范数值观测契约与 checkpoint 不一致")
         offsets = windows["action"]
         inputs = _Inputs(policy, reference, reader, windows, include_task)
@@ -295,13 +305,17 @@ def probe_reference(context, reference, reader, output, *, samples, device, seed
             ),
         }
     notes = [
-        "首步对应行偏移 0；动作段误差只统计非负偏移，排除回合末尾 padding 和历史前缀。",
-        "偏移按示范行顺序计数，仅以回合边界 padding；不按真实时间重采样。",
-        "保持基线只使用当前同名观测值；状态缺失或单位无法确认时不计算该维基线。",
+        "动作窗口按示范中的行顺序组装，首步对应当前行。"
+        "动作段误差统计当前及后续有效标签，历史前缀和回合末尾的补齐部分会被剔除。",
+        "保持当前位置的基线将当前同名观测值重复到整个预测窗口。"
+        "只有坐标名称和单位能够对应的维度才参与基线计算，有效步数在表中分别列出。",
     ]
     if "past_action" in windows:
-        notes.append("本策略以示范中严格过去的动作作为条件；不输入当前或未来动作标签。")
-    notes.append("每次查询重置队列和潜变量；不复现连续运行中的融合、缓存或 RTC 行为。")
+        notes.append("本策略以示范中严格过去的动作作为条件，帮助预测后续动作。")
+    notes.append(
+        "每个观测点都独立重置策略后预测，因此这些误差衡量给定示范状态下的动作预测质量。"
+        "连续执行中的动作融合、队列和 RTC 效果，以及任务完成情况，需要结合真机回合分析。"
+    )
     result = {
         "schema_version": 2,
         "kind": current["kind"],
@@ -355,8 +369,7 @@ def probe_reference(context, reference, reader, output, *, samples, device, seed
             "predictions_npz": "demonstration_predictions.npz",
             "probe_json": "demonstration_probe.json",
         },
-        "interpretation": "在示范观测上按 checkpoint 配置独立预测，与同一回合的动作标签比较。"
-        "这不是录制时的原始 Chunk，也不是闭环成功率；训练集误差不代表泛化。",
+        "interpretation": probe_interpretation(context["reference_split"]),
     }
     encoded = json.dumps(result, ensure_ascii=False, allow_nan=False)
     reference.data.unchanged()

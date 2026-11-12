@@ -118,7 +118,10 @@ def test_probe_shows_algorithm_windows_named_metrics_baseline_and_artifacts(tmp_
     assert "预测窗口（步）：50" in page and "执行窗口（步）：10" in page
     assert "数据集帧率（Hz）：30" in page
     assert "历史前缀与无效尾部不计入" in page
-    assert "不跨单位合并" in page and "不代表闭环成功率" in page
+    assert "不跨单位合并" in page
+    assert "检查模型对训练示范的拟合情况" in page
+    assert "不代表闭环成功率" not in page
+    assert page.index("</table>", page.index("模型首步 MAE")) < page.index("计算方法与适用范围")
     assert "<li>缺少同名状态时，保持当前观测值的基线不可用。</li>" in page
     assert "<li>模型不会读取未来训练图像。</li>" in page
     assert "不计入误差的固定维度：arm_right_joint.pos" in page
@@ -156,6 +159,8 @@ def test_legacy_probe_retains_metrics_and_marks_unavailable_values_without_broke
     assert 'href="demonstration_predictions.npz"' in page
     assert 'href="demonstration_probe.json"' not in page
     assert "预测窗口（步）" not in page
+    assert "未参与训练的示范上的预测表现" in page
+    assert "训练集误差不代表泛化" not in page
 
 
 def test_report_without_probe_does_not_add_probe_section_or_downloads(tmp_path):
@@ -188,3 +193,30 @@ def test_probe_distinguishes_model_and_persistence_valid_step_counts(tmp_path):
     )
     assert "有效步数（模型 / 基线）" in page
     assert ["joint.pos", "rad", "1", "2", "3", "4", "模型50 / 基线31"] in Tables(page).rows
+    assert "统计范围一致的" not in page
+
+
+def test_probe_findings_use_only_available_metrics_with_matching_counts(tmp_path):
+    def metric(model, baseline, *, count=32, baseline_count=32):
+        return {
+            "chunk_mae": model,
+            "persistence_chunk_mae": baseline,
+            "valid_action_steps": count,
+            "persistence_valid_action_steps": baseline_count,
+        }
+
+    page = report(
+        tmp_path,
+        {
+            "split": "val",
+            "metrics": {
+                "improved.pos": metric(1, 3),
+                "higher.pos": metric(4, 2),
+                "different_population.pos": metric(1, 3, baseline_count=20),
+                "missing.pos": metric(None, 3),
+                "nonfinite.pos": metric(float("nan"), 3),
+                "empty.pos": metric(1, 3, count=0, baseline_count=0),
+            },
+        },
+    )
+    assert "统计范围一致的 2 个动作维度中，有 1 个维度" in page
