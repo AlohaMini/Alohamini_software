@@ -30,6 +30,7 @@ import torch
 
 from alohamini.learning.ema import EMAConfig
 from alohamini.learning.policy import save_checkpoint
+from alohamini.learning.train_config import resolve_dataset_options
 
 logger = logging.getLogger(__name__)
 
@@ -381,7 +382,10 @@ def load_training_checkpoint(path, cfg, samples, validation):
     saved.setdefault("world_size", 1)
     saved.setdefault("gradient_accumulation_steps", 1)
     saved.setdefault("distributed_backend", "ddp")
-    cfg = {"distributed_backend": "ddp", **cfg}
+    # Old checkpoints used the indexed sampler. New streaming settings define
+    # data order; cache capacity/blocking only changes storage performance.
+    saved = resolve_dataset_options(saved)
+    cfg = resolve_dataset_options({"distributed_backend": "ddp", **cfg})
     mutable = {
         "steps",
         "save_freq",
@@ -393,6 +397,9 @@ def load_training_checkpoint(path, cfg, samples, validation):
         "persistent_workers",
         "dataloader_multiprocessing_context",
         "dataset_preparation_timeout_s",
+        "dataset_cache_size_mb",
+        "dataset_cache_dir",
+        "dataset_cache_block_rows",
         "cpu_threads",
         "resume",
         "_checkpoint",
@@ -410,6 +417,8 @@ def load_training_checkpoint(path, cfg, samples, validation):
 
     def comparable(config, key):
         value = config.get(key)
+        if key == "streaming_episode_pool_size" and not config["dataset_streaming"]:
+            return None
         if key == "output_dir" and value is not None:
             return str(Path(value).expanduser().resolve())
         if key == "trainable_dtype":

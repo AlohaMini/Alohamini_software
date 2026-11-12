@@ -3,6 +3,7 @@
 import os
 from contextlib import nullcontext
 from datetime import timedelta
+from itertools import islice
 
 import torch
 import torch.distributed as dist
@@ -246,7 +247,8 @@ class Execution:
             # output projections). A fresh get_state_dict initializes all slots;
             # load exactly the saved set and drop those dummy entries again.
             saved = {
-                parts[2] for parts in metadata.planner_data.values()
+                parts[2]
+                for parts in metadata.planner_data.values()
                 if tuple(parts[:2]) == ("optimizer", "state") and len(parts) > 2
             }
             slots = state["optimizer"]["state"]
@@ -256,7 +258,8 @@ class Execution:
             dcp.load(state, storage_reader=reader)
             set_model_state_dict(model, state["model"])
             set_optimizer_state_dict(
-                model, raw_optimizer,
+                model,
+                raw_optimizer,
                 optim_state_dict=state["optimizer"],
                 options=StateDictOptions(strict=False),
             )
@@ -364,22 +367,23 @@ class RankBatchSampler:
 
     def __iter__(self):
         self.sampler.set_epoch(self.epoch)
-        order = list(self.sampler)
-        width = self.batch_size * self.world_size
-        if self.world_size > 1 and not self.drop_last:
-            order = (order * ((self.batches * width + self.size - 1) // self.size))[
-                : self.batches * width
-            ]
+        order = iter(self.sampler)
         offset = self.offset
         self.epoch += 1
         self.offset = 0
-        return iter(
-            [
-                order[
-                    i * width + self.rank * self.batch_size : min(
-                        i * width + (self.rank + 1) * self.batch_size, len(order)
-                    )
-                ]
-                for i in range(offset, self.batches)
-            ]
-        )
+        return self._batches(order, offset)
+
+    def _batches(self, order, offset):
+        """Retain the original shuffle while holding only one batch of Python indices."""
+        width = self.batch_size * self.world_size
+        prefix = []
+        for number in range(self.batches):
+            batch = list(islice(order, width))
+            if not number:
+                prefix = batch.copy()
+            if self.world_size > 1 and not self.drop_last:
+                missing = width - len(batch)
+                batch.extend(prefix[i % len(prefix)] for i in range(missing))
+            if number >= offset:
+                start = self.rank * self.batch_size
+                yield batch[start : start + self.batch_size]

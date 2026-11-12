@@ -10,6 +10,8 @@ import torch
 from alohamini.datasets.field_transforms import FieldTransforms
 from alohamini.datasets.kinematic_fields import descriptor_from_dataset
 from alohamini.datasets.statistics import ExactQuantileStats
+from alohamini.learning.data_index import ordered_indices
+from alohamini.learning.fixed import _batches, _summarize_batches
 from alohamini.policies.configuration import PolicyFeature
 
 
@@ -144,35 +146,31 @@ class FieldDataset(torch.utils.data.Dataset):
     def numeric_statistics(self, *, action_windows=True):
         """Fit transformed values using the algorithm's action sampling population."""
         fields = self.field_transform
-        anchors = (
-            fields.geometry.absolute(
-                np.asarray([fields.context(self.rows[i]) for i in self.sample_indices])
-            )
-            if fields.action == "tcp_delta"
-            else None
-        )
-        rows = sorted(self.source._used_rows["action"])
-        actions = np.asarray([self.rows[i]["action"] for i in rows])
-        if fields.action != "recorded":
-            actions = fields.geometry.absolute(actions)
-        lookup = dict(zip(rows, actions, strict=True))
         trackers = {"action": ExactQuantileStats()}
         if self.selection:
-            state_rows = sorted(self.source._used_rows["observation.state"])
-            states = np.asarray([self.selection.frame(self.rows[i]) for i in state_rows])
-            context = np.asarray([fields.context(self.rows[i]) for i in state_rows])
-            state_values, _ = fields.encode(states, anchor=context)
             trackers["observation.state"] = ExactQuantileStats()
-            trackers["observation.state"].update(state_values)
-        if action_windows or anchors is not None:
-            for number, row in enumerate(self.sample_indices):
+            for batch in _batches(ordered_indices(self.source._used_rows["observation.state"])):
+                rows = [self.rows[i] for i in batch]
+                states = np.asarray([self.selection.frame(row) for row in rows])
+                context = np.asarray([fields.context(row) for row in rows])
+                state_values, _ = fields.encode(states, anchor=context)
+                trackers["observation.state"].update(state_values)
+        if action_windows or fields.action == "tcp_delta":
+            for row in self.sample_indices:
                 indices, _ = self._get_query_indices(row)
-                targets = np.asarray([lookup[i] for i in indices["action"]])
-                if anchors is not None:
-                    targets = fields.relative.encode(anchors[number], targets)
+                targets = np.asarray([self.rows[i]["action"] for i in indices["action"]])
+                if fields.action != "recorded":
+                    targets = fields.geometry.absolute(targets)
+                if fields.action == "tcp_delta":
+                    anchor = fields.geometry.absolute(fields.context(self.rows[row]))
+                    targets = fields.relative.encode(anchor, targets)
                 trackers["action"].update(targets)
         else:
-            trackers["action"].update(actions)
+            for batch in _batches(ordered_indices(self.source._used_rows["action"])):
+                actions = np.asarray([self.rows[i]["action"] for i in batch])
+                if fields.action != "recorded":
+                    actions = fields.geometry.absolute(actions)
+                trackers["action"].update(actions)
         return {
             key: {name: value.tolist() for name, value in tracker.get_statistics().items()}
             for key, tracker in trackers.items()
@@ -183,14 +181,16 @@ class FieldDataset(torch.utils.data.Dataset):
         if self.selection is None:
             return None
         if "_recorded_state_statistics" not in self.__dict__:
-            rows = sorted(self.source._used_rows["observation.state"])
-            values = np.asarray(
-                [self.selection.frame(self.rows[i]) for i in rows], dtype=np.float64
+            summary = _summarize_batches(
+                (
+                    [self.selection.frame(self.rows[i]) for i in batch]
+                    for batch in _batches(
+                        ordered_indices(self.source._used_rows["observation.state"])
+                    )
+                ),
+                self.selection.feature["names"],
             )
-            self._recorded_state_statistics = {
-                "mean": values.mean(0).tolist(),
-                "std": values.std(0).tolist(),
-            }
+            self._recorded_state_statistics = {key: summary[key] for key in ("mean", "std")}
         return self._recorded_state_statistics
 
     def statistics(self, *, keys=None):

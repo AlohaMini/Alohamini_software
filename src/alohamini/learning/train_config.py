@@ -6,11 +6,37 @@ import os
 from dataclasses import fields
 from pathlib import Path
 
+from alohamini._validation import finite_number
 from alohamini.learning.checkpoint import resolve_pretrained
 from alohamini.learning.ema import EMAConfig, validate_ema_setup
 from alohamini.learning.loading import resolve_data_pipeline
 from alohamini.learning.precision import TRAINABLE_DTYPES, validate_trainable_dtype
 from alohamini.policies.registry import ALGORITHMS, algorithm
+
+
+def resolve_dataset_options(cfg):
+    """Validate flat local-dataset options, including defaults for old runs."""
+    cfg = dict(cfg)
+    for name, default in (
+        ("dataset_streaming", False),
+        ("dataset_cache_size_mb", 64),
+        ("dataset_cache_dir", None),
+        ("streaming_episode_pool_size", 8),
+        ("dataset_cache_block_rows", 128),
+    ):
+        cfg.setdefault(name, default)
+    if type(cfg["dataset_streaming"]) is not bool:
+        raise ValueError("dataset_streaming must be a boolean")
+    finite_number(cfg["dataset_cache_size_mb"], "dataset_cache_size_mb")
+    if cfg["dataset_cache_size_mb"] <= 0:
+        raise ValueError("dataset_cache_size_mb must be positive")
+    cache_dir = cfg["dataset_cache_dir"]
+    if cache_dir is not None and (not isinstance(cache_dir, str) or not cache_dir.strip()):
+        raise ValueError("dataset_cache_dir must be a nonempty path string or null")
+    for name in ("streaming_episode_pool_size", "dataset_cache_block_rows"):
+        if type(cfg[name]) is not int or cfg[name] < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    return cfg
 
 
 def boolean(value):
@@ -32,6 +58,27 @@ def parse_training_args(argv=None):
     )
     parser.add_argument("--config", "--config_path", type=Path)
     parser.add_argument("--dataset.root", dest="dataset")
+    parser.add_argument(
+        "--dataset.streaming",
+        dest="dataset_streaming",
+        type=boolean,
+        help="Use bounded episode-pool sampling for local file-backed training data",
+    )
+    parser.add_argument(
+        "--dataset.cache_size_mb",
+        dest="dataset_cache_size_mb",
+        type=float,
+        help="Decoded numeric/diagnostic cache in MiB per Dataset per process (default: 64)",
+    )
+    parser.add_argument(
+        "--dataset.cache_dir",
+        dest="dataset_cache_dir",
+        help="Temporary dataset cache directory (default: workspace/cache/datasets)",
+    )
+    parser.add_argument(
+        "--dataset.streaming_episode_pool_size", dest="streaming_episode_pool_size", type=int
+    )
+    parser.add_argument("--dataset.cache_block_rows", dest="dataset_cache_block_rows", type=int)
     parser.add_argument(
         "--dataset.allow_unannotated",
         dest="allow_unannotated",
@@ -207,6 +254,10 @@ def parse_training_args(argv=None):
     )
     for name, setting in defaults.items():
         cfg.setdefault(name, setting)
+    try:
+        cfg = resolve_dataset_options(cfg)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not cfg.get("dataset"):
         parser.error("--dataset.root (or dataset in --config) is required")
     if not cfg.get("output_dir") and not cfg.get("run_name"):

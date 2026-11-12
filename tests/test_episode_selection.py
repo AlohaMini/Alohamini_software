@@ -187,7 +187,10 @@ def test_detached_training_uses_reviewed_episode_and_resumes_same_population(
     assert manifest["training"]["excluded_samples"] == 0
     assert manifest["stats"]["action"]["mean"] == [1.5] * 18
     assert manifest["sample_filter"] == "episode_windows_v2"
-    assert "window_excluded=0 quality_filtered=0" in log.read_text()
+    # Normal training hides Dataset INFO diagnostics; the checkpoint remains
+    # authoritative for the selected population and warnings stay visible.
+    assert "dataset.num_frames=4" in log.read_text()
+    assert "No samples are removed by quality warnings" in log.read_text()
     resume, _ = parse_training_args(
         [f"--config_path={checkpoint / 'train_config.json'}", "--resume=true", "--steps=2"]
     )

@@ -48,6 +48,8 @@ from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optim
 from alohamini.learning.policy import NativePolicy, make_policy, make_processor
 from alohamini.learning.precision import validate_trainable_dtype
 from alohamini.learning.statistics import sample_arguments, training_statistics, write_statistics
+from alohamini.learning.streaming import StreamingBatchSampler
+from alohamini.learning.train_config import resolve_dataset_options
 from alohamini.learning.training_state import (
     load_training_checkpoint,
     restore_rng,
@@ -279,7 +281,7 @@ def train(settings):
     validate_trainable_dtype(settings.setdefault("trainable_dtype", "preserve"))
     components = algorithm(settings.get("policy", "act"))
     settings = components.apply_preset(settings)
-    settings = resolve_data_pipeline(settings)
+    settings = resolve_dataset_options(resolve_data_pipeline(settings))
     validate_ema_setup(settings)
     if settings.get("deterministic_algorithms"):
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -561,14 +563,26 @@ def _train(settings, execution):
             consumed = resume_state.get("consumed_batches", start_step)
             if execution.scaler is not None and resume_state.get("scaler"):
                 execution.scaler.load_state_dict(resume_state["scaler"])
-        sampler = RankBatchSampler(
-            len(samples),
+        sampler_type = StreamingBatchSampler if cfg["dataset_streaming"] else RankBatchSampler
+        if cfg["dataset_streaming"]:
+            logger.info(
+                "Streaming local samples: episode_pool_size=%d; bounded episode mixing; "
+                "ordered validation retained",
+                cfg["streaming_episode_pool_size"],
+            )
+        sampler = sampler_type(
+            samples if cfg["dataset_streaming"] else len(samples),
             batch_size,
             seed,
             execution.rank,
             execution.world_size,
             cfg.get("drop_last", False),
             consumed,
+            **(
+                {"pool_size": cfg["streaming_episode_pool_size"]}
+                if cfg["dataset_streaming"]
+                else {}
+            ),
         )
         if resume_state:
             logger.debug("Resuming at step %d; consumed microbatches=%d", start_step, consumed)
@@ -665,6 +679,12 @@ def _train(settings, execution):
             "trainable_dtype": trainable_dtype,
             "world_size": execution.world_size,
             "gradient_accumulation_steps": accumulation,
+            "dataset_streaming": cfg["dataset_streaming"],
+            "streaming_episode_pool_size": (
+                cfg["streaming_episode_pool_size"] if cfg["dataset_streaming"] else None
+            ),
+            "dataset_cache_size_mb": cfg["dataset_cache_size_mb"],
+            "dataset_cache_block_rows": cfg["dataset_cache_block_rows"],
             "optimizer": cfg["optimizer"],
             "scheduler": cfg["scheduler"],
             "paper_preset": cfg.get("paper_preset"),

@@ -5,8 +5,9 @@ import json
 import logging
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import ExitStack
 from copy import deepcopy
+from functools import wraps
 from pathlib import Path
 
 import numpy as np
@@ -18,8 +19,11 @@ from alohamini.datasets.images import image_path, image_rgb
 from alohamini.datasets.record import StateSelection
 from alohamini.datasets.tools import check_dataset, dataset_info
 from alohamini.datasets.video_reader import VideoFrameCache
+from alohamini.learning.data_index import EpisodeLayout, ordered_indices
+from alohamini.learning.data_store import FileBackedIntSequence, IndexSet, RowStore
 from alohamini.learning.logging import log_stage
 from alohamini.learning.processor import DEFAULT_IMAGE_SIZE, image_tensor
+from alohamini.paths import WorkspacePaths
 from alohamini.policies.configuration import PolicyFeature
 
 
@@ -173,6 +177,46 @@ def inspect_feedback(root, episodes, *, state="joint_velocity,joint_current"):
     }
 
 
+def _numeric_rows(path, columns, batch_rows):
+    with pq.ParquetFile(path) as table:
+        for batch in table.iter_batches(
+            batch_size=batch_rows, columns=list(dict.fromkeys(columns))
+        ):
+            yield from batch.to_pylist()
+
+
+def _safety_records(path):
+    with path.open() as stream:
+        for line in stream:
+            record = json.loads(line)
+            if record.get("frame_index") is not None:
+                yield {
+                    key: record.get(key)
+                    for key in ("host_timing", "safety", "alignment_error_s", "client_timing")
+                }
+
+
+def _close_failed_initialization(initialize):
+    """Release private caches even when a caller retains the failure traceback."""
+
+    @wraps(initialize)
+    def wrapped(self, *args, **kwargs):
+        try:
+            return initialize(self, *args, **kwargs)
+        except BaseException:
+            resources = [self.__dict__.get(key) for key in ("rows", "records", "sample_indices")]
+            resources.extend(self.__dict__.get("_used_rows", {}).values())
+            for resource in resources:
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        logging.getLogger(__name__).exception("Failed to close dataset cache")
+            raise
+
+    return wrapped
+
+
 class AlohaMiniDataset(Dataset):
     """PyTorch dataset over AlohaMini recordings and their LeRobot v3 exports.
 
@@ -194,10 +238,16 @@ class AlohaMiniDataset(Dataset):
     through delta_indices; absent fields such as rewards are never synthesized.
     ``context_fields`` loads and validates additional recorded fields for data
     transforms, without adding them to model inputs or temporal windows.
+
+    Numeric rows and diagnostic records use private file-backed stores. Each
+    process lazily opens those files and has a bounded decoded-block cache;
+    ``cache_size_mb`` covers both stores, not video decoders or batch tensors.
+    Preparation still checks selected values and builds compact sample indices.
     """
 
     sample_filter = "episode_windows_v2"
 
+    @_close_failed_initialization
     def __init__(
         self,
         root,
@@ -221,8 +271,25 @@ class AlohaMiniDataset(Dataset):
         inspection=None,
         allow_unannotated=False,
         context_fields=(),
+        cache_size_mb=64,
+        cache_block_rows=128,
+        cache_dir=None,
     ):
         self.root = Path(root).expanduser().resolve()
+        if (
+            isinstance(cache_size_mb, bool)
+            or not isinstance(cache_size_mb, (int, float))
+            or (not np.isfinite(cache_size_mb) or cache_size_mb <= 0)
+        ):
+            raise ValueError("cache_size_mb must be finite and positive")
+        if type(cache_block_rows) is not int or cache_block_rows < 1:
+            raise ValueError("cache_block_rows must be a positive integer")
+        self.cache_size_mb, self.cache_block_rows = cache_size_mb, cache_block_rows
+        self.cache_dir = str(
+            Path(cache_dir).expanduser().resolve()
+            if cache_dir is not None
+            else WorkspacePaths().root / "cache" / "datasets"
+        )
         if type(camera_workers) is not int or camera_workers < 0:
             raise ValueError("camera_workers must be a nonnegative integer")
         if type(return_uint8) is not bool:
@@ -333,8 +400,19 @@ class AlohaMiniDataset(Dataset):
         if image_resize_mode not in ("stretch", "pad") or not 0 <= image_pad_value <= 1:
             raise ValueError("Invalid image resize mode or padding value")
         self.image_resize_mode, self.image_pad_value = image_resize_mode, image_pad_value
-        self.rows, self.records, self.locations = [], [], []
-        self.segment_starts, self.segment_ends = [], []
+        cache_bytes = max(2, int(cache_size_mb * 1024**2))
+        record_bytes = max(1, cache_bytes // 5)
+        cache_root = Path(self.cache_dir)
+        if cache_root.resolve().is_relative_to(self.root):
+            raise ValueError("cache_dir must be outside the source dataset directory")
+        cache_root.mkdir(parents=True, exist_ok=True)
+        self.rows = RowStore(
+            cache_bytes=cache_bytes - record_bytes, block_rows=cache_block_rows, root=cache_root
+        )
+        self.records = RowStore(
+            cache_bytes=record_bytes, block_rows=cache_block_rows, root=cache_root
+        )
+        spans = []
         self.excluded = 0
         self.table_sha256 = {}
         self.input_features = {
@@ -398,55 +476,66 @@ class AlohaMiniDataset(Dataset):
             if mask:
                 columns.append(mask)
         logging.getLogger(__name__).info("Loading selected episodes and sample windows")
-        loaded = self._storage.read_episodes(self.episodes, columns) if self._storage else None
-        for number, episode in enumerate(self.episodes, 1):
-            directory = self.root / "episodes" / f"episode_{episode:06d}"
-            table_path = directory / "frames.parquet"
-            if self._storage:
-                rows, safety_path, paths = next(loaded)
-            else:
-                safety_path = directory / "safety.jsonl"
-                paths = (table_path, safety_path)
-                rows = pq.read_table(table_path, columns=list(dict.fromkeys(columns))).to_pylist()
-            for path in paths:
-                relative = str(path.relative_to(self.root))
-                if relative not in self.table_sha256:
-                    with path.open("rb") as stream:
-                        self.table_sha256[relative] = hashlib.file_digest(
-                            stream, "sha256"
-                        ).hexdigest()
-            records = []
-            if safety_path is None:
-                # Missing evidence remains missing; never claim feedback validity
-                # or synthesize Host timestamps from the nominal frame rate.
-                records = [{} for _ in rows]
-            with safety_path.open() if safety_path is not None else nullcontext(()) as stream:
-                for line in stream:
-                    record = json.loads(line)
-                    if record.get("frame_index") is None:
-                        continue
-                    records.append(
-                        {
-                            k: record.get(k)
-                            for k in (
-                                "host_timing",
-                                "safety",
-                                "alignment_error_s",
-                                "client_timing",
-                            )
-                        }
-                    )
-            start = len(self.rows)
-            for index, (row, record) in enumerate(zip(rows, records, strict=True)):
-                self.rows.append(row)
-                self.records.append(record)
-                self.locations.append((episode, index))
-            self.segment_starts.extend([start] * (len(self.rows) - start))
-            self.segment_ends.extend([len(self.rows)] * (len(self.rows) - start))
-            if number % 10 == 0 or number == len(self.episodes):
-                logging.getLogger(__name__).info(
-                    "Loaded episodes %d/%d; rows=%d", number, len(self.episodes), len(self.rows)
+        if self._storage:
+            if hasattr(self._storage, "stream_episodes"):
+                loaded = self._storage.stream_episodes(
+                    self.episodes, columns, batch_size=cache_block_rows, cache_dir=cache_root
                 )
+            else:
+                loaded = self._storage.read_episodes(self.episodes, columns)
+        else:
+            loaded = None
+        with ExitStack() as source_resources:
+            if loaded is not None:
+                source_resources.callback(loaded.close)
+            for number, episode in enumerate(self.episodes, 1):
+                with ExitStack() as episode_resources:
+                    directory = self.root / "episodes" / f"episode_{episode:06d}"
+                    table_path = directory / "frames.parquet"
+                    if self._storage:
+                        rows, safety_path, paths = next(loaded)
+                    else:
+                        safety_path = directory / "safety.jsonl"
+                        paths = (table_path, safety_path)
+                        rows = _numeric_rows(table_path, columns, cache_block_rows)
+                    if hasattr(rows, "close"):
+                        episode_resources.callback(rows.close)
+                    for path in paths:
+                        relative = str(path.relative_to(self.root))
+                        if relative not in self.table_sha256:
+                            with path.open("rb") as stream:
+                                self.table_sha256[relative] = hashlib.file_digest(
+                                    stream, "sha256"
+                                ).hexdigest()
+                    start = len(self.rows)
+                    if safety_path is None:
+                        pairs = ((row, {}) for row in rows)
+                    else:
+                        records = _safety_records(safety_path)
+                        episode_resources.callback(records.close)
+                        pairs = zip(rows, records, strict=True)
+                    for row, record in pairs:
+                        self.rows.append(row)
+                        self.records.append(record)
+                    spans.append((episode, start, len(self.rows)))
+                    if number % 10 == 0 or number == len(self.episodes):
+                        logging.getLogger(__name__).info(
+                            "Loaded episodes %d/%d; rows=%d",
+                            number,
+                            len(self.episodes),
+                            len(self.rows),
+                        )
+        self.rows.finalize()
+        self.records.finalize()
+        logging.getLogger(__name__).info(
+            "File-backed dataset: numeric/diagnostic cache=%.1f MiB per process; block_rows=%d",
+            cache_size_mb,
+            cache_block_rows,
+        )
+        layout = EpisodeLayout(spans)
+        self.locations = layout.view("location")
+        self.segment_starts = layout.view("start")
+        self.segment_ends = layout.view("end")
         logging.getLogger(__name__).info("Validating selected fields in every selected episode")
         for i in range(len(self.rows)):
             for key in dict.fromkeys([*self.sample_keys, *self.context_fields]):
@@ -454,8 +543,10 @@ class AlohaMiniDataset(Dataset):
             if self.include_task:
                 self._validate_field(i, "task")
         logging.getLogger(__name__).info("Constructing episode-bounded sample windows")
-        self.sample_indices = []
-        self._used_rows = {key: set() for key in self.sample_keys}
+        self.sample_indices = FileBackedIntSequence(root=cache_root)
+        self._used_rows = {
+            key: IndexSet(len(self.rows), root=cache_root) for key in self.sample_keys
+        }
         if type(drop_n_last_frames) is not int or drop_n_last_frames < 0:
             raise ValueError("drop_n_last_frames must be a nonnegative integer")
         for i in range(len(self.rows)):
@@ -471,6 +562,9 @@ class AlohaMiniDataset(Dataset):
             if "past_action" in windows:
                 self._used_rows["action"].update(windows["past_action"])
         self.excluded = len(self.rows) - len(self.sample_indices)
+        self.sample_indices.finalize()
+        for indices in self._used_rows.values():
+            indices.finalize()
         if not self.sample_indices:
             raise ValueError("No samples for the selected episodes and window configuration")
         logging.getLogger(__name__).info(
@@ -650,7 +744,7 @@ class AlohaMiniDataset(Dataset):
         means, m2s, counts = {}, {}, {}
         for key in dict.fromkeys(keys):
             indices = self._used_rows[key]
-            for i in sorted(indices):
+            for i in ordered_indices(indices):
                 value = self._value(i, key)
                 if key.startswith("observation.images.") and value.dtype == torch.uint8:
                     value = value.float() / 255

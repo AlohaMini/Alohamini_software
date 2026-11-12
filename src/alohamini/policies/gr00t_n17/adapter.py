@@ -2,11 +2,14 @@
 
 import json
 from copy import deepcopy
+from itertools import islice
 from pathlib import Path
 
 import torch
 from safetensors.torch import load_file
 
+from alohamini.datasets.statistics import ExactQuantileStats
+from alohamini.learning.data_index import ordered_indices
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import limits_statistics
 from alohamini.paths import WorkspacePaths
@@ -108,12 +111,13 @@ class GR00TN17Algorithm(ChunkAlgorithm):
                 if "q01" in stats[key] and "q99" in stats[key]:
                     stats[key].update(min=stats[key]["q01"], max=stats[key]["q99"])
                     continue
-                values = torch.stack(
-                    [samples._value(i, key).double() for i in sorted(samples._used_rows[key])]
-                )
-                low, high = torch.quantile(
-                    values, torch.tensor([0.01, 0.99], dtype=torch.float64), dim=0
-                )
+                tracker = ExactQuantileStats()
+                rows = iter(ordered_indices(samples._used_rows[key]))
+                while indices := list(islice(rows, 1024)):
+                    values = torch.stack([samples._value(i, key).double() for i in indices])
+                    tracker.update(values.detach().cpu().numpy())
+                percentiles = tracker.get_statistics()
+                low, high = percentiles["q01"], percentiles["q99"]
                 stats[key].update(
                     min=low.tolist(), max=high.tolist(), q01=low.tolist(), q99=high.tolist()
                 )

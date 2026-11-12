@@ -279,6 +279,57 @@ class SimulationSource:
                     rows.append(row)
             yield rows, None, [*self.metadata_paths, metadata["path"]]
 
+    def stream_episodes(self, episodes, columns, *, batch_size=1024, cache_dir=None):
+        """Yield bounded numeric row streams; image references stay unchanged.
+
+        Each HDF5 file opens only when its rows are consumed. Closing either
+        iterator, or advancing to the next episode, closes the current file.
+        ``cache_dir`` is accepted for the shared storage interface; this source
+        reads HDF5 directly and does not create an additional cache.
+        """
+        import h5py
+
+        if type(batch_size) is not int or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        sources = {
+            "action": "actions",
+            "observation.state": "obs/joint_positions",
+            "observation.joint_velocity": "obs/joint_velocities",
+        }
+        columns = tuple(dict.fromkeys(columns))
+        for key in columns:
+            if key not in sources and key != "task" and not key.startswith("observation.images."):
+                raise ValueError(f"Simulation field is not recorded: {key}")
+
+        def episode_rows(number, metadata):
+            with h5py.File(metadata["path"], "r") as file:
+                data = file["data/demo_0"]
+                for start in range(0, metadata["length"], batch_size):
+                    stop = min(metadata["length"], start + batch_size)
+                    arrays = {
+                        key: np.asarray(data[sources[key]][start:stop], dtype=np.float32)
+                        for key in columns
+                        if key in sources
+                    }
+                    for frame in range(start, stop):
+                        row = {"episode_index": number, "frame_index": frame}
+                        for key in columns:
+                            if key in arrays:
+                                row[key] = arrays[key][frame - start]
+                            elif key == "task":
+                                row[key] = metadata["language"]
+                            else:
+                                row[key] = (str(metadata["path"]), frame)
+                        yield row
+
+        for number in episodes:
+            metadata = self.episodes[number]
+            rows = episode_rows(number, metadata)
+            try:
+                yield rows, None, [*self.metadata_paths, metadata["path"]]
+            finally:
+                rows.close()
+
     def image(self, reference, camera, *, video_reader=None):
         import h5py
 

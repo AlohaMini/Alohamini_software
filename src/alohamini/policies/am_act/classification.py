@@ -2,8 +2,11 @@
 
 import logging
 import math
+from itertools import islice
 
 import torch
+
+from alohamini.learning.data_index import ordered_indices
 
 BASE_CLASSES = {
     "x.vel": [-0.15, 0.0, 0.15],  # m/s, KeyboardTargets default speed level
@@ -60,12 +63,10 @@ def prepare_options(options, samples):
     # This is the same selected physical population as AlohaMiniDataset.statistics.
     # Boundary padding only repeats rows already in this set; no padded copies
     # or overlapping action chunks increase a frame's frequency.
-    rows = sorted(samples._used_rows["action"])
+    rows = iter(ordered_indices(samples._used_rows["action"]))
     counts = [torch.zeros(len(values), dtype=torch.int64) for values in centers]
-    for start in range(0, len(rows), 8192):
-        actions = torch.tensor(
-            [samples.rows[i]["action"] for i in rows[start : start + 8192]], dtype=torch.float32
-        )
+    while indices := list(islice(rows, 8192)):
+        actions = torch.tensor([samples.rows[i]["action"] for i in indices], dtype=torch.float32)
         for i, (dim, values) in enumerate(zip(dims, centers, strict=True)):
             counts[i] += torch.bincount(
                 nearest_class(actions[:, dim], values), minlength=len(values)

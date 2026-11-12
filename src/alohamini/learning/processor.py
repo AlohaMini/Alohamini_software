@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from alohamini.learning.data_index import ordered_indices
 from alohamini.policies.configuration import NormalizationMode
 
 DEFAULT_IMAGE_SIZE = (480, 640)  # Height, width; original AlohaMini ACT resolution.
@@ -71,7 +72,8 @@ def image_tensor(
         if resize_mode == "pad":
             height, width = size[0] - target[0], size[1] - target[1]
             tensor = F.pad(
-                tensor, (width // 2, width - width // 2, height // 2, height - height // 2),
+                tensor,
+                (width // 2, width - width // 2, height // 2, height - height // 2),
                 value=pad_value,
             )
     return tensor
@@ -191,7 +193,7 @@ def limits_statistics(samples):
         if "min" in stats[key] and "max" in stats[key]:
             continue
         minimum = maximum = None
-        for i in sorted(samples._used_rows[key]):
+        for i in ordered_indices(samples._used_rows[key]):
             value = samples._value(i, key).double()
             minimum = value if minimum is None else torch.minimum(minimum, value)
             maximum = value if maximum is None else torch.maximum(maximum, value)

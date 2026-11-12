@@ -2,8 +2,12 @@
 
 import io
 import json
+import pickle
+import struct
 from collections import Counter, defaultdict
 from copy import deepcopy
+from pathlib import Path
+from tempfile import TemporaryFile
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -11,6 +15,45 @@ from PIL import Image
 
 from alohamini.datasets.images import video_rgb
 from alohamini.datasets.lerobot_tools import _dataset_path
+from alohamini.paths import WorkspacePaths
+
+_BLOCK_HEADER = struct.Struct("<QQ")
+_NEXT_OFFSET = struct.Struct("<Q")
+_END = (1 << 64) - 1
+
+
+class _RowSpool:
+    """Private linked blocks, with only one head/tail pair per selected episode."""
+
+    def __init__(self, file):
+        self.file = file
+        self.heads, self.tails = {}, {}
+
+    def append(self, episode, rows):
+        payload = pickle.dumps(rows, protocol=pickle.HIGHEST_PROTOCOL)
+        self.file.seek(0, 2)
+        offset = self.file.tell()
+        self.file.write(_BLOCK_HEADER.pack(_END, len(payload)))
+        self.file.write(payload)
+        if episode in self.tails:
+            self.file.seek(self.tails[episode])
+            self.file.write(_NEXT_OFFSET.pack(offset))
+        else:
+            self.heads[episode] = offset
+        self.tails[episode] = offset
+
+    def rows(self, episode):
+        offset = self.heads.get(episode, _END)
+        while offset != _END:
+            self.file.seek(offset)
+            header = self.file.read(_BLOCK_HEADER.size)
+            if len(header) != _BLOCK_HEADER.size:
+                raise ValueError("Truncated v3 row spool")
+            offset, size = _BLOCK_HEADER.unpack(header)
+            payload = self.file.read(size)
+            if len(payload) != size:
+                raise ValueError("Truncated v3 row spool")
+            yield from pickle.loads(payload)
 
 
 class LeRobotSource:
@@ -67,8 +110,99 @@ class LeRobotSource:
                 self.episodes[row["episode_index"]] = row
         self._image_cache_key = self._image_cache = None
 
+    def __getstate__(self):
+        return {**self.__dict__, "_image_cache_key": None, "_image_cache": None}
+
     def read_episode(self, episode, columns):
         return next(self.read_episodes([episode], columns))
+
+    def _read_columns(self, columns):
+        tasks = None
+        if "task" in columns:
+            tasks_path = self.root / "meta/tasks.parquet"
+            tasks_table = pq.read_table(tasks_path).to_pandas()
+            tasks = dict(zip(tasks_table["task_index"], tasks_table.index, strict=True))
+            if tasks_path not in self.metadata_paths:
+                self.metadata_paths.append(tasks_path)
+            columns = ["task_index" if key == "task" else key for key in columns]
+        numeric = list(
+            dict.fromkeys(
+                [
+                    "episode_index",
+                    "frame_index",
+                    *[k for k in columns if not k.startswith("observation.images.")],
+                ]
+            )
+        )
+        return tasks, numeric
+
+    def _episode_path(self, episode):
+        meta = self.episodes[episode]
+        return _dataset_path(
+            self.root,
+            self.storage_info["data_path"],
+            chunk_index=meta["data/chunk_index"],
+            file_index=meta["data/file_index"],
+        )
+
+    def stream_episodes(self, episodes, columns, *, batch_size=1024, cache_dir=None):
+        """Yield numeric row iterators through a bounded, private disk spool.
+
+        Scan each selected shard once, including interleaved episodes and reverse
+        requests. Consume each row iterator before advancing this generator; close
+        the generator to release its spool when abandoning a traversal early.
+        Image payload columns are never read into the spool.
+        """
+        if type(batch_size) is not int or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        episodes = list(episodes)
+        if not episodes:
+            return
+        tasks, numeric = self._read_columns(columns)
+        paths = {episode: self._episode_path(episode) for episode in episodes}
+        selected = defaultdict(set)
+        for episode, path in paths.items():
+            selected[path].add(episode)
+        directory = (
+            WorkspacePaths().root / "cache" / "datasets"
+            if cache_dir is None
+            else Path(cache_dir).expanduser().resolve()
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        with TemporaryFile(prefix="v3-rows-", dir=directory) as temporary:
+            spool = _RowSpool(temporary)
+            scanned = set()
+            for episode in episodes:
+                path = paths[episode]
+                safety = self.root / "meta/safety" / f"episode_{episode:06d}.jsonl"
+                if self.unannotated:
+                    safety = None
+                elif not safety.is_file():
+                    raise ValueError(f"Episode {episode}: missing original safety/timing sidecar")
+                if path not in scanned:
+                    with pq.ParquetFile(path) as file:
+                        for group in range(file.num_row_groups):
+                            offset = 0
+                            for batch in file.iter_batches(
+                                batch_size=batch_size, row_groups=[group], columns=numeric
+                            ):
+                                partitions = defaultdict(list)
+                                for index, row in enumerate(batch.to_pylist()):
+                                    if row["episode_index"] in selected[path]:
+                                        partitions[row["episode_index"]].append(
+                                            (group, offset + index, row)
+                                        )
+                                for number, rows in partitions.items():
+                                    spool.append(number, rows)
+                                offset += batch.num_rows
+                    scanned.add(path)
+                located = spool.rows(episode)
+                videos, references = self._episode_references(episode, path, safety)
+                yield (
+                    self._iter_episode_rows(episode, path, located, tasks, videos),
+                    safety,
+                    references,
+                )
 
     def read_episodes(self, episodes, columns):
         """Scan each selected physical shard once, yielding in requested episode order.
@@ -80,34 +214,12 @@ class LeRobotSource:
         episodes = list(episodes)
         if not episodes:
             return
-        tasks = None
-        if "task" in columns:
-            tasks_path = self.root / "meta/tasks.parquet"
-            tasks_table = pq.read_table(tasks_path).to_pandas()
-            tasks = dict(zip(tasks_table["task_index"], tasks_table.index, strict=True))
-            if tasks_path not in self.metadata_paths:
-                self.metadata_paths.append(tasks_path)
-            columns = ["task_index" if key == "task" else key for key in columns]
         # Keep only numeric data and image locations in memory. Compressed images
         # are read on demand rather than loading an entire dataset into RAM.
-        numeric = list(
-            dict.fromkeys(
-                [
-                    "episode_index",
-                    "frame_index",
-                    *[k for k in columns if not k.startswith("observation.images.")],
-                ]
-            )
-        )
+        tasks, numeric = self._read_columns(columns)
         paths, selected = {}, defaultdict(set)
         for episode in episodes:
-            meta = self.episodes[episode]
-            path = _dataset_path(
-                self.root,
-                self.storage_info["data_path"],
-                chunk_index=meta["data/chunk_index"],
-                file_index=meta["data/file_index"],
-            )
+            path = self._episode_path(episode)
             paths[episode] = path
             selected[path].add(episode)
         remaining = Counter(episodes)
@@ -145,7 +257,7 @@ class LeRobotSource:
                     del buffered[path]
             yield self._episode_rows(episode, path, safety, located, tasks)
 
-    def _episode_rows(self, episode, path, safety, located, tasks):
+    def _episode_references(self, episode, path, safety):
         meta = self.episodes[episode]
         video_refs = {}
         for camera in self.cameras:
@@ -160,8 +272,19 @@ class LeRobotSource:
                 )
                 start = meta[f"videos/{key}/from_timestamp"] * self.storage_info["fps"]
                 video_refs[camera] = (video, round(start))
-        rows = []
+        return video_refs, [
+            *self.metadata_paths,
+            path,
+            *([safety] if safety is not None else []),
+            *(v[0] for v in video_refs.values()),
+        ]
+
+    def _iter_episode_rows(self, episode, path, located, tasks, video_refs):
+        count = 0
         for group, index, row in located:
+            if row["frame_index"] != count or count >= self.episodes[episode]["length"]:
+                raise ValueError(f"Episode {episode}: v3 row order or boundary mismatch")
+            count += 1
             if tasks is not None:
                 row["task"] = tasks[row["task_index"]]
             for camera in self.cameras:
@@ -171,20 +294,16 @@ class LeRobotSource:
                 else:
                     reference = (str(path), group, index)
                 row[f"observation.images.{camera}"] = reference
-            rows.append(row)
-        if len(rows) != meta["length"] or [r["frame_index"] for r in rows] != list(
-            range(len(rows))
-        ):
+            yield row
+        if count != self.episodes[episode]["length"]:
             raise ValueError(f"Episode {episode}: v3 row order or boundary mismatch")
+
+    def _episode_rows(self, episode, path, safety, located, tasks):
+        videos, references = self._episode_references(episode, path, safety)
         return (
-            rows,
+            list(self._iter_episode_rows(episode, path, located, tasks, videos)),
             safety,
-            [
-                *self.metadata_paths,
-                path,
-                *([safety] if safety is not None else []),
-                *(v[0] for v in video_refs.values()),
-            ],
+            references,
         )
 
     def image(self, reference, camera, *, video_reader=video_rgb):

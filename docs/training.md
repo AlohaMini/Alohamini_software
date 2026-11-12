@@ -921,6 +921,11 @@ tail -f ~/Alohamini_workspace/runs/act_01/metrics.jsonl
 
 ### 验证与视频加载
 
+本地数据的数值与诊断记录使用磁盘缓存，默认每个数据集、每个进程缓存 64 MiB。
+`--dataset.cache_size_mb=64` 设置缓存预算；`--dataset.cache_dir=/路径/cache` 指定源数据目录之外的缓存位置，默认位于工作区 `cache/datasets/`。总内存还包括图像解码、DataLoader 预取和 batch 张量。
+
+`--dataset.streaming=true` 启用有限回合池混合采样，适合长回合数据；`--dataset.streaming_episode_pool_size=8` 设置回合池大小。此方式改变样本混合顺序，验证集仍按序读取；续训沿用原采样方式与回合池大小。
+
 `--eval_steps` 设置验证间隔，`--eval_batch_size` 设置验证 batch；
 `--eval_num_workers`、`--eval_prefetch_factor` 可独立配置验证加载。
 未指定时沿用对应训练设置，worker 为 0 时关闭多进程预取。

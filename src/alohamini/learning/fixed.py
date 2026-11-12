@@ -3,13 +3,64 @@
 import hashlib
 import json
 from copy import deepcopy
+from itertools import islice
 from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
 
 from alohamini.fixed import VELOCITIES, dataset_info, dimensions, validate
+from alohamini.learning.data_index import ordered_indices
 from alohamini.paths import WorkspacePaths
+
+_BATCH_ROWS = 1024
+
+
+def _batches(values):
+    values = iter(values)
+    while batch := list(islice(values, _BATCH_ROWS)):
+        yield batch
+
+
+def _summarize_batches(batches, names):
+    """Merge centered FP64 moments without retaining previous physical vectors."""
+    count, mean, m2, minimum, maximum = 0, None, None, None, None
+    for values in batches:
+        values = np.asarray(values, dtype=np.float64)
+        if (
+            values.ndim != 2
+            or values.shape[1] != len(names)
+            or not len(values)
+            or not np.isfinite(values).all()
+        ):
+            raise ValueError("Cannot calculate physical means from invalid action rows")
+        batch_mean = values.mean(0)
+        batch_m2 = ((values - batch_mean) ** 2).sum(0)
+        if not count:
+            mean, m2 = batch_mean, batch_m2
+            minimum, maximum = values.min(0), values.max(0)
+        else:
+            total = count + len(values)
+            delta = batch_mean - mean
+            m2 += batch_m2 + delta**2 * (count * len(values) / total)
+            mean += delta * (len(values) / total)
+            minimum, maximum = (
+                np.minimum(minimum, values.min(0)),
+                np.maximum(maximum, values.max(0)),
+            )
+        count += len(values)
+    if not count:
+        raise ValueError("Cannot calculate physical means from invalid action rows")
+    return dict(
+        version=1,
+        names=list(names),
+        count=count,
+        mean=mean.tolist(),
+        min=minimum.tolist(),
+        max=maximum.tolist(),
+        std=np.sqrt(np.maximum(m2 / count, 0)).tolist(),
+        source="unique_training_action_rows",
+    )
 
 
 def action_summary(samples):
@@ -18,11 +69,16 @@ def action_summary(samples):
         return cached
     if not hasattr(samples, "rows") or not hasattr(samples, "_used_rows"):
         return None
-    indices = sorted(samples._used_rows.get("action", ()))
+    indices = samples._used_rows.get("action", ())
     if not indices:
         return None
-    values = np.asarray([samples.rows[i]["action"] for i in indices], dtype=np.float64)
-    result = summarize(values, samples.info["features"]["action"]["names"])
+    result = _summarize_batches(
+        (
+            [samples.rows[i]["action"] for i in batch]
+            for batch in _batches(ordered_indices(indices))
+        ),
+        samples.info["features"]["action"]["names"],
+    )
     samples._physical_action_summary = result
     return result
 
