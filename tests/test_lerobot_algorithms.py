@@ -15,6 +15,7 @@ from test_smolvla import tiny_assets as tiny_assets
 
 from alohamini.datasets.lerobotv3 import export_lerobot
 from alohamini.learning.data import AlohaMiniDataset
+from alohamini.learning.data_fields import prepare_fields
 from alohamini.learning.evaluate import evaluate_checkpoint
 from alohamini.learning.policy import NativePolicy, save_checkpoint
 from alohamini.learning.statistics import sample_arguments
@@ -98,6 +99,12 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
         options = dit_options(tmp_path / "clip-assets")
     elif kind == "diffusion":
         options = diffusion_options()
+    elif kind == "bspline":
+        options = {
+            **diffusion_options(),
+            "degree": 3,
+            "parameter_cache_dir": str(tmp_path / "bspline-cache"),
+        }
     elif kind == "fastwam":
         fake_frozen_assets(monkeypatch)
         options = fastwam_options()
@@ -146,6 +153,7 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     data = AlohaMiniDataset(**args, episodes=train)
     assert "robot_metadata" not in data.info
     assert data.records == [{}] * len(data.rows)
+    data = prepare_fields(data, {}, recipe, options=options)
     options.update(input_features=data.input_features, output_features=data.output_features)
     stats = recipe.statistics(data, options)
     model = recipe.build(options, stats)
