@@ -2,7 +2,7 @@ name: Dependency update candidates
 
 on:
   schedule:
-    - cron: "17 3 * * 1"
+    - cron: "17 3 1 * *"
   workflow_dispatch:
     inputs:
       group:
