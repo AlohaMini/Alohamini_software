@@ -12,9 +12,9 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from moveit_msgs.srv import GetPositionFK, GetPositionIK, GetStateValidity
+from rcl_interfaces.msg import ParameterType
+from rcl_interfaces.srv import GetParameters
 from rclpy.node import Node
-
-from alohamini.model import get_robot_model
 
 ARM_SUFFIXES = (
     "shoulder_pan",
@@ -47,6 +47,7 @@ DEFAULT_STATE = {
     "right_wrist_roll": 0.0,
     "right_gripper": -1.8030294104,
 }
+VIRTUAL_BASE_JOINTS = {"root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint"}
 
 
 def load_yaml(path: Path) -> dict:
@@ -113,17 +114,58 @@ def orientation_error(left: np.ndarray, right: np.ndarray) -> float:
     return math.acos(min(1.0, max(-1.0, (float(np.trace(relative)) - 1.0) / 2.0)))
 
 
+def model_context(description: str, semantic_description: str):
+    """Use the served model's root and joints for both physical and offline graphs."""
+    robot, semantic = ET.fromstring(description), ET.fromstring(semantic_description)
+    if robot.tag != "robot" or semantic.tag != "robot":
+        raise ValueError("MoveIt must publish URDF and SRDF robot descriptions")
+    links = {link.attrib["name"] for link in robot.findall("link")}
+    children = {joint.find("child").attrib["link"] for joint in robot.findall("joint")}
+    roots = links - children
+    if len(roots) != 1:
+        raise ValueError("MoveIt robot description must have exactly one root frame")
+    state = {
+        joint.attrib["name"]: DEFAULT_STATE.get(joint.attrib["name"], 0.0)
+        for joint in robot.findall("joint")
+        if joint.attrib["type"] != "fixed" and joint.find("mimic") is None
+    }
+    return roots.pop(), state, semantic
+
+
 class Validator(Node):
-    def __init__(self) -> None:
-        super().__init__("alohamini_moveit_validation", namespace="/alohamini_plan_only")
-        self.fk_client = self.create_client(GetPositionFK, "compute_fk")
-        self.ik_client = self.create_client(GetPositionIK, "compute_ik")
-        self.validity_client = self.create_client(GetStateValidity, "check_state_validity")
-        for client in (self.fk_client, self.ik_client, self.validity_client):
-            if not client.wait_for_service(timeout_sec=15.0):
-                name = client.srv_name
-                self.destroy_node()
-                raise RuntimeError(f"MoveIt service unavailable: {name}")
+    def __init__(self, *, namespace="/alohamini_plan_only") -> None:
+        # The default targets the isolated offline launch. ROS __ns remapping
+        # can select another MoveIt graph, including the physical model at /.
+        super().__init__("alohamini_moveit_validation", namespace=namespace)
+        try:
+            self.parameters_client = self.create_client(GetParameters, "move_group/get_parameters")
+            self.fk_client = self.create_client(GetPositionFK, "compute_fk")
+            self.ik_client = self.create_client(GetPositionIK, "compute_ik")
+            self.validity_client = self.create_client(GetStateValidity, "check_state_validity")
+            for client in (
+                self.parameters_client, self.fk_client, self.ik_client, self.validity_client
+            ):
+                if not client.wait_for_service(timeout_sec=15.0):
+                    raise RuntimeError(f"MoveIt service unavailable: {client.srv_name}")
+            response = self.call(
+                self.parameters_client,
+                GetParameters.Request(names=["robot_description", "robot_description_semantic"]),
+            )
+            if len(response.values) != 2 or any(
+                value.type != ParameterType.PARAMETER_STRING or not value.string_value
+                for value in response.values
+            ):
+                raise RuntimeError("MoveIt did not provide its URDF and SRDF parameters")
+            self.root_frame, self.default_state, self.semantic = model_context(
+                *(value.string_value for value in response.values)
+            )
+            self.link_names = {
+                link.attrib["name"]
+                for link in ET.fromstring(response.values[0].string_value).findall("link")
+            }
+        except BaseException:
+            self.destroy_node()
+            raise
 
     def call(self, client, request, timeout: float = 5.0):
         future = client.call_async(request)
@@ -132,16 +174,18 @@ class Validator(Node):
             raise RuntimeError("MoveIt service call timed out")
         return future.result()
 
-    @staticmethod
-    def fill_state(robot_state, values: dict[str, float]) -> None:
-        complete = dict(DEFAULT_STATE)
+    def fill_state(self, robot_state, values: dict[str, float]) -> None:
+        unknown = values.keys() - self.default_state.keys()
+        if unknown:
+            raise ValueError(f"Joints absent from the served MoveIt model: {sorted(unknown)}")
+        complete = dict(self.default_state)
         complete.update(values)
         robot_state.joint_state.name = list(complete)
         robot_state.joint_state.position = list(complete.values())
 
-    def fk_in_root(self, side: str, q_rad: list[float]) -> tuple[np.ndarray, np.ndarray]:
+    def fk_in_model(self, side: str, q_rad: list[float]) -> tuple[np.ndarray, np.ndarray]:
         request = GetPositionFK.Request()
-        request.header.frame_id = "root"
+        request.header.frame_id = self.root_frame
         request.fk_link_names = [f"{side}_Base", f"{side}_tcp"]
         values = dict(zip((f"{side}_{name}" for name in ARM_SUFFIXES), q_rad, strict=True))
         self.fill_state(request.robot_state, values)
@@ -151,7 +195,7 @@ class Validator(Node):
         return tuple(pose_matrix(item.pose) for item in response.pose_stamped)
 
     def fk(self, side: str, q_rad: list[float]) -> np.ndarray:
-        base, tcp = self.fk_in_root(side, q_rad)
+        base, tcp = self.fk_in_model(side, q_rad)
         return np.linalg.inv(base) @ tcp
 
     def ik(self, side: str, target: np.ndarray, seed: list[float]) -> list[float]:
@@ -159,20 +203,20 @@ class Validator(Node):
         ik = request.ik_request
         ik.group_name = f"{side}_arm"
         ik.ik_link_name = f"{side}_tcp"
-        ik.pose_stamped.header.frame_id = "root"
-        base, _ = self.fk_in_root(side, seed)
-        root_target = base @ target
+        ik.pose_stamped.header.frame_id = self.root_frame
+        base, _ = self.fk_in_model(side, seed)
+        model_target = base @ target
         (
             ik.pose_stamped.pose.position.x,
             ik.pose_stamped.pose.position.y,
             ik.pose_stamped.pose.position.z,
-        ) = (float(value) for value in root_target[:3, 3])
+        ) = (float(value) for value in model_target[:3, 3])
         (
             ik.pose_stamped.pose.orientation.x,
             ik.pose_stamped.pose.orientation.y,
             ik.pose_stamped.pose.orientation.z,
             ik.pose_stamped.pose.orientation.w,
-        ) = matrix_to_quaternion(root_target)
+        ) = matrix_to_quaternion(model_target)
         self.fill_state(
             ik.robot_state,
             dict(zip((f"{side}_{name}" for name in ARM_SUFFIXES), seed, strict=True)),
@@ -203,7 +247,6 @@ class Validator(Node):
 
 def main() -> None:
     validation = Path(get_package_share_directory("alohamini_validation"))
-    semantic = ET.parse(get_robot_model("alohamini2pro").description_path("semantic")).getroot()
     golden = load_yaml(validation / "config/fk_golden.yaml")
     collision = load_yaml(validation / "config/collision_baseline.yaml")
     rclpy.init()
@@ -232,12 +275,19 @@ def main() -> None:
             assert orientation_error(recovered, target) < 1e-3
         print("[PASS] MoveIt IK reachable targets")
 
+        if not VIRTUAL_BASE_JOINTS <= node.default_state.keys():
+            _, pairs = node.state_validity({})
+            assert all(set(pair) <= node.link_names for pair in pairs), sorted(pairs)
+            print("[PASS] MoveIt physical state-validity service and contact link references")
+            print("[SKIP] Physical contact acceptance has no established golden baseline")
+            return
+
         for state_name, state in collision["state_validity"].items():
             values = state.get("joints")
             if values is None:
                 values = {
                     joint.attrib["name"]: float(joint.attrib["value"])
-                    for group in semantic.findall("group_state")
+                    for group in node.semantic.findall("group_state")
                     if group.attrib["name"] == state["named_state"]
                     for joint in group.findall("joint")
                 }

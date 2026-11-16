@@ -2,8 +2,11 @@ import os
 import signal
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import rclpy
 import yaml
@@ -22,6 +25,41 @@ from test_hardware import ros as ros
 from test_trajectory import robot as robot
 from tf2_msgs.msg import TFMessage
 from trajectory_msgs.msg import JointTrajectoryPoint
+
+from alohamini.model import get_robot_model
+from alohamini_validation.validate_moveit import Validator, model_context
+
+
+@pytest.mark.parametrize(
+    "description,semantic,root,virtual_base",
+    [("collision", "semantic", "base_link", False), ("planning", "semantic_planning", "root", True)],
+)
+def test_validator_uses_served_model_joints_and_keeps_the_lift_reference(
+    description, semantic, root, virtual_base
+):
+    model = get_robot_model("alohamini2pro")
+    frame, state, actual_semantic = model_context(
+        model.description_xml(description), model.description_xml(semantic)
+    )
+    assert frame == root
+    assert actual_semantic.tag == "robot"
+    active = {
+        joint.attrib["name"]
+        for joint in ET.fromstring(model.description_xml(description)).findall("joint")
+        if joint.attrib["type"] != "fixed" and joint.find("mimic") is None
+    }
+    request = GetPositionFK.Request()
+    context = SimpleNamespace(default_state=state)
+    Validator.fill_state(context, request.robot_state, {"left_shoulder_pan": 0.1})
+    positions = dict(
+        zip(request.robot_state.joint_state.name, request.robot_state.joint_state.position, strict=True)
+    )
+    assert positions.keys() == active
+    assert positions["vertical_move"] == 0.2
+    assert positions["left_shoulder_pan"] == 0.1
+    assert ("root_x_axis_joint" in positions) is virtual_base
+    with pytest.raises(ValueError, match="absent from the served MoveIt model"):
+        Validator.fill_state(context, request.robot_state, {"unknown_joint": 0.0})
 
 
 def test_offline_rviz_targets_only_offline_move_group():
@@ -56,6 +94,29 @@ def test_moveit_executes_through_the_native_host_bridge(robot, tmp_path):
         )
         try:
             until(client.server_is_ready, timeout=15)
+            validator = Validator(namespace="/")
+            try:
+                assert validator.root_frame == "base_link"
+                assert "root_x_axis_joint" not in validator.default_state
+                seed = [0.0, -1.571, 1.571, 0.0, 0.0, 0.0]
+                for side in ("left", "right"):
+                    base, tcp = validator.fk_in_model(side, seed)
+                    validator.default_state["vertical_move"] = 0.1
+                    lower_base, lower_tcp = validator.fk_in_model(side, seed)
+                    np.testing.assert_allclose(
+                        lower_base[:3, 3] - base[:3, 3], [0, 0, -0.1], atol=1e-12
+                    )
+                    np.testing.assert_allclose(
+                        lower_tcp[:3, 3] - tcp[:3, 3], [0, 0, -0.1], atol=1e-12
+                    )
+                    validator.default_state["vertical_move"] = 0.2
+                    target = validator.fk(side, seed)
+                    recovered = validator.ik(side, target, seed)
+                    np.testing.assert_allclose(validator.fk(side, recovered), target, atol=1e-4)
+                _, pairs = validator.state_validity({})
+                assert all(set(pair) <= validator.link_names for pair in pairs)
+            finally:
+                validator.destroy_node()
             for resource, target in (
                 ("left_arm", 0.1),
                 ("right_arm", 0.1),

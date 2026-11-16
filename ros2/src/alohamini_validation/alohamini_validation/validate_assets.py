@@ -2,6 +2,7 @@
 # Migrated from alohamini_ros2/alohamini_validation; native model asset paths.
 from __future__ import annotations
 
+import hashlib
 import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -10,7 +11,8 @@ import numpy as np
 import yaml
 from ament_index_python.packages import get_package_share_directory
 
-from alohamini.model import get_robot_model
+from alohamini.model import RobotModel, get_robot_model
+from alohamini.simulation.description import Description
 
 ARM_JOINTS = (
     "shoulder_pan",
@@ -126,6 +128,7 @@ def dh_fk(config: dict, q_rad: list[float]) -> np.ndarray:
 
 
 def validate_tree(model: UrdfKinematics) -> None:
+    """Check the legacy planning/kinematic topology, including its virtual root."""
     links = {link.get("name") for link in model.root.findall("link")}
     joints = model.root.findall("joint")
     children = [joint.find("child").get("link") for joint in joints]
@@ -190,9 +193,55 @@ def resolve_package_uri(uri: str, description: Path) -> Path:
     return path
 
 
-def validate_collision(description: Path, validation: Path) -> None:
-    model = ET.parse(description / "urdf/alohamini2pro.urdf").getroot()
-    srdf = ET.parse(description / "srdf/alohamini2pro.srdf").getroot()
+def validate_physical_assets(robot: RobotModel) -> None:
+    """Validate canonical physical assets without applying the planning baseline."""
+    # Use the same checksum, tree, inertia and semantic rules as native consumers.
+    physical = Description(robot, name="collision")
+    manifest = physical.prepared
+    assert manifest is not None, "Canonical physical assets require a physical model manifest"
+    assert physical.root == manifest.get("base_frame") == "base_link", (
+        "Physical URDF must use base_link as its root"
+    )
+    assert not {"root", "root_x_link", "root_y_link"} & physical.links.keys(), (
+        "Physical URDF must not include the planning virtual root"
+    )
+    for name in ("collision", "semantic"):
+        relative = robot.description_path(name).relative_to(robot.directory).as_posix()
+        assert relative in manifest["files"], f"Physical {name} is not covered by its manifest"
+    for mesh in physical.tree.findall(".//mesh"):
+        relative = physical.mesh_path(mesh).relative_to(robot.directory).as_posix()
+        assert relative in manifest["files"], (
+            f"Physical mesh is not covered by its manifest: {relative}"
+        )
+
+    semantic = ET.parse(physical.semantic_path).getroot()
+    assert semantic.get("name") == physical.tree.get("name"), "Physical URDF/SRDF names differ"
+    kinematics = UrdfKinematics(physical.path)
+    for chain in semantic.findall(".//chain"):
+        base, tip = chain.get("base_link"), chain.get("tip_link")
+        assert base in physical.links and tip in physical.links, "Unknown physical SRDF chain link"
+        kinematics.chain(base, tip)
+    for joint in (*semantic.findall(".//joint"), *semantic.findall("passive_joint")):
+        assert joint.get("name") in physical.joints, "Unknown physical SRDF joint"
+
+    # The retained planning pair has its own immutable geometry/contact baseline.
+    # It is also the recorded source of this physical import, not a substitute for it.
+    planning = robot.description_path("planning").relative_to(robot.directory).as_posix()
+    assert manifest.get("planning_description") == planning, "Planning description alias changed"
+    sources = manifest.get("source_description_sha256", {})
+    for name in ("planning", "semantic_planning"):
+        path = robot.description_path(name)
+        relative = path.relative_to(robot.directory).as_posix()
+        assert sources.get(relative) == hashlib.sha256(path.read_bytes()).hexdigest(), (
+            f"Physical import source checksum mismatch: {relative}"
+        )
+
+
+def validate_planning_collision(robot: RobotModel, validation: Path) -> None:
+    """Keep the accepted legacy collision baseline on its explicit planning pair."""
+    description = robot.directory
+    model = ET.parse(robot.description_path("planning")).getroot()
+    srdf = ET.parse(robot.description_path("semantic_planning")).getroot()
     baseline = load_yaml(validation / "config/collision_baseline.yaml")
     expected = baseline["geometry_counts"]
     actual = {
@@ -324,17 +373,32 @@ def validate_collision(description: Path, validation: Path) -> None:
 
 
 def main() -> None:
-    description = get_robot_model("alohamini2pro").directory
+    robot = get_robot_model("alohamini2pro")
+    description = robot.directory
     validation = Path(get_package_share_directory("alohamini_validation"))
-    model = UrdfKinematics(description / "urdf/alohamini2pro_kinematic.urdf")
+    models = {
+        name: UrdfKinematics(robot.description_path(name))
+        for name in ("collision", "planning", "kinematic")
+    }
     checks = (
-        ("URDF tree", lambda: validate_tree(model)),
-        ("FK golden + DH", lambda: validate_fk(model, description, validation)),
-        ("collision structure", lambda: validate_collision(description, validation)),
+        ("physical manifest + tree", lambda: validate_physical_assets(robot)),
+        ("planning URDF tree", lambda: validate_tree(models["planning"])),
+        ("kinematic URDF tree", lambda: validate_tree(models["kinematic"])),
+        *(
+            (
+                f"{name} FK golden + DH",
+                lambda model=model: validate_fk(model, description, validation),
+            )
+            for name, model in models.items()
+        ),
+        ("planning collision baseline", lambda: validate_planning_collision(robot, validation)),
     )
     for name, check in checks:
         check()
         print(f"[PASS] {name}")
+    print(
+        "[INFO] Physical self-collision clearance has no accepted contact baseline in this check."
+    )
 
 
 if __name__ == "__main__":

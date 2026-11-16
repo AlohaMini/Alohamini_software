@@ -1,6 +1,7 @@
 """Expand the real launch graph without starting ROS, HID, or Host processes."""
 
 import importlib.util
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -243,6 +244,38 @@ def test_plan_only_modes_keep_execution_and_topics_isolated(preview, rviz):
         if node["package"] == "rviz2":
             config = "joycon_preview.rviz" if preview == "true" else "plan_only.rviz"
             assert node["arguments"][-1].endswith("/config/" + config)
+
+
+@pytest.mark.parametrize(
+    "filename,root,virtual_base",
+    [("move_group.launch.py", "base_link", False), ("plan_only.launch.py", "root", True)],
+)
+def test_moveit_launch_uses_the_matching_physical_or_planning_tree(filename, root, virtual_base):
+    nodes, _ = launch_graph("alohamini_moveit_config", filename, use_rviz="false")
+    params = next(params for package, _, params in nodes if package == "moveit_ros_move_group")
+    robot = ET.fromstring(params["robot_description"])
+    semantic = ET.fromstring(params["robot_description_semantic"])
+    links = {link.attrib["name"] for link in robot.findall("link")}
+    children = {joint.find("child").attrib["link"] for joint in robot.findall("joint")}
+    assert links - children == {root}
+    joints = {joint.attrib["name"] for joint in robot.findall("joint")}
+    virtual = {"root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint"}
+    assert joints & virtual == (virtual if virtual_base else set())
+    assert {joint.attrib["name"] for joint in semantic.findall("group_state/joint")} <= joints
+
+
+@pytest.mark.parametrize(
+    "package,filename,frame",
+    [
+        ("alohamini_moveit_config", "moveit.rviz", "base_link"),
+        ("alohamini_joycon_teleop", "joycon_hardware.rviz", "base_link"),
+        ("alohamini_moveit_config", "plan_only.rviz", "root"),
+        ("alohamini_moveit_config", "joycon_preview.rviz", "root"),
+    ],
+)
+def test_rviz_fixed_frame_matches_the_selected_robot_tree(package, filename, frame):
+    config = yaml.safe_load((SOURCE / package / "config" / filename).read_text())
+    assert config["Visualization Manager"]["Global Options"]["Fixed Frame"] == frame
 
 
 def test_joycon_preview_has_moveit_without_a_second_state_publisher():

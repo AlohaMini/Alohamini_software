@@ -199,18 +199,6 @@ Visualization Manager:
             Show Axes: false
             Show Trail: false
             Value: true
-          root:
-            Alpha: 1
-            Show Axes: false
-            Show Trail: false
-          root_x_link:
-            Alpha: 1
-            Show Axes: false
-            Show Trail: false
-          root_y_link:
-            Alpha: 1
-            Show Axes: false
-            Show Trail: false
           vertical_link:
             Alpha: 1
             Show Axes: false
@@ -395,18 +383,6 @@ Visualization Manager:
             Show Axes: false
             Show Trail: false
             Value: true
-          root:
-            Alpha: 1
-            Show Axes: false
-            Show Trail: false
-          root_x_link:
-            Alpha: 1
-            Show Axes: false
-            Show Trail: false
-          root_y_link:
-            Alpha: 1
-            Show Axes: false
-            Show Trail: false
           vertical_link:
             Alpha: 1
             Show Axes: false
@@ -432,7 +408,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: root
+    Fixed Frame: base_link
     Frame Rate: 30
   Name: root
   Tools:

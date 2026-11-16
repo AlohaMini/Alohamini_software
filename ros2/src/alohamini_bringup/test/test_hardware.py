@@ -158,7 +158,11 @@ def test_mapping_and_units_match_existing_host_and_ros_names(bridge):
     assert velocity.header.stamp == joints.header.stamp
     assert velocity.header.frame_id == "base_link"
     derived = bridge.derived_wheel_pub.publish.call_args.args[0]
-    assert list(derived.position[:3]) == [0.0] * 3
+    assert derived.name == ["wheel1_joint", "wheel2_joint", "wheel3_joint"]
+    assert len(derived.position) == len(derived.velocity) == 3
+    model = ET.parse(bridge.model.description_path("collision"))
+    active = {joint.get("name") for joint in model.findall("joint") if joint.get("type") != "fixed"}
+    assert set(joints.name) | set(derived.name) == active
     assert derived.header.stamp == joints.header.stamp
 
 
@@ -562,10 +566,10 @@ def test_hardware_launch_publishes_state_and_tf_without_commands(ros, host, tmp_
     )
     try:
         deadline = time.monotonic() + 8
-        expected = {"left_wrist_yaw", "right_wrist_yaw", "base_link"}
+        expected = {"left_wrist_yaw", "right_wrist_yaw"}
         while time.monotonic() < deadline and process.poll() is None:
             rclpy.spin_once(observer, timeout_sec=0.05)
-            if expected <= frames and len(names) == 21:
+            if expected <= frames and len(names) == 18:
                 break
         validation = subprocess.run(
             ["ros2", "run", "alohamini_validation", "validate_tf", "--ros-args", "-r", "__ns:=/"],
@@ -588,7 +592,7 @@ def test_hardware_launch_publishes_state_and_tf_without_commands(ros, host, tmp_
             observer.destroy_node()
     assert process.returncode == 0, output
     assert expected <= frames, output
-    assert len(names) == 21, output
+    assert len(names) == 18, output
     assert "vertical_move" in names
     assert "left_gripper" in names and "right_gripper" in names
     assert state["tokens"] and all(token.endswith(b":state") for token in state["tokens"])

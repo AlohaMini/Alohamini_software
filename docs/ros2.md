@@ -20,6 +20,8 @@ source install/local_setup.bash
 
 适用 `alohamini2pro`。将左右臂 URDF 映射 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` 及 `lift_axis.yaml` 放在 `~/Alohamini_workspace/calibration/hardware/`。这些文件与舵机标定 JSON 分开。
 
+真机使用以 `base_link` 为根的物理模型；离线 `plan_only` 使用含虚拟底盘关节、以 `root` 为根的规划模型。
+
 ```bash
 export ROS_LOG_DIR="${ALOHAMINI_WORKSPACE:-$HOME/Alohamini_workspace}/logs/ros2"
 ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP>
@@ -29,7 +31,7 @@ ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP>
 
 - `/joint_states`、`/tf`、`/tf_static`：模型关节与坐标树，关节位置使用 rad 或 m。
 - `/alohamini_lerobot_bridge/measured_joint_states`：双臂位置与升降编码器推算位置。没有高度传感器，不提供关节力矩。
-- `/alohamini_lerobot_bridge/derived_wheel_states`：速度积分的车轮角度与固定虚拟根，不代表定位或实测里程计。
+- `/alohamini_lerobot_bridge/derived_wheel_states`：速度积分的车轮角度，不代表定位或实测里程计。
 - `/alohamini/base_velocity`：底盘速度，m/s 和 rad/s；`/diagnostics`：连接与状态有效性。
 
 失联或反馈无效时停止刷新状态。默认使用 PC 接收时间；`state_timestamp_mode:=host_wall` 使用 Host 时间，须先同步两端时钟。
@@ -105,6 +107,8 @@ ros2 run alohamini_validation validate_tf
 ```
 
 依次检查模型/FK/碰撞几何、MoveIt 和 TF。后两项默认访问 `/alohamini_plan_only`；检查真机 ROS 图时加 `--ros-args -r __ns:=/`。工具不发送动作，实机仍须检查运动区域。
+
+物理模型校验资产、FK/IK 与碰撞服务；自碰撞接触结果尚无独立验收基线，不套用离线规划模型的旧接触基线。
 
 ## Joy-Con 遥操
 

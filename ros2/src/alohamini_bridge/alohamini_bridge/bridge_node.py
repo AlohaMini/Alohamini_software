@@ -8,6 +8,7 @@ import json
 import math
 import threading
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import rclpy
@@ -222,6 +223,12 @@ class AlohaMiniBridge(Node):
             return self.get_parameter(name).value
 
         self.model = get_robot_model(parameter("expected_robot_model"))
+        joints = ET.parse(self.model.description_path("collision")).findall("joint")
+        joint_names = {joint.get("name") for joint in joints}
+        self.virtual_root_joints = tuple(
+            name for name in ("root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint")
+            if name in joint_names
+        )
         directory = Path(
             parameter("arm_mapping_dir") or WorkspacePaths().calibration / "hardware"
         ).expanduser()
@@ -578,17 +585,16 @@ class AlohaMiniBridge(Node):
         self.measured_joint_pub.publish(message)
         derived = JointState()
         derived.header.stamp = stamp
-        # Virtual root and integrated wheel angles are not measured odometry.
+        # Integrated wheel angles are not measured odometry. Only legacy models
+        # with explicit virtual root joints receive the fixed zero coordinates.
         derived.name = [
-            "root_x_axis_joint",
-            "root_y_axis_joint",
-            "root_z_rotation_joint",
+            *self.virtual_root_joints,
             "wheel1_joint",
             "wheel2_joint",
             "wheel3_joint",
         ]
-        derived.position = [0.0, 0.0, 0.0, *self.wheel_positions]
-        derived.velocity = [0.0, 0.0, 0.0, *wheels]
+        derived.position = [0.0] * len(self.virtual_root_joints) + self.wheel_positions
+        derived.velocity = [0.0] * len(self.virtual_root_joints) + list(wheels)
         self.joint_pub.publish(derived)
         self.derived_wheel_pub.publish(derived)
 
