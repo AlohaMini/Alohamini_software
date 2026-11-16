@@ -9,6 +9,9 @@
   "steps": 10000,
   "save_freq": 2000,
   "keep_last_checkpoints": 2,
+  "data": {
+    "action_representation": "joint_delta"
+  },
   "model": {
     "tune_llm": false,
     "tune_visual": false,

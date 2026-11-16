@@ -3,10 +3,12 @@
   "revision": "c56f54128d92f743889b7e4cecfc1ceafd88739e",
   "references": [
     "https://huggingface.co/nvidia/GR00T-N1.7-3B",
+    "https://github.com/NVIDIA/Isaac-GR00T/blob/c56f54128d92f743889b7e4cecfc1ceafd88739e/getting_started/finetune_new_embodiment.md",
     "https://arxiv.org/abs/2503.14734"
   ],
   "adaptations": [
     "Action head, alternating DiT and embodiment projections retained",
+    "Default named relative arm-joint actions with absolute grippers/base/lift; optional explicit TCP transforms",
     "Configuration registry removed; platform owns registration",
     "VLM constructed from local embedded Qwen3-VL config with Transformers 5",
     "Official model weights loaded by exact name through explicit namespace mapping",

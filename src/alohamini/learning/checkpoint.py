@@ -212,6 +212,9 @@ def resolve_pretrained(settings, *, expected_kind=None):
             ):
                 saved_fields.pop(key, None)
         cfg["data"] = _merge(saved_fields, data_overrides)
+    if manifest["kind"] == "gr00t_n17":
+        # Legacy native policies without field transforms predicted recorded targets.
+        cfg.setdefault("data", {}).setdefault("action_representation", "recorded")
     if cfg.get("state", "auto") == "auto":
         cfg["state"] = manifest["state"]
     for key in ("cameras", "image_size"):

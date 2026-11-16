@@ -12,7 +12,7 @@ class GR00TN17Config(PolicyConfig):
     network: dict = field(default_factory=dict)
     chunk_size: int = 40
     n_action_steps: int = 40
-    embodiment_id: int = 31
+    embodiment_id: int = 10
     reinitialize_embodiment: bool = True
     initialize_from_base: bool = True
     tune_llm: bool = False

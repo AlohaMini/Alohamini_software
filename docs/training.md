@@ -136,7 +136,8 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 | 参数 | 选项与用途 |
 | --- | --- |
 | `--data.state_representation` | `recorded` 保留记录值；`tcp` 将臂关节位置替换为末端位姿，保留其他所选字段 |
-| `--data.action_representation` | `recorded` 保留控制目标；`tcp_absolute` 绝对末端目标；`tcp_delta` 相对当前观测的末端目标 |
+| `--data.action_representation` | `recorded` 保留控制目标；`joint_delta` 相对当前观测的关节目标，夹爪与其他字段保持绝对；`tcp_absolute` 绝对末端目标；`tcp_delta` 相对当前观测的末端目标 |
+| `--data.joint_delta_fields` | `joint_delta` 的动作字段到观测字段 JSON 映射；平台手臂关节按型号名称自动绑定，外部数据须显式指定，字段应使用相同坐标与单位 |
 | `--data.rotation_representation` | TCP 旋转编码：`rotvec`（默认，3 维）；`rotation_6d`（6 维，旋转矩阵前两行）；同时作用于所选 TCP state/action |
 | `--data.tcp_delta_frame` | 仅用于 `tcp_delta`：`base`（默认）在各臂基座系表达增量；`tool` 在当前末端系表达相对位姿，夹爪等其他字段保持绝对目标 |
 | `--data.kinematics.reference_pose` | 覆盖自动选择，使用指定型号预设，如 `upright_forward` |
@@ -145,7 +146,7 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 
 `kinematics` 可省略：复用配置/checkpoint 中的描述，否则读取数据集 `meta/kinematics.json`，再使用型号默认预设；`alohamini2pro` 默认 `upright_forward`，绑定采集期标定。显式指定时三种来源选一。
 ACT 默认保留记录表示；Spirit 默认使用 TCP state 和 TCP 增量动作。
-GR00T、HyVLA 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
+GR00T 默认 `joint_delta`，state 保留记录表示；TCP 须显式开启。HyVLA 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
 
 对按 `upright_forward` 姿态完成半圈归零的 `alohamini2pro` 数据：
 

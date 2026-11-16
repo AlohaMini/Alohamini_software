@@ -108,12 +108,13 @@ def parse_training_args(argv=None):
     )
     parser.add_argument(
         "--data.action_representation",
-        choices=("recorded", "tcp_absolute", "tcp_delta"),
+        choices=("recorded", "joint_delta", "tcp_absolute", "tcp_delta"),
         default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--data.tcp_delta_frame", choices=("base", "tool"), default=argparse.SUPPRESS
     )
+    parser.add_argument("--data.joint_delta_fields", type=json.loads, default=argparse.SUPPRESS)
     for name in ("reference_pose", "path", "spec"):
         parser.add_argument(f"--data.kinematics.{name}", default=argparse.SUPPRESS)
     parser.add_argument(

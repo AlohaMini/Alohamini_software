@@ -427,7 +427,7 @@ class NativePolicy:
         observation = {}
         if getattr(self, "field_transform", None) is not None:
             observation["_action_context"] = torch.tensor(
-                [snapshot.payload[n] for n in self.field_transform.geometry.names],
+                [snapshot.payload[n] for n in self.field_transform.context_names],
                 dtype=torch.float32,
             )
         if self.selection:
