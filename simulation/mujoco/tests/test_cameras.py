@@ -142,7 +142,9 @@ def test_legacy_virtual_camera_matches_direct_renderer():
 def test_camera_mounts_follow_the_correct_urdf_chain():
     description = Description(get_robot_model("alohamini2pro"))
     low = description.forward({"vertical_move": 0})
-    high = description.forward({"vertical_move": 0.2, "root_x_axis_joint": 1})
+    world = np.eye(4)
+    world[0, 3] = 1
+    high = description.forward({"vertical_move": 0.2}, T_world_root=world)
     np.testing.assert_allclose(
         high["front_camera"][:3, 3] - low["front_camera"][:3, 3], [1, 0, 0], atol=1e-12
     )

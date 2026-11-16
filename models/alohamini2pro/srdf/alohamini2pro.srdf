@@ -1,4 +1,3 @@
-<?xml version='1.0' encoding='utf-8'?>
 <robot name="alohamini2pro_moveit">
   <group name="left_arm">
     <chain base_link="left_Base" tip_link="left_tcp" />
@@ -6,10 +5,6 @@
   <group name="right_arm">
     <chain base_link="right_Base" tip_link="right_tcp" />
   </group>
-  <!-- IK fallback groups: the same chains solved by the LMA plugin, used
-       when the primary KDL solver diverges (it fails near the extended-arm
-       configurations), and a position-only variant that drops the held TCP
-       orientation when the full pose is unreachable. -->
   <group name="left_arm_lma">
     <chain base_link="left_Base" tip_link="left_tcp" />
   </group>
@@ -35,7 +30,6 @@
   <group name="lift">
     <joint name="vertical_move" />
   </group>
-  <!-- Installed encoder Home bound to the matching folded CAD pose. -->
   <group_state name="home" group="left_arm">
     <joint name="left_shoulder_pan" value="0.0" />
     <joint name="left_shoulder_lift" value="0.0" />
@@ -94,9 +88,6 @@
   <passive_joint name="wheel1_joint" />
   <passive_joint name="wheel2_joint" />
   <passive_joint name="wheel3_joint" />
-  <disable_collisions link1="root" link2="root_x_link" reason="Adjacent" />
-  <disable_collisions link1="root_x_link" link2="root_y_link" reason="Adjacent" />
-  <disable_collisions link1="root_y_link" link2="base_link" reason="Adjacent" />
   <disable_collisions link1="base_link" link2="base_cad_link" reason="Adjacent" />
   <disable_collisions link1="base_cad_link" link2="vertical_link" reason="Adjacent" />
   <disable_collisions link1="vertical_link" link2="chest_camera" reason="Adjacent" />

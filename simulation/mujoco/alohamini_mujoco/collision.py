@@ -22,7 +22,7 @@ from scipy.spatial import ConvexHull, cKDTree
 
 from .description import numbers, origin
 from .frames import points_in_frame
-from .meshes import Mesh, binary_msh, binary_stl
+from .meshes import Mesh, binary_msh, read_mesh
 from .shapes import Primitive
 
 
@@ -354,7 +354,7 @@ def generate_bundle(
             data = (description.robot_model.directory / source["path"]).read_bytes()
             if hashlib.sha256(data).hexdigest() != source["sha256"]:
                 raise ValueError(f"CAD source changed during preparation: {source['path']}")
-            raw = binary_stl(data)
+            raw = read_mesh(data, source["path"])
             vertices = points_in_frame(
                 source["T_link_visual"], raw.vertices * np.asarray(source["scale"])
             )

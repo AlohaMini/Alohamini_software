@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+simulation = ["numpy>=1.26,<3"]
 analysis = ["numpy>=2,<3", "pyarrow>=18", "pillow>=11", "rerun-sdk==0.26.2", "av==15.1.0", "matplotlib==3.10.8"]
 kinematics = ["numpy>=2,<3", "scipy>=1.14,<2", "pyyaml>=6"]
 smolvla = ["alohamini-platform[learning]"]
@@ -31,7 +32,7 @@ learning = [
     "diffusers==0.39.0",
     "transformers==5.21.0",
     "sentencepiece==0.2.0",
-    "scipy>=1.14,<2",
+    "scipy>=1.15,<2",
     "num2words==0.5.14",
     "typing-extensions>=4.10",
     "accelerate==1.15.0",
@@ -66,7 +67,7 @@ host = [
 alohamini = "alohamini.cli:main"
 
 [tool.setuptools.package-data]
-"alohamini._assets" = ["**/*.json", "**/*.yaml", "**/*.urdf", "**/*.srdf", "**/*.[sS][tT][lL]"]
+"alohamini._assets" = ["**/*.json", "**/*.yaml", "**/*.urdf", "**/*.srdf", "**/*.[sS][tT][lL]", "**/*.obj"]
 "alohamini.policies.dit_policy" = ["LICENSE.dit-policy"]
 "alohamini.policies.acdit" = ["LICENSE.acdit", "LICENSE.lift3d", "SOURCE.json"]
 "alohamini.policies.gr00t_n17" = ["LICENSE.gr00t", "SOURCE.json"]
@@ -74,6 +75,7 @@ alohamini = "alohamini.cli:main"
 "alohamini.policies.spirit" = ["LICENSE.spirit", "SOURCE.json"]
 "alohamini.policies.hyvla05" = ["LICENSE.hyvla05", "SOURCE.json"]
 "alohamini.policies.openwam" = ["LICENSE.openwam", "SOURCE.json", "licenses/wan/*"]
+"alohamini.policies.bspline" = ["LICENSE.bspline", "SOURCE.json"]
 
 "alohamini.policies.xiaomi_robotics1" = ["LICENSE.xiaomi", "SOURCE.json"]
 "alohamini.policies.lingbot_vla_v2" = ["LICENSE.lingbot", "SOURCE.json"]

@@ -19,7 +19,7 @@ LINKS = ["chest_camera", "front_camera", "back_camera", "wheel1", "wheel2", "whe
 
 @pytest.fixture(scope="module")
 def fitted(tmp_path_factory):
-    description = Description(get_robot_model("alohamini2pro"))
+    description = Description(get_robot_model("alohamini2pro"), name="planning")
     output = tmp_path_factory.mktemp("primitive") / "fitted"
     fit_primitives(description, LINKS, output)
     return description, output
@@ -105,7 +105,7 @@ def test_native_mujoco_and_portable_urdf_preserve_analytic_types_frames_and_dyna
 
     description, output = fitted
     shapes, _ = load_bundle(description, output)
-    reference = build_model()
+    reference = build_model(profile=ModelProfile(description="planning"))
     robot = build_model(profile=ModelProfile(collision_bundle=output))
     np.testing.assert_array_equal(robot.model.body_mass, reference.model.body_mass)
     np.testing.assert_array_equal(robot.model.body_inertia, reference.model.body_inertia)

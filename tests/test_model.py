@@ -27,8 +27,15 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(get_robot_model("alohamini2pro").model_id, "alohamini2pro")
 
     def test_supported_layouts_and_bus_addresses(self):
-        self.assertEqual(robot_models(), ("alohamini1", "alohamini2", "alohamini2pro"))
-        for name, count in (("alohamini1", 16), ("alohamini2", 18), ("alohamini2pro", 18)):
+        self.assertEqual(
+            robot_models(), ("alohamini1", "alohamini2", "alohamini2pro", "alohamini2edu")
+        )
+        for name, count in (
+            ("alohamini1", 16),
+            ("alohamini2", 18),
+            ("alohamini2pro", 18),
+            ("alohamini2edu", 18),
+        ):
             with self.subTest(name=name):
                 model = get_robot_model(name)
                 self.assertEqual(len(model.actuators), count)
@@ -65,6 +72,7 @@ class ModelTests(unittest.TestCase):
             ("alohamini1", 0.05, 0.125, 0.084),
             ("alohamini2", 0.063, 0.195, 0.131),
             ("alohamini2pro", 0.063, 0.195, 0.131),
+            ("alohamini2edu", 0.063, 0.195, 0.131),
         ):
             model = get_robot_model(name)
             self.assertEqual(

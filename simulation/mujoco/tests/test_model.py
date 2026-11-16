@@ -129,7 +129,7 @@ def test_export_is_relocatable_and_does_not_overwrite(robot, tmp_path):
 
 def test_profiles_reject_fabricated_inertia_and_bad_locks():
     with pytest.raises(ValueError, match="no measured/declared inertia"):
-        build_model(profile=ModelProfile(locked_positions={}))
+        build_model(profile=ModelProfile(description="planning", locked_positions={}))
     with pytest.raises(ValueError, match="Unknown profile joint"):
         build_model(profile=ModelProfile(locked_positions={"guessed_joint": 0}))
     with pytest.raises(ValueError, match="outside URDF limits"):

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "T_world_base": [[1, 0, 0, -0.089], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+  "base_mode": "fixed",
+  "timestep_s": 0.001,
+  "control_frequency_hz": 20,
+  "seed": 0,
+  "initial_positions": {
+    "vertical_move": 0.2,
+    "left_shoulder_lift": -0.21076231797459277,
+    "left_elbow_flex": 0.5687535076650948,
+    "left_wrist_flex": 0.3579911896905019,
+    "right_shoulder_lift": -0.21076231801839845,
+    "right_elbow_flex": 0.5687535077531132,
+    "right_wrist_flex": 0.35799118973471467
+  },
+  "objects": [
+    {"name": "floor", "shape": "box", "size": [3, 3, 0.05], "mass_kg": 0, "color": [0.55, 0.55, 0.55, 1], "T_world_object": [[1,0,0,0],[0,1,0,0],[0,0,1,-0.025],[0,0,0,1]]},
+    {"name": "table", "shape": "box", "size": [0.9, 0.8, 0.05], "mass_kg": 0, "color": [0.04, 0.04, 0.04, 1], "T_world_object": [[1,0,0,0.5],[0,1,0,0],[0,0,1,0.725],[0,0,0,1]]},
+    {"name": "leg_front_left", "shape": "box", "size": [0.05,0.05,0.7], "mass_kg": 0, "color": [0.1,0.1,0.1,1], "T_world_object": [[1,0,0,0.1],[0,1,0,0.34],[0,0,1,0.35],[0,0,0,1]]},
+    {"name": "leg_front_right", "shape": "box", "size": [0.05,0.05,0.7], "mass_kg": 0, "color": [0.1,0.1,0.1,1], "T_world_object": [[1,0,0,0.1],[0,1,0,-0.34],[0,0,1,0.35],[0,0,0,1]]},
+    {"name": "leg_back_left", "shape": "box", "size": [0.05,0.05,0.7], "mass_kg": 0, "color": [0.1,0.1,0.1,1], "T_world_object": [[1,0,0,0.9],[0,1,0,0.34],[0,0,1,0.35],[0,0,0,1]]},
+    {"name": "leg_back_right", "shape": "box", "size": [0.05,0.05,0.7], "mass_kg": 0, "color": [0.1,0.1,0.1,1], "T_world_object": [[1,0,0,0.9],[0,1,0,-0.34],[0,0,1,0.35],[0,0,0,1]]},
+    {"name": "cube", "shape": "box", "size": [0.04,0.04,0.04], "mass_kg": 0.05, "color": [0.1,0.4,0.8,1], "T_world_object": [[1,0,0,0.3],[0,1,0,0.18],[0,0,1,0.77],[0,0,0,1]]}
+  ]
+}

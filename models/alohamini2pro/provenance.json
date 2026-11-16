@@ -7,15 +7,23 @@
   "source_license": "Apache-2.0",
   "transformations": [
     "URDF mesh URIs changed to model-local relative paths; geometry and joint values unchanged",
-    "right-arm source checksum updated after URI conversion"
+    "right-arm source checksum updated after URI conversion",
+    "Canonical physical URDF: base_link root, continuous wheels, CAD active-group inertias and shared structural collisions.",
+    "Exact STL/OBJ transport preserves all visual triangles and winding; legacy planning input retained for prepared-bundle compatibility."
   ],
   "files": [
     {
       "path": "config/kinematics/encoder_conventions.yaml",
       "source_package": "alohamini_calibration",
       "sources": [
-        {"path": "config/hardware/hardware_joint_map_left.yaml", "sha256": "b94575f9cabbdeb054c3daf5a579d12d33ffd7b13aa2576d2cd68897d619f074"},
-        {"path": "config/hardware/hardware_joint_map_right.yaml", "sha256": "2eac742f5ce517a49181ec9e0b1f8d5ee4746bd5d1caaa641704bd588188fd82"}
+        {
+          "path": "config/hardware/hardware_joint_map_left.yaml",
+          "sha256": "b94575f9cabbdeb054c3daf5a579d12d33ffd7b13aa2576d2cd68897d619f074"
+        },
+        {
+          "path": "config/hardware/hardware_joint_map_right.yaml",
+          "sha256": "2eac742f5ce517a49181ec9e0b1f8d5ee4746bd5d1caaa641704bd588188fd82"
+        }
       ],
       "transformation": "Retain shared encoder signs and gripper ratio; omit device ticks and historical measurements. Named Home/open/closed poses remain in SRDF.",
       "imported_sha256": "f8de60164611a6d77541fcd07a5c731e1d77798145588eb8023678a86c4115db"
@@ -24,13 +32,13 @@
       "path": "srdf/alohamini2pro.srdf",
       "source_path": "srdf/alohamini2pro.srdf",
       "source_sha256": "48314b09feef0348655a8f027c40638b5232a684420aef1ce124fccf714f68e6",
-      "imported_sha256": "48314b09feef0348655a8f027c40638b5232a684420aef1ce124fccf714f68e6"
+      "imported_sha256": "eb2ca182c095d3ce7ab47dbd8272888c5ae310c88793946d2b1aadfc6a42c945"
     },
     {
       "path": "config/kinematics/joint_limits.yaml",
       "source_path": "config/kinematics/joint_limits.yaml",
       "source_sha256": "91a10045fc73c2d2555ef3b7485af3b18e60cc2aa591ae3426c3bd5f405725d1",
-      "imported_sha256": "91a10045fc73c2d2555ef3b7485af3b18e60cc2aa591ae3426c3bd5f405725d1"
+      "imported_sha256": "6beec108963e4cf742ecd66377e6959bb1ab1b2622cc39a0202ebff2b449d161"
     },
     {
       "path": "config/kinematics/kinematics.yaml",
@@ -43,7 +51,7 @@
       "source_path": "config/kinematics/physical_parameters.yaml",
       "source_sha256": "75d8bf1c146dba82c2c48040e464ffe3564442a3aad0e17706a87eed68e1a1c7",
       "transformation": "Classify assembly mass references as engineering estimates; retain existing URDF masses and inertias.",
-      "imported_sha256": "17d4caeac3e472a1046f9e8abc6b1f6e68d6fe14043603d5bfffb2a4457c845a"
+      "imported_sha256": "25e67ff5075407585fff8b0955cd231f88229e9af9c1abb569392f3a2784fcd2"
     },
     {
       "path": "config/kinematics/right_arm_kinematics.yaml",
@@ -343,7 +351,7 @@
       "path": "urdf/alohamini2pro.urdf",
       "source_path": "urdf/alohamini2pro_moveit.urdf",
       "source_sha256": "15073b09516d399e982b17724f600c4c4fba7da123c0c00422b41ba140874d3d",
-      "imported_sha256": "8459353ebc6af5800d809b96566b5073a7fcff880c67171ab07a0bd2f98ffee6"
+      "imported_sha256": "c5f2f2c2c17e0979730044a41e5db3e1db1b19550ee223de3ed64c1cfcafed0f"
     },
     {
       "path": "urdf/alohamini2pro_kinematic.urdf",
@@ -375,5 +383,6 @@
       "source_sha256": "5c4620013708518736e0e1fab37534ca9e3356696326af23d1086d20baf206e6",
       "imported_sha256": "31cadd6d3b74bd450f9ff2464039b655e8105a6a959c3e7a37b6e2c1adc415f5"
     }
-  ]
+  ],
+  "physical_model_manifest": "config/physical_model.json"
 }

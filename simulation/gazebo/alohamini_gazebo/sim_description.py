@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -145,6 +146,17 @@ def make_sim_description(authoritative_urdf: Path, controllers_yaml: Path) -> st
     existing_links = {link.get("name"): link for link in robot.findall("link")}
     if "world" in existing_links or robot.find("./ros2_control") is not None:
         raise ValueError("authoritative URDF already contains simulation-only elements")
+    if "root" not in existing_links:
+        # The robot asset starts at base_link. Preserve the existing Gazebo
+        # planar-base controller through a simulator-owned kinematic overlay.
+        legacy_path = authoritative_urdf.with_name("alohamini2pro_planning.urdf")
+        legacy = ET.parse(legacy_path).getroot()
+        for name in ("root", "root_x_link", "root_y_link"):
+            link = copy.deepcopy(legacy.find(f"link[@name='{name}']"))
+            robot.insert(0, link)
+            existing_links[name] = link
+        for name in ("root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint"):
+            robot.append(copy.deepcopy(legacy.find(f"joint[@name='{name}']")))
 
     missing_black_links = SIM_BLACK_VISUAL_LINKS - existing_links.keys()
     if missing_black_links:

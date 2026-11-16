@@ -141,7 +141,7 @@ def scene_robot(tmp_path_factory):
     (directory / "bundle.json").write_text(json.dumps(manifest))
     config = {"T_world_libero": [[0, -1, 0, 0.7], [1, 0, 0, -0.2], [0, 0, 1, 0.3], [0, 0, 0, 1]]}
     scene = LiberoScene(directory, 0, config)
-    return build_model(profile=ModelProfile(initial_positions={"vertical_move": 0.2}), scene=scene)
+    return build_model(profile=ModelProfile(description="planning", initial_positions={"vertical_move": 0.2}), scene=scene)
 
 
 def test_scene_keeps_robot_inertia_and_named_free_object_transforms(scene_robot):

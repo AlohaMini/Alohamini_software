@@ -23,7 +23,7 @@ from .collision import (
     visual_sources,
 )
 from .frames import points_in_frame, rigid_transform
-from .meshes import Mesh, binary_msh, binary_stl
+from .meshes import Mesh, binary_msh, read_mesh
 from .solid_geometry import (
     _solid,
     certify_solid_distance,
@@ -159,7 +159,8 @@ def _target_mesh(description, report, *, component_only):
     ):
         raise ValueError("CAD registration requires an explicit complete visual component")
     visual = sources[visual_index]
-    raw = binary_stl((description.robot_model.directory / visual["path"]).read_bytes())
+    path = description.robot_model.directory / visual["path"]
+    raw = read_mesh(path.read_bytes(), path)
     parts = components(raw)
     if (
         target.get("component_count") != len(parts)

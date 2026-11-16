@@ -332,4 +332,9 @@ def test_generator_rejects_dirty_cad_before_producing_geometry(robot, tmp_path):
 
 def test_initial_position_cannot_silently_override_a_lock():
     with pytest.raises(ValueError, match="conflicts with locked"):
-        ModelProfile(initial_positions={"root_x_axis_joint": 0.1})
+        ModelProfile(
+            initial_positions={"root_x_axis_joint": 0.1},
+            locked_positions={"root_x_axis_joint": 0.0},
+        )
+    with pytest.raises(ValueError, match="conflicts with locked"):
+        build_model(profile=ModelProfile(initial_positions={"wheel1_joint": 0.1}))

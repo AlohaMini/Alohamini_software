@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -58,6 +59,43 @@ def binary_msh(data):
     if not np.isfinite(points).all() or indices.min() < 0 or indices.max() >= vertices:
         raise ValueError("Invalid MSH coordinates or indices")
     return Mesh(points.copy(), indices.copy())
+
+
+def read_mesh(data, path):
+    """Read indexed robot meshes without reducing faces or changing winding."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".stl":
+        return binary_stl(data)
+    if suffix == ".msh":
+        return binary_msh(data)
+    if suffix != ".obj":
+        raise ValueError(f"Unsupported robot mesh format: {suffix}")
+    vertices, faces = [], []
+    for line in data.decode("ascii").splitlines():
+        fields = line.split("#", 1)[0].split()
+        if not fields:
+            continue
+        if fields[0] == "v" and len(fields) == 4:
+            vertices.append([float(x) for x in fields[1:]])
+        elif fields[0] == "f" and len(fields) == 4:
+            row = [int(x.split("/", 1)[0]) for x in fields[1:]]
+            faces.append([x - 1 if x > 0 else len(vertices) + x for x in row])
+        elif fields[0] not in ("vn", "vt", "o", "g", "s", "usemtl", "mtllib"):
+            raise ValueError("Robot OBJ meshes require vertices and triangular faces")
+    points, indices = np.asarray(vertices, dtype=float), np.asarray(faces, dtype=np.int32)
+    if (
+        points.ndim != 2
+        or points.shape[1:] != (3,)
+        or len(points) < 4
+        or indices.ndim != 2
+        or indices.shape[1:] != (3,)
+        or len(indices) < 4
+        or not np.isfinite(points).all()
+        or indices.min() < 0
+        or indices.max() >= len(points)
+    ):
+        raise ValueError("Invalid OBJ coordinates or triangle indices")
+    return Mesh(points, indices)
 
 
 def ray_x_intersections(triangles, y, z):

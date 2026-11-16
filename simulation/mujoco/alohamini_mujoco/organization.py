@@ -18,7 +18,7 @@ from .collision import (
     visual_sources,
 )
 from .frames import points_in_frame
-from .meshes import Mesh, binary_stl
+from .meshes import Mesh, read_mesh
 
 
 def description_hashes(description):
@@ -30,9 +30,21 @@ def description_hashes(description):
     }
 
 
+def matches_description_hashes(description, expected):
+    """Keep prepared bundles usable when identical source files are renamed.
+
+    Both URDF and SRDF payloads must match, including multiplicity. Path changes
+    never permit different joint frames, geometry references or inertial values.
+    """
+    actual = description_hashes(description)
+    return (isinstance(expected, dict) and len(expected) == len(actual)
+            and all(isinstance(v, str) for v in expected.values())
+            and sorted(expected.values()) == sorted(actual.values()))
+
+
 def validate_inventory(description, inventory):
     if (
-        inventory.get("source_description_sha256") != description_hashes(description)
+        not matches_description_hashes(description, inventory.get("source_description_sha256"))
         or not isinstance(inventory.get("links"), dict)
         or inventory["links"].keys() != description.links.keys()
     ):
@@ -91,7 +103,7 @@ def organize_collisions(description, output, *, cad_bundle=None):
                     data = path.read_bytes()
                     if hashlib.sha256(data).hexdigest() != mesh_source["sha256"]:
                         raise ValueError("Collision source changed during organization")
-                    mesh_cache[mesh_source["sha256"]] = ordered_convex_parts(binary_stl(data))
+                    mesh_cache[mesh_source["sha256"]] = ordered_convex_parts(read_mesh(data, path))
                 source_parts, partition = mesh_cache[mesh_source["sha256"]]
                 scale = np.asarray(mesh_source["scale"])
                 if not np.isfinite(scale).all() or (scale <= 0).any():

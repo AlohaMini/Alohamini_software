@@ -58,7 +58,7 @@ def test_recovery_refuses_incomplete_inward_and_concave_source_shells():
 @pytest.fixture(scope="module")
 def organized(tmp_path_factory):
     path = tmp_path_factory.mktemp("organization") / "bundle"
-    description = Description(get_robot_model("alohamini2pro"))
+    description = Description(get_robot_model("alohamini2pro"), name="planning")
     report = organize_collisions(description, path)
     return description, path, report
 

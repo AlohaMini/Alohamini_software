@@ -191,8 +191,8 @@ def main(argv=None):
         if not isinstance(args.initial_positions, dict):
             raise ValueError("Initial positions must be an object keyed by URDF joint name")
         scene, configuration = None, {}
-        if args.libero_bundle or args.scene_config:
-            if not (args.libero_bundle and args.scene_config):
+        if args.libero_bundle:
+            if not args.scene_config:
                 raise ValueError("Use --libero-bundle together with --scene-config")
             from .libero import LiberoScene
 
@@ -200,13 +200,27 @@ def main(argv=None):
             scene = LiberoScene(
                 args.libero_bundle, args.task_index, configuration, args.reset_index
             )
+        elif args.scene_config:
+            if args.operation != "view":
+                raise ValueError("Research scenes use view; collection requires a task adapter")
+            from .scene import ResearchScene
+
+            scene = ResearchScene(args.scene_config)
+            configuration = scene.configuration
+        world_pose = configuration.get("T_world_root", configuration.get("T_world_base"))
         robot = build_model(
             profile=ModelProfile(
                 initial_positions={
                     **configuration.get("initial_positions", {}),
                     **args.initial_positions,
                 },
-                **({"T_world_root": configuration["T_world_root"]} if scene else {}),
+                **({"T_world_root": world_pose} if world_pose is not None else {}),
+                **(
+                    {"locked_positions": {}}
+                    if configuration.get("base_mode") == "kinematic"
+                    else {}
+                ),
+                timestep=configuration.get("timestep_s", 0.001),
                 collision_bundle=args.collision_bundle,
                 inertial_bundle=args.inertial_bundle,
             ),

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "asset_revision": 4,
+  "asset_revision": 5,
   "model_id": "alohamini2pro",
   "actuators": [
     {
@@ -122,7 +122,9 @@
     "collision": "urdf/alohamini2pro.urdf",
     "kinematic": "urdf/alohamini2pro_kinematic.urdf",
     "left_kinematic": "urdf/alohamini2pro_left_kinematic.urdf",
-    "right_kinematic": "urdf/alohamini2pro_right_kinematic.urdf"
+    "right_kinematic": "urdf/alohamini2pro_right_kinematic.urdf",
+    "planning": "urdf/alohamini2pro_planning.urdf",
+    "semantic_planning": "srdf/alohamini2pro_planning.srdf"
   },
   "kinematic_chains": {
     "left": "config/kinematics/left_chain.json",
@@ -133,7 +135,7 @@
   },
   "default_kinematic_preset": "upright_forward",
   "validation": {
-    "geometry": "inherited_ros_description",
+    "geometry": "shared_physical_urdf_with_prepared_structural_collisions",
     "hardware_safety_limits": false,
     "device_calibration_included": false
   }

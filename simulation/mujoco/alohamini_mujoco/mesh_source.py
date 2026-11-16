@@ -13,7 +13,7 @@ from scipy.spatial import cKDTree
 from ._cad_conform import split_index_fans as _split_index_fans
 from .cad import file_sha256
 from .collision import components, topology, visual_sources, weld_precision_seams
-from .meshes import Mesh, binary_stl
+from .meshes import Mesh, read_mesh
 from .solid_geometry import _solid
 
 
@@ -36,7 +36,7 @@ def extract_mesh_source(
         raise ValueError("Select an existing visual index")
     source = sources[visual_index]
     path = description.robot_model.directory / source["path"]
-    parts = components(binary_stl(path.read_bytes()))
+    parts = components(read_mesh(path.read_bytes(), path))
     if type(component_index) is not int or not 0 <= component_index < len(parts):
         raise ValueError("Select an existing vertex-connected visual component")
     selected = parts[component_index]

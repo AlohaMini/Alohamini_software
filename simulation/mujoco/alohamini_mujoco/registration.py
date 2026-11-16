@@ -15,7 +15,7 @@ from .cad import MESH_REFERENCE_FRAMES, file_sha256
 from .collision import components, manifold_parts, signed_volume, visual_sources
 from .frames import points_in_frame, rigid_transform
 from .geometry import SurfaceIndex, directed_surface_bounds, measure_surface_distance
-from .meshes import Mesh, binary_stl
+from .meshes import Mesh, read_mesh
 
 
 def register_part(
@@ -55,7 +55,7 @@ def register_part(
         raise ValueError("Select an existing visual index on the named URDF link")
     source = sources[visual_index]
     target_path = description.robot_model.directory / source["path"]
-    raw = binary_stl(target_path.read_bytes())
+    raw = read_mesh(target_path.read_bytes(), target_path)
     parts = components(raw)
     if type(component_index) is not int or not 0 <= component_index < len(parts):
         raise ValueError("Select an existing vertex-connected visual component")

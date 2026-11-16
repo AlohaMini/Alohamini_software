@@ -61,7 +61,10 @@ def test_overlay_preserves_authoritative_joint_kinematics(tmp_path):
         for joint in derived.findall("joint")
         if joint.get("name") != "world_to_root"
     }
-    assert derived_joints == source_joints
+    assert {n: derived_joints[n] for n in source_joints} == source_joints
+    assert set(derived_joints) - set(source_joints) == {
+        "root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint"
+    }
     assert derived.find("./joint[@name='world_to_root']") is not None
     assert derived.find("./ros2_control") is not None
 
