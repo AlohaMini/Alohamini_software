@@ -201,7 +201,8 @@ alohamini record \
   --reset_time 3
 ```
 
-默认 30 Hz 数采，记录 Host 开启的全部相机。`--display_data` 开启预览，`--profile_timing` 显示采集耗时和保存分段计时。
+默认 30 Hz 数采，记录 Host 开启的全部相机。`--display_data` 开启预览。
+`--profile_timing` 开启采集、保存分段和各相机视频处理计时；默认关闭，不采集详细视频计时。
 
 | 按键 | 操作 |
 | --- | --- |
@@ -325,7 +326,7 @@ python examples/debug/motors.py get_motors_states --port /dev/ttyACM0
 | `python examples/debug/test_network.py --help` | 指定 HTTP(S) 地址进行连接检查 |
 | `python examples/debug/test_mic.py` | 录音与音量检查，需额外安装 `audio-debug` 和系统 PortAudio |
 
-相机预览、录音等调试输出默认位于工作目录的 `logs/debug/`。麦克风扩展安装命令为 `python -m pip install -e '.[audio-debug]'`。
+相机预览、录音等调试输出默认位于工作目录的 `logs/debug/`。麦克风依赖见[可选扩展](install.md#3-可选扩展)。
 
 <details>
 <summary>舵机维护：卸力、改 ID、改相位</summary>

@@ -4,12 +4,11 @@
 
 ## 构建
 
-在已安装 ROS2 Humble、colcon 和 rosdep 的 PC 终端执行：
+完成 [ROS2 依赖安装](install.md#5-ros2-依赖)，在系统 Python 终端构建：
 
 ```bash
 source /opt/ros/humble/setup.bash
 cd ~/Alohamini/ros2
-rosdep install --from-paths src --ignore-src -r -y
 /usr/bin/python3 -m colcon build --symlink-install \
   --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
 source install/local_setup.bash
@@ -109,11 +108,9 @@ ros2 run alohamini_validation validate_tf
 
 ## Joy-Con 遥操
 
-适用 `alohamini2pro`。先将 Joy-Con 与 PC 配对。在仓库根目录安装可选驱动，再按本文开头构建 ROS 包：
+适用 `alohamini2pro`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
 
 ```bash
-conda activate alohamini
-python -m pip install --no-build-isolation -e '.[joycon]'
 conda deactivate
 source /opt/ros/humble/setup.bash
 source ~/Alohamini/ros2/install/local_setup.bash
@@ -151,11 +148,10 @@ ros2 run alohamini_joycon_teleop joycon_input_log replay joycon.ndjson
 
 ## Gazebo 仿真
 
-Gazebo Fortress 扩展在 `simulation/gazebo/`，无需连接 Host。在 ROS2 终端安装依赖并构建：
+Gazebo Fortress 扩展在 `simulation/gazebo/`。安装 [Gazebo 依赖](install.md#5-ros2-依赖) 后，在 ROS2 终端构建并启动：
 
 ```bash
 cd ~/Alohamini/ros2
-rosdep install --from-paths src/alohamini_core ../simulation/gazebo --ignore-src -r -y
 /usr/bin/python3 -m colcon build --base-paths src ../simulation/gazebo \
   --packages-up-to alohamini_gazebo
 source install/local_setup.bash

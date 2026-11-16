@@ -40,7 +40,8 @@ with HostClient("robot-host", expected_model="alohamini2pro") as robot:
 
 `send_command(targets, based_on=snapshot)` 使用 PUSH 连接 Host 的 5555 端口。必须显式配置 `expected_model`，控制循环开始前调用 `connect_control()` 建立状态和动作连接；不向缺少会话/epoch 信息的 Host 发送匿名命令。
 
-- `targets` 是非空映射，允许该型号的机械臂 `*.pos`、`x.vel`、`y.vel`、`theta.vel`、`lift_axis.height_mm` 和 `lift_axis.stop`。数值必须有限；不补齐未指定轴，不提供升降原始速度旁路。
+- `targets` 是非空映射，允许该型号的机械臂 `*.pos`、`x.vel`、`y.vel`、`theta.vel`、`lift_axis.height_mm` 和 `lift_axis.stop`。数值必须有限；客户端不补齐未指定轴，不提供升降原始速度旁路。
+- Host 接收 ZMQ 命令时，将省略的底盘速度轴置零；只发手臂目标也会停止之前的底盘运动。省略的手臂／升降目标保持原目标。内部 `RobotCommand` 的局部更新另有保留语义，不能直接套用到网络协议；ROS Bridge 会合成完整底盘三轴目标，并独立处理 `/cmd_vel` 超时。
 - `lift_axis.stop=1` 仅停止升降，与高度目标互斥。Host 先发送零速度，等待至少 100 ms，再以此后采集的本机高度反馈保持位置；没有有效高度参考时只停止，不创建参考。须结合后续反馈确认静止。
 - 关节位置沿用 Host 标定与归一化；底盘 x/y 为 m/s、theta 为 deg/s，升降目标为 mm。ROS 接口的单位转换见 [ROS2](ros2.md)。
 - JSON 包含目标及 `_command`，后者携带 `client_id`、单调递增 `sequence`、`host_session_id`、`control_epoch`。

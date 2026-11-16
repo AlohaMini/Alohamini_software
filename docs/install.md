@@ -59,7 +59,115 @@ python -m pip install --no-deps --no-build-isolation -e '.[host]'
 
 Host 环境只包含舵机、相机和通信依赖，不安装 PyTorch 或 ROS。
 
-## 3. 检查安装
+## 3. 可选扩展
+
+在已激活的 PC 或云端环境、仓库根目录安装所需扩展：
+
+```bash
+EXTRA=kinematics
+python -m pip install --no-build-isolation -e ".[${EXTRA}]"
+```
+
+将 `EXTRA` 换成下表中的名称。
+
+| 扩展名 | 用途 |
+| --- | --- |
+| `learning` | 通用训练依赖 |
+| `kinematics` | TCP 表示、正逆运动学 |
+| `analysis` | 独立数据分析与评估查看 |
+| `audio-debug` | 麦克风调试，系统需安装 PortAudio |
+| `joycon` | Joy-Con 驱动 |
+| `pi05`、`smolvla` | π0.5、SmolVLA |
+| `acdit` | AC-DiT |
+| `gr00t_n17` | GR00T N1.7 |
+| `lewm` | LeWorldModel |
+| `hyvla05` | HyVLA-0.5 |
+| `openwam` | OpenWAM-α |
+| `xiaomi_robotics1` | Xiaomi-Robotics-1 |
+| `lingbot_vla_v2` | LingBot-VLA v2 |
+| `spirit` | Spirit v1.5 |
+
+云端推理服务同时安装策略与通信扩展，例如：
+
+```bash
+python -m pip install -e '.[pi05,zmq]'
+```
+
+SmolVLA／Spirit 分别使用 `.[smolvla,zmq]`、`.[spirit,zmq]`；树莓派复用前述 Host 环境。基座权重与 tokenizer 的准备见[训练与部署](training.md)。
+
+Notebook 内核在 PC 环境注册一次：
+
+```bash
+conda activate alohamini
+python -m ipykernel install --user --name alohamini --display-name 'AlohaMini'
+```
+
+## 4. 仿真
+
+### MuJoCo
+
+在 PC 环境安装：
+
+```bash
+conda activate alohamini
+python -m pip install -e './simulation/mujoco[collection]'
+```
+
+机器人网格、物性与限位随平台模型资产安装。
+
+使用 `--window-egl-device` 的 Linux x86_64 桌面还需安装 [VirtualGL 3.1.5](https://github.com/VirtualGL/virtualgl/releases/tag/3.1.5)：
+
+```bash
+curl -fL https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_amd64.deb \
+  -o /tmp/virtualgl_3.1.5_amd64.deb
+sudo apt install /tmp/virtualgl_3.1.5_amd64.deb
+```
+
+### ManiSkill 与 RoboTwin
+
+两者使用独立环境：ManiSkill 3.0.1 配套 SAPIEN 3.0.3；RoboTwin 配套 SAPIEN 3.0.0b1。先按 [ManiSkill](https://maniskill.readthedocs.io/en/latest/user_guide/getting_started/installation.html) 或 [RoboTwin](https://robotwin-platform.github.io/doc/usage/robotwin-install.html) 安装运行环境，再在对应环境、仓库根目录安装适配包：
+
+```bash
+# ManiSkill 环境
+python -m pip install -e . -e ./simulation/maniskill
+```
+
+```bash
+# RoboTwin 环境，需包含可用的 cuRobo/CUDA
+python -m pip install -e . -e ./simulation/robotwin
+```
+
+### LIBERO 场景与参考数据
+
+已有配套场景包 `alohamini-mujoco-assets-v1.tar.gz` 时，解压到工作目录：
+
+```bash
+mkdir -p "$HOME/Alohamini_workspace/simulation"
+tar -xzf /path/to/alohamini-mujoco-assets-v1.tar.gz \
+  -C "$HOME/Alohamini_workspace/simulation"
+```
+
+将 `/path/to/` 替换为资产包所在目录。模型查看、场景、回放与采集命令见[仿真](simulation.md)。
+
+## 5. ROS2 依赖
+
+在已安装 ROS2 Humble、colcon 和 rosdep 的系统 Python 终端执行：
+
+```bash
+source /opt/ros/humble/setup.bash
+cd ~/Alohamini/ros2
+rosdep install --from-paths src --ignore-src -r -y
+```
+
+Gazebo Fortress 扩展的依赖：
+
+```bash
+rosdep install --from-paths src/alohamini_core ../simulation/gazebo --ignore-src -r -y
+```
+
+构建与启动见 [ROS2](ros2.md)。
+
+## 6. 检查安装
 
 在各自环境中执行：
 
