@@ -1,4 +1,7 @@
 import math
+import xml.etree.ElementTree as ET
+from contextlib import contextmanager
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -18,6 +21,122 @@ from alohamini_joycon_teleop.mapping import (
     tcp_button_delta,
 )
 from ament_index_python.packages import get_package_share_directory
+
+from alohamini.model import get_robot_model
+
+
+@pytest.fixture
+def teleop_factory():
+    import rclpy
+    from alohamini_joycon_teleop.teleop_node import JoyConTeleop
+
+    @contextmanager
+    def create(hardware_mode):
+        rclpy.init(
+            args=[
+                "--ros-args",
+                "-p",
+                f"hardware_mode:={str(hardware_mode).lower()}",
+                "-p",
+                "arm_control_mode:=moveit",
+            ]
+        )
+        node = None
+        try:
+            node = JoyConTeleop()
+            yield node
+        finally:
+            if node is not None:
+                node.destroy_node()
+            rclpy.shutdown()
+
+    return create
+
+
+@pytest.mark.parametrize("hardware_mode", [False, True], ids=["preview", "hardware"])
+def test_fk_and_ik_requests_use_only_the_selected_model_joints(teleop_factory, hardware_mode):
+    from alohamini_joycon_teleop.teleop_node import ROOT_JOINTS
+
+    model = get_robot_model("alohamini2pro")
+    description = "collision" if hardware_mode else "planning"
+    expected = {
+        joint.attrib["name"]
+        for joint in ET.parse(model.description_path(description)).findall("joint")
+        if joint.attrib["type"] != "fixed" and joint.find("mimic") is None
+    }
+    with teleop_factory(hardware_mode) as node:
+        assert node.positions.keys() == expected
+        assert node.positions["vertical_move"] == node.lift_target == 0.0
+        node.positions["vertical_move"] = 0.17
+        if hardware_mode:
+            assert not set(ROOT_JOINTS) & node.positions.keys()
+        else:
+            node.update_base(
+                None, {"buttons": _buttons(), "stick": [2000.0, 4095.0]}, False, 0.1
+            )
+            assert node.preview_base[0] > 0.0
+            assert [node.positions[name] for name in ROOT_JOINTS] == node.preview_base
+        node.fk_client = Mock()
+        node.ik_client = Mock()
+        node.request_fk("left")
+        node.request_ik(
+            "right",
+            {"position": [0.0, -0.2, 0.1], "orientation": [0.0, 0.0, 0.0, 1.0]},
+            1.0,
+        )
+        fk = node.fk_client.call_async.call_args.args[0]
+        ik = node.ik_client.call_async.call_args.args[0]
+        for state in (fk.robot_state, ik.ik_request.robot_state):
+            assert len(state.joint_state.name) == len(expected)
+            assert set(state.joint_state.name) == expected
+            positions = dict(zip(state.joint_state.name, state.joint_state.position, strict=True))
+            assert positions == node.positions
+            assert positions["vertical_move"] == 0.17
+
+
+@pytest.mark.parametrize("hardware_mode", [False, True], ids=["preview", "hardware"])
+def test_initial_pose_uses_the_selected_models_semantic_pair(
+    teleop_factory, monkeypatch, tmp_path, hardware_mode
+):
+    from alohamini_joycon_teleop import teleop_node
+
+    model = get_robot_model("alohamini2pro")
+    semantic_paths = {}
+    expected_home = {"semantic": 0.4, "semantic_planning": 0.5}
+    for name, value in expected_home.items():
+        semantic = ET.parse(model.description_path(name))
+        semantic.find(
+            "group_state[@name='home'][@group='left_arm']/joint[@name='left_wrist_flex']"
+        ).set("value", str(value))
+        path = tmp_path / f"{name}.srdf"
+        semantic.write(path)
+        semantic_paths[name] = path
+
+    def description_path(name):
+        return semantic_paths[name] if name in semantic_paths else model.description_path(name)
+
+    selected_model = Mock()
+    selected_model.description_path.side_effect = description_path
+    monkeypatch.setattr(teleop_node, "get_robot_model", lambda _model_id: selected_model)
+    with teleop_factory(hardware_mode) as node:
+        semantic_name = "semantic" if hardware_mode else "semantic_planning"
+        assert node.positions["left_wrist_flex"] == expected_home[semantic_name]
+
+
+@pytest.mark.parametrize("hardware_mode", [False, True], ids=["preview", "hardware"])
+@pytest.mark.parametrize("invalid", ["unknown", "missing", "nonfinite"])
+def test_robot_state_rejects_invalid_model_state(teleop_factory, hardware_mode, invalid):
+    from moveit_msgs.msg import RobotState
+
+    with teleop_factory(hardware_mode) as node:
+        if invalid == "unknown":
+            node.positions["unknown_joint"] = 0.0
+        elif invalid == "missing":
+            del node.positions["vertical_move"]
+        else:
+            node.positions["vertical_move"] = math.nan
+        with pytest.raises(ValueError, match="Robot state"):
+            node.fill_robot_state(RobotState())
 
 
 def test_stick_deadzone_and_range():

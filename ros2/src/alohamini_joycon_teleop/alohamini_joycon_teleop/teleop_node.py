@@ -192,13 +192,38 @@ class JoyConTeleop(Node):
             raise ValueError("imu_latch_reference must be 'level' or 'current'")
         self.callback_group = MutuallyExclusiveCallbackGroup()
 
-        semantic = ET.parse(get_robot_model("alohamini2pro").description_path("semantic"))
-        self.positions = {
+        model = get_robot_model("alohamini2pro")
+        description_name = "collision" if self.hardware_mode else "planning"
+        semantic_name = "semantic" if self.hardware_mode else "semantic_planning"
+        description = ET.parse(model.description_path(description_name))
+        self.state_joint_names = tuple(
+            joint.attrib["name"]
+            for joint in description.findall("joint")
+            if joint.attrib["type"] != "fixed" and joint.find("mimic") is None
+        )
+        required = {
+            *arm_names("left"),
+            *arm_names("right"),
+            "left_gripper",
+            "right_gripper",
+            "vertical_move",
+            *(ROOT_JOINTS if not self.hardware_mode else ()),
+        }
+        missing = required - set(self.state_joint_names)
+        if missing:
+            raise ValueError(f"Teleop joints absent from {description_name} model: {sorted(missing)}")
+        self.positions = dict.fromkeys(self.state_joint_names, 0.0)
+        semantic = ET.parse(model.description_path(semantic_name))
+        initial_positions = {
             joint.attrib["name"]: float(joint.attrib["value"])
             for group in semantic.findall("group_state")
             if group.attrib["name"] in ("home", "closed")
             for joint in group.findall("joint")
         }
+        unknown = initial_positions.keys() - self.positions.keys()
+        if unknown:
+            raise ValueError(f"SRDF states contain joints absent from the model: {sorted(unknown)}")
+        self.positions.update(initial_positions)
         if str(self.get_parameter("preview_home").value) == "reference":
             # Teleop rest pose: arm extended forward with the gripper level
             # (approach axis straight down), matching the MoveIt FK golden
@@ -215,17 +240,6 @@ class JoyConTeleop(Node):
             for side in ("left", "right"):
                 for joint, value in reference.items():
                     self.positions[f"{side}_{joint}"] = value
-        self.positions.update(
-            {
-                "root_x_axis_joint": 0.0,
-                "root_y_axis_joint": 0.0,
-                "root_z_rotation_joint": 0.0,
-                "vertical_move": 0.0,
-                "wheel1_joint": 0.0,
-                "wheel2_joint": 0.0,
-                "wheel3_joint": 0.0,
-            }
-        )
         self.samples: dict[str, InputSample] = {}
         self.arms = {side: ArmControl() for side in ("left", "right")}
         self.kinematics = {
@@ -492,8 +506,19 @@ class JoyConTeleop(Node):
         return payload
 
     def fill_robot_state(self, state) -> None:
-        state.joint_state.name = list(self.positions)
-        state.joint_state.position = list(self.positions.values())
+        expected = set(self.state_joint_names)
+        unknown = self.positions.keys() - expected
+        missing = expected - self.positions.keys()
+        if unknown or missing:
+            raise ValueError(
+                f"Robot state differs from the selected model: "
+                f"unknown={sorted(unknown)}, missing={sorted(missing)}"
+            )
+        values = [self.positions[name] for name in self.state_joint_names]
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Robot state positions must be finite")
+        state.joint_state.name = list(self.state_joint_names)
+        state.joint_state.position = values
 
     def arm_seed(self, side: str) -> list[float] | None:
         names = arm_names(side)
