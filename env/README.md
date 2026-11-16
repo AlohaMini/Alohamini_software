@@ -38,3 +38,5 @@ python env/checkpoint_probe.py compare --reference /tmp/baseline.json --candidat
 ```
 
 对比要求 checkpoint、配置、输入与随机种子相同；记录动作差异、推理耗时、显存及依赖版本。输出不在容差内时返回失败。性能记录用于审查，短样本耗时不作为自动接受阈值。
+
+计算库升级允许数值变化时，可在用例中设置 `"acceptance": {"metric": "mae", "rtol": 0.02, "atol": [...]}`。`atol` 必须按动作维度顺序填写各自单位下的绝对误差预算；每维新版 MAE 须不超过 `旧版 MAE × (1 + rtol) + atol`。使用预先选定的验证样本与阈值，排除尾部补位及历史动作，仍保留输出差异。该检查衡量离线动作误差，不替代闭环任务评估。

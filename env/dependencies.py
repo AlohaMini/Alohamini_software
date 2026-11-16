@@ -306,15 +306,18 @@ def compile_lock(
             )
             command += ["--constraint", str(bounds)]
         subprocess.run(command, cwd=root, check=True, stdout=subprocess.DEVNULL)
-    # Constraints can repeat build options. Keep regeneration idempotent.
-    lines, options = [], set()
+    # pip's --only-binary :all: clears earlier source exceptions. uv emits
+    # those exceptions first, so put the global rule before them for pip too.
+    # Constraints can repeat build options; preserve a stable, unique list.
+    lines, options = [], []
     for line in output.read_text().splitlines():
         if line.startswith("--"):
-            if line in options:
-                continue
-            options.add(line)
-        lines.append(line)
-    output.write_text("\n".join(lines) + "\n")
+            if line not in options:
+                options.append(line)
+        else:
+            lines.append(line)
+    options.sort(key=lambda line: not line.startswith("--only-binary"))
+    output.write_text("\n".join([*options, *lines]) + "\n")
 
 
 def refresh(root, *, group=None):

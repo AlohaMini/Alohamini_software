@@ -106,10 +106,11 @@ def capture(cases, *, device, execution=None):
             options=manifest["config"],
         )
         outputs, hashes, durations, peaks = [], [], [], []
+        targets, masks = [], []
         indices = case.get("indices", [0])
         if not indices:
             raise ValueError("Each case needs at least one sample index")
-        for index in indices:
+        for number, index in enumerate(indices):
             if type(index) is not int or not 0 <= index < len(samples):
                 raise ValueError(f"Sample index out of range: {index}")
             seed = case.get("seed", 42)
@@ -118,9 +119,10 @@ def capture(cases, *, device, execution=None):
             torch.manual_seed(seed)
             sample = samples[index]
             hashes.append(digest(sample))
-            # Warm up once. Reset RNG and policy for the measured prediction.
-            model.reset()
-            model.predict(sample)
+            # Warm up the model once, then reset RNG and policy for each input.
+            if number == 0:
+                model.reset()
+                model.predict(sample)
             random.seed(seed)
             np.random.seed(seed)
             torch.manual_seed(seed)
@@ -138,12 +140,29 @@ def capture(cases, *, device, execution=None):
             if not action.isfinite().all():
                 raise ValueError(f"Non-finite output: {case['name']}")
             outputs.append(action.tolist())
+            target = sample.get("_recorded_action", sample["action"])
+            valid = ~sample["action_is_pad"]
+            offsets = samples.delta_indices.get("action")
+            if offsets is not None:
+                valid = valid & (torch.as_tensor(offsets) >= 0)
+            if target.shape != action.shape:
+                raise ValueError("Evaluation chunk_size must match checkpoint")
+            targets.append(target.tolist())
+            masks.append(valid.tolist())
+            if execution is None or execution.main:
+                print(f"{case['name']}: sample {number + 1}/{len(indices)}", flush=True)
         results[case["name"]] = {
             "case": case,
             "checkpoint_sha256": file_digest(checkpoint / "model.safetensors"),
             "manifest_sha256": file_digest(checkpoint / "policy.json"),
             "input_sha256": hashes,
             "actions": outputs,
+            "targets": targets,
+            "valid_action_mask": masks,
+            "action_names": model.names,
+            "sample_locations": [
+                list(samples.locations[samples.sample_indices[index]]) for index in indices
+            ],
             "median_seconds": float(np.median(durations)),
             "peak_cuda_bytes": max(peaks) if peaks else None,
         }
@@ -170,6 +189,46 @@ def capture(cases, *, device, execution=None):
         "world_size": execution.world_size if execution is not None else 1,
         "distributed_backend": "fsdp2" if execution is not None else "single",
         "cases": results,
+    }
+
+
+def compare_mae(old, new, a, b, acceptance):
+    """Compare recorded-action error per dimension, preserving sample weights."""
+    for key in ("targets", "valid_action_mask", "action_names"):
+        if key not in old or key not in new or old[key] != new[key]:
+            raise ValueError(f"MAE comparison requires identical {key}")
+    targets = np.asarray(old["targets"], dtype=np.float64)
+    valid = np.asarray(old["valid_action_mask"])
+    names = old["action_names"]
+    if (
+        a.ndim != 3 or targets.shape != a.shape or valid.shape != a.shape[:2]
+        or valid.dtype != np.bool_ or not valid.any()
+        or len(names) != a.shape[-1] or len(set(names)) != len(names)
+        or not np.isfinite(targets[valid]).all()
+    ):
+        raise ValueError("Invalid MAE targets, mask or action names")
+    # Absolute budgets must be specified per dimension in recorded action units.
+    atol = np.asarray(acceptance.get("atol", []), dtype=np.float64)
+    rtol = acceptance.get("rtol", 0.0)
+    if (
+        atol.shape != (a.shape[-1],) or np.ndim(rtol) != 0
+        or not np.isfinite(atol).all() or (atol < 0).any()
+        or not np.isfinite(rtol) or rtol < 0
+    ):
+        raise ValueError("MAE requires nonnegative per-action atol and scalar rtol")
+    baseline = np.abs(a[valid] - targets[valid]).mean(axis=0)
+    candidate = np.abs(b[valid] - targets[valid]).mean(axis=0)
+    limit = baseline * (1 + rtol) + atol
+    return {
+        "passed": bool((candidate <= limit).all()),
+        "valid_action_steps": int(valid.sum()),
+        "mae_by_action": {
+            name: {
+                "baseline": float(x), "candidate": float(y), "limit": float(z),
+                "passed": bool(y <= z),
+            }
+            for name, x, y, z in zip(names, baseline, candidate, limit, strict=True)
+        },
     }
 
 
@@ -202,6 +261,13 @@ def compare(reference, candidate):
             "baseline_peak_cuda_bytes": old["peak_cuda_bytes"],
             "candidate_peak_cuda_bytes": new["peak_cuda_bytes"],
         }
+        acceptance = old["case"].get("acceptance")
+        if acceptance is not None:
+            if not isinstance(acceptance, dict) or acceptance.get("metric") != "mae":
+                raise ValueError("Unknown checkpoint acceptance metric")
+            results[name]["numerical_match"] = results[name]["passed"]
+            results[name].update(compare_mae(old, new, a, b, acceptance))
+            results[name]["acceptance_metric"] = "mae"
     return {
         "passed": all(row["passed"] for row in results.values()),
         "cases": results,
