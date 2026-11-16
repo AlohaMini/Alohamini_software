@@ -617,6 +617,7 @@ def record(
             robot_metadata=metadata,
             resume=resume,
             video_encoding_workers=video_encoding_workers,
+            profile_timing=profile_timing,
             **({"fixed_dimensions": fixed_config} if fixed_config else {}),
         )
         dataset_cleanup.enter_context(preserve_dataset(dataset))
@@ -696,6 +697,20 @@ def record(
                             ),
                             flush=True,
                         )
+                    if profile_timing:
+                        # Worker durations overlap across cameras; keep them
+                        # separate from the additive SAVE TIMING wall stages.
+                        video_timings = getattr(dataset, "last_video_timings", {})
+                        if isinstance(video_timings, dict):
+                            for camera, detail in video_timings.items():
+                                values = " ".join(
+                                    f"{key}={value:.3f}" if key.endswith("_s") else f"{key}={value}"
+                                    for key, value in detail.items()
+                                )
+                                print(
+                                    f"[VIDEO TIMING camera={camera} seconds] {values}",
+                                    flush=True,
+                                )
                     print(
                         f"Episode {episode_number} saved in "
                         f"{time.perf_counter() - save_started:.1f} second(s). "

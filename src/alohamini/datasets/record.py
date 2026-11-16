@@ -350,6 +350,7 @@ class _EpisodeWriter:
         resume=False,
         fixed_dimensions=None,
         video_encoding_workers=None,
+        profile_timing=False,
         _source_info=None,
         _discard_interrupted=False,
     ):
@@ -357,12 +358,16 @@ class _EpisodeWriter:
 
         if type(fps) is not int or not 1 <= fps <= 30:
             raise ValueError("Dataset fps must be an integer in [1, 30]")
+        if type(profile_timing) is not bool:
+            raise ValueError("profile_timing must be a bool")
         if video_encoding_workers is not None and (
             type(video_encoding_workers) is not int or video_encoding_workers < 1
         ):
             raise ValueError("Video encoding workers must be a positive integer")
         self.video_encoding_workers = video_encoding_workers
+        self.profile_timing = profile_timing
         self.last_save_timings = {}
+        self.last_video_timings = {}
         if not isinstance(task, str) or not task.strip():
             raise ValueError("A nonempty task description is required")
         self.root = Path(root).expanduser()
@@ -689,6 +694,7 @@ class _EpisodeWriter:
             return
         try:
             self.last_save_timings = {}
+            self.last_video_timings = {}
             started = time.perf_counter()
             self._finish_writer()
             self.last_save_timings["queue_drain"] = time.perf_counter() - started
@@ -756,6 +762,7 @@ class _EpisodeWriter:
                 self.cameras,
                 workers=self.video_encoding_workers,
                 timings=self.last_save_timings,
+                camera_timings=self.last_video_timings if self.profile_timing else None,
             )
             destination = self.root / "episodes" / f"episode_{self.num_episodes:06d}"
             if destination.exists():
@@ -817,12 +824,15 @@ class LocalDataset:
         resume=False,
         fixed_dimensions=None,
         video_encoding_workers=None,
+        profile_timing=False,
         discard_interrupted=True,
     ):
         import fcntl
 
         if type(discard_interrupted) is not bool:
             raise ValueError("discard_interrupted must be a bool")
+        if type(profile_timing) is not bool:
+            raise ValueError("profile_timing must be a bool")
         if video_encoding_workers is not None and (
             type(video_encoding_workers) is not int or video_encoding_workers < 1
         ):
@@ -869,6 +879,7 @@ class LocalDataset:
                 resume=staging.exists(),
                 fixed_dimensions=fixed_dimensions,
                 video_encoding_workers=video_encoding_workers,
+                profile_timing=profile_timing,
                 _source_info=source_info,
                 _discard_interrupted=resume and discard_interrupted,
             )
