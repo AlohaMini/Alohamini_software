@@ -315,10 +315,34 @@ class HostSupervisor:
             raise ValueError("Repeated or out-of-order feedback sequence")
         self._sequences[source] = batch.sequence
         if batch.failures or batch.samples.keys() != self._expected[source]:
-            raise ValueError("Feedback contains missing or failed motors")
-        for sample in batch.samples.values():
+            details = []
+            missing = self._expected[source] - batch.samples.keys()
+            unexpected = batch.samples.keys() - self._expected[source]
+            if missing:
+                details.append(f"missing={sorted(missing)}")
+            if unexpected:
+                details.append(f"unexpected={sorted(unexpected)}")
+            if batch.failures:
+                details.append(f"failed={dict(sorted(batch.failures.items()))}")
+            raise ValueError(
+                f"Feedback validation failed for source={source!r}: {'; '.join(details)}"
+            )
+        for name, sample in batch.samples.items():
             if sample.packet_error or sample.current_a is None:
-                raise ValueError("Feedback has a servo fault or missing current")
+                reasons = []
+                if sample.packet_error:
+                    reasons.append("servo fault")
+                if sample.current_a is None:
+                    reasons.append("current unavailable")
+                details = (
+                    f"{' and '.join(reasons)}; packet_error=0x{sample.packet_error:02x}; "
+                    f"current_a={sample.current_a!r}"
+                )
+                if sample.field_errors:
+                    details += f"; field_errors={dict(sorted(sample.field_errors.items()))}"
+                raise ValueError(
+                    f"Invalid feedback for source={source!r}, motor={name!r}: {details}"
+                )
 
     def cycle(
         self,
@@ -347,7 +371,13 @@ class HostSupervisor:
                     for source, device in self._devices.items():
                         started = time.monotonic()
                         read_started = time.perf_counter()
-                        batch = device.read_feedback()
+                        try:
+                            batch = device.read_feedback()
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"Feedback read failed for source={source!r}: "
+                                f"{type(exc).__name__}: {exc}"
+                            ) from exc
                         self.timing_ms[f"{source}_bus"] = (time.perf_counter() - read_started) * 1e3
                         if isinstance(batch, FeedbackBatch):
                             batches.append(batch)
