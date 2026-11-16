@@ -36,6 +36,20 @@ def test_same_output_and_small_rounding_pass_but_large_drift_fails():
     assert result["cases"]["act"]["max_abs_difference"] > 0.009
 
 
+@pytest.mark.parametrize("key,value", [("world_size", 2), ("distributed_backend", "fsdp2")])
+def test_comparison_rejects_changed_execution_layout(key, value):
+    old, new = snapshot(), snapshot()
+    new[key] = value
+    with pytest.raises(ValueError, match=key):
+        compare(old, new)
+
+
+def test_old_single_device_reports_remain_comparable():
+    old, new = snapshot(), snapshot()
+    new.update(world_size=1, distributed_backend="single")
+    assert compare(old, new)["passed"]
+
+
 @pytest.mark.parametrize("key", ["case", "checkpoint_sha256", "manifest_sha256", "input_sha256"])
 def test_comparison_rejects_changed_inputs_weights_or_protocol(key):
     old, new = snapshot(), snapshot()

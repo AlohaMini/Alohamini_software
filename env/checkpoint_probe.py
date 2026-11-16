@@ -45,13 +45,13 @@ def file_digest(path):
     return result.hexdigest()
 
 
-def capture(cases, *, device):
+def capture(cases, *, device, execution=None):
     import torch
 
     from alohamini.learning.checkpoint import model_directory
     from alohamini.learning.data import AlohaMiniDataset
     from alohamini.learning.data_fields import prepare_fields
-    from alohamini.learning.policy import NativePolicy
+    from alohamini.learning.policy import NativePolicy, make_processor
 
     if not cases or len({case["name"] for case in cases}) != len(cases):
         raise ValueError("Provide nonempty cases with unique names")
@@ -63,9 +63,24 @@ def capture(cases, *, device):
     for case in cases:
         checkpoint = model_directory(case["checkpoint"])
         model = NativePolicy(
-            checkpoint, device=device, offline=True, goal_images=case.get("goal_images")
+            checkpoint,
+            device="cpu" if execution is not None else device,
+            offline=True,
+            goal_images=case.get("goal_images"),
         )
         manifest = model.manifest
+        optimizer = None
+        if execution is not None:
+            model.model, optimizer = execution.prepare(
+                model.model, torch.optim.AdamW(model.model.get_optim_params())
+            )
+            model.processor = make_processor(
+                model.model, manifest["stats"], str(execution.device),
+                data_fields=manifest.get("data_fields"),
+            )
+            model.model.eval()
+            if case.get("goal_images") is not None:
+                model.set_goal(case["goal_images"])
         sampling = getattr(model.algorithm, "evaluation_sample_spec", model.algorithm.sample_spec)
         spec = sampling(manifest["config"], cameras=manifest["cameras"])
         spec["exclude_fixed_state"] = manifest.get("fixed_state_excluded", False)
@@ -132,7 +147,10 @@ def capture(cases, *, device):
             "median_seconds": float(np.median(durations)),
             "peak_cuda_bytes": max(peaks) if peaks else None,
         }
-        del model, samples, action, sample
+        if execution is not None:
+            execution.barrier()
+            execution.accelerator.free_memory()
+        del model, optimizer, samples, action, sample
         gc.collect()
         if device.startswith("cuda"):
             torch.cuda.empty_cache()
@@ -149,6 +167,8 @@ def capture(cases, *, device):
             )
         },
         "device": device,
+        "world_size": execution.world_size if execution is not None else 1,
+        "distributed_backend": "fsdp2" if execution is not None else "single",
         "cases": results,
     }
 
@@ -156,6 +176,9 @@ def capture(cases, *, device):
 def compare(reference, candidate):
     if not reference["cases"] or reference["cases"].keys() != candidate["cases"].keys():
         raise ValueError("Checkpoint comparison cases differ or are empty")
+    for key, default in (("world_size", 1), ("distributed_backend", "single")):
+        if reference.get(key, default) != candidate.get(key, default):
+            raise ValueError(f"Checkpoint comparison {key} differs")
     results = {}
     for name, old in reference["cases"].items():
         new = candidate["cases"][name]
@@ -194,12 +217,26 @@ def main(argv=None):
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--distributed-backend", choices=("fsdp2",))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "capture":
         if args.cases is None:
             parser.error("capture requires --cases")
-        result = capture(json.loads(args.cases.read_text()), device=args.device)
+        execution = None
+        if args.distributed_backend:
+            from alohamini.learning.execution import Execution
+
+            execution = Execution(args.device, "none", args.distributed_backend)
+        try:
+            result = capture(
+                json.loads(args.cases.read_text()), device=args.device, execution=execution
+            )
+            if execution is not None and not execution.main:
+                return 0
+        finally:
+            if execution is not None:
+                execution.close()
     else:
         if args.reference is None or args.candidate is None:
             parser.error("compare requires --reference and --candidate")

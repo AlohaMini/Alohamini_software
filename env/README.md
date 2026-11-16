@@ -21,6 +21,8 @@ python env/dependencies.py refresh --group models --report /tmp/dependency-chang
 - Dependabot：每季度检查 GitHub Actions 版本，同组更新合并为一个 PR。
 - `Dependency GPU validation`：手动选择候选分支，填写空闲 GPU 编号和 checkpoint 用例文件。需要标签为 `alohamini-gpu` 的 Linux x86_64 自托管 runner，提供 Conda、兼容驱动及至少两张空闲 GPU。用例路径上的 checkpoint、基座资源和数据集必须可读。
 
+大模型权重超过单卡显存时，将 `checkpoint_backend` 设为 `fsdp2`，使用所选显卡中的前两张比较推理结果，保留 checkpoint 原有权重精度。
+
 仓库 Actions 设置须允许创建 PR；组织设置也须允许此权限。版本候选保持草稿，不自动合并。模型/计算更新接受前，需 CPU 与 GPU 检查均通过。GPU 工作流使用独立的临时环境，不更新现有运行环境；若指定显卡有计算进程则退出。
 
 ## 旧 checkpoint 对比

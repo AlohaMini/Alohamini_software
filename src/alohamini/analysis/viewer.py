@@ -64,7 +64,7 @@ def show(analysis, reader, *, spawn=True, rrd=None, cameras=None, media_budget_m
                 ),
                 row_shares=[4, 3, 2],
             ),
-            rrb.TimePanel(timeline="comparison_time", duration_cursor=0.0),
+            rrb.TimePanel(timeline="comparison_time"),
         )
     )
     budget = int(media_budget_mb * 1024 * 1024)

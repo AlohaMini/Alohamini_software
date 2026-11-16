@@ -397,9 +397,9 @@ class NativePolicy:
             )
         return nullcontext()
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def predict(self, sample):
-        """Offline physical action chunk; sample has no batch dimension."""
+        """Offline physical action chunk; retain version counters for FSDP2 collectives."""
         batch = self.processor(
             {
                 k: ([v] if k == "task" else v[None])

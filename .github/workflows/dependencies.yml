@@ -96,6 +96,7 @@ jobs:
             tests/test_dependency_maintenance.py tests/test_checkpoint_probe.py tests/test_transformers_compat.py tests/test_policy_assets.py \
             tests/test_lerobot_algorithms.py tests/test_training_precision.py \
             tests/test_distributed_validation.py tests/test_validation_loading.py \
+            tests/test_checkpoint_analysis.py tests/test_evaluation_analysis.py \
             tests/test_checkpoint_retention.py tests/test_resume_paths.py \
             tests/test_acdit_training.py tests/test_xiaomi_lingbot.py
       - name: Summarize compatibility results
