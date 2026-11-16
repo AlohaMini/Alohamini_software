@@ -20,7 +20,7 @@ source install/local_setup.bash
 
 适用 `alohamini2pro`。将左右臂 URDF 映射 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` 及 `lift_axis.yaml` 放在 `~/Alohamini_workspace/calibration/hardware/`。这些文件与舵机标定 JSON 分开。
 
-真机使用以 `base_link` 为根的物理模型；离线 `plan_only` 使用含虚拟底盘关节、以 `root` 为根的规划模型。
+真机与离线规划共享同一份关节、碰撞几何、惯量和 SRDF。真机以 `base_link` 为根；离线 `plan_only` 自动附加 X／Y／偏航虚拟关节，以 `root` 为根。
 
 ```bash
 export ROS_LOG_DIR="${ALOHAMINI_WORKSPACE:-$HOME/Alohamini_workspace}/logs/ros2"
@@ -108,7 +108,7 @@ ros2 run alohamini_validation validate_tf
 
 依次检查模型/FK/碰撞几何、MoveIt 和 TF。后两项默认访问 `/alohamini_plan_only`；检查真机 ROS 图时加 `--ros-args -r __ns:=/`。工具不发送动作，实机仍须检查运动区域。
 
-物理模型校验资产、FK/IK 与碰撞服务；自碰撞接触结果尚无独立验收基线，不套用离线规划模型的旧接触基线。
+两种入口使用相同的参考姿态、折叠、闭爪及已知碰撞样例检查实际有效性；这些样例不替代实机间隙验证。
 
 ## Joy-Con 遥操
 

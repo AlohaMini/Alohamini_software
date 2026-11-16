@@ -195,7 +195,7 @@ class JoyConTeleop(Node):
         model = get_robot_model("alohamini2pro")
         description_name = "collision" if self.hardware_mode else "planning"
         semantic_name = "semantic" if self.hardware_mode else "semantic_planning"
-        description = ET.parse(model.description_path(description_name))
+        description = model.description_tree(description_name)
         self.state_joint_names = tuple(
             joint.attrib["name"]
             for joint in description.findall("joint")
@@ -211,7 +211,9 @@ class JoyConTeleop(Node):
         }
         missing = required - set(self.state_joint_names)
         if missing:
-            raise ValueError(f"Teleop joints absent from {description_name} model: {sorted(missing)}")
+            raise ValueError(
+                f"Teleop joints absent from {description_name} model: {sorted(missing)}"
+            )
         self.positions = dict.fromkeys(self.state_joint_names, 0.0)
         semantic = ET.parse(model.description_path(semantic_name))
         initial_positions = {

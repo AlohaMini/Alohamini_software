@@ -61,7 +61,7 @@ def test_fk_and_ik_requests_use_only_the_selected_model_joints(teleop_factory, h
     description = "collision" if hardware_mode else "planning"
     expected = {
         joint.attrib["name"]
-        for joint in ET.parse(model.description_path(description)).findall("joint")
+        for joint in model.description_tree(description).findall("joint")
         if joint.attrib["type"] != "fixed" and joint.find("mimic") is None
     }
     with teleop_factory(hardware_mode) as node:
@@ -117,6 +117,7 @@ def test_initial_pose_uses_the_selected_models_semantic_pair(
 
     selected_model = Mock()
     selected_model.description_path.side_effect = description_path
+    selected_model.description_tree.side_effect = model.description_tree
     monkeypatch.setattr(teleop_node, "get_robot_model", lambda _model_id: selected_model)
     with teleop_factory(hardware_mode) as node:
         semantic_name = "semantic" if hardware_mode else "semantic_planning"

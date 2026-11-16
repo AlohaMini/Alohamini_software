@@ -19,7 +19,7 @@ def generate_launch_description() -> LaunchDescription:
     package = Path(get_package_share_directory("alohamini_moveit_config"))
     moveit_config = (
         MoveItConfigsBuilder("alohamini2pro", package_name="alohamini_moveit_config")
-        .robot_description(file_path=str(model.description_path("planning")))
+        .robot_description(file_path=str(model.description_path("collision")))
         .robot_description_semantic(file_path=str(model.description_path("semantic_planning")))
         .robot_description_kinematics()
         .joint_limits()

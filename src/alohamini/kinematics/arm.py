@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
@@ -241,7 +240,7 @@ class SerialArmKinematics:
         ):
             raise ValueError("Kinematic chain needs a frame and unique ordered joint names")
         if joint_limits is None:
-            root = ET.parse(model.description_path(spec["limits_description"])).getroot()
+            root = model.description_tree(spec["limits_description"])
             joints = {joint.get("name"): joint for joint in root.findall("joint")}
             joint_limits = []
             for name in names:

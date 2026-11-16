@@ -250,7 +250,8 @@ def test_candidate_changes_only_explicit_link_colliders(robot, tmp_path):
     fixture_bundle(robot.description, directory)
     candidate = build_model(profile=ModelProfile(collision_bundle=directory))
     assert candidate.manifest["collision_profile"] == "cad-bundle"
-    assert candidate.model.ngeom == robot.model.ngeom - 6 + 1
+    original = len(robot.description.links["right_Moving_Jaw"].findall("collision"))
+    assert candidate.model.ngeom == robot.model.ngeom - original + 1
     assert candidate.model.nexclude == robot.model.nexclude
     assert candidate.model.nu == robot.model.nu
     np.testing.assert_array_equal(candidate.model.body_mass, robot.model.body_mass)
@@ -268,11 +269,11 @@ def test_candidate_changes_only_explicit_link_colliders(robot, tmp_path):
     )
 
 
-def test_existing_concave_collision_meshes_are_reported(robot):
+def test_prepared_collision_meshes_are_convex_without_expanding_their_volume(robot):
     report = convexification_report(robot)
     assert report["meshes"]
     ratios = [m["convex_to_source_volume_ratio"] for m in report["meshes"]]
-    assert any(r is None or r > 1.2 for r in ratios)
+    assert all(r is not None and r <= 1.001 for r in ratios)
     for record in report["meshes"]:
         if any(record["source_topology"].values()):
             assert record["convex_to_source_volume_ratio"] is None

@@ -436,19 +436,22 @@ def test_custom_model_registers_its_own_geometry_and_freezes_it(tmp_path, monkey
     for relative in (
         "config/kinematics/right_arm_kinematics.yaml",
         "config/kinematics/kinematics.yaml",
-        "urdf/alohamini2pro_kinematic.urdf",
     ):
         target = custom / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(installed.asset_path(relative), target)
+    snapshot = custom / "urdf/kinematic.urdf"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(installed.description_xml("kinematic"))
     chain = json.loads(installed.kinematic_chain_path("left").read_text())
     (custom / "chain.json").write_text(json.dumps(chain))
     document = json.loads((installed.directory / "model.json").read_text())
     document.pop("kinematic_presets", None)
     document.pop("default_kinematic_preset", None)
+    document.pop("description_views", None)
     document.update(
         model_id="bench_arm",
-        descriptions={"kinematic": document["descriptions"]["kinematic"]},
+        descriptions={"kinematic": "urdf/kinematic.urdf"},
         kinematic_chains={"manipulator": "chain.json"},
     )
     (custom / "model.json").write_text(json.dumps(document))

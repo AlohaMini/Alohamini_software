@@ -1,3 +1,6 @@
+import copy
+from dataclasses import replace
+
 import mujoco
 import numpy as np
 import pytest
@@ -57,7 +60,7 @@ def test_per_joint_gains_change_motor_response_and_preserve_effort_caps(robot):
     follower.target[grip] += 0.02
     assert not follower.step()[grip]
     assert follower.data.ctrl[grip] == pytest.approx(0.2 + bias)
-    follower.target[grip] += 0.2
+    follower.target[grip] += 2 * follower.effort_limits[grip] / follower.kp[grip]
     assert follower.step()[grip]
     assert follower.data.ctrl[grip] == pytest.approx(follower.effort_limits[grip])
     assert settings.to_dict()["joint_gains"]["left_gripper"]["kp"] == 10
@@ -179,8 +182,10 @@ def test_static_gravity_hold_is_not_disabled(robot):
     report = follower.follow(trajectory)
     assert report["passed"]
     actuator_id = robot.model.actuator("vertical_move").id
-    # The lifted subtree is 5.1 kg; its weight must be carried by the motor.
-    assert follower.data.actuator_force[actuator_id] == pytest.approx(5.1 * 9.80665, rel=1e-4)
+    lifted_mass = robot.model.body_subtreemass[robot.model.body("vertical_link").id]
+    assert follower.data.actuator_force[actuator_id] == pytest.approx(
+        lifted_mass * 9.80665, rel=1e-4
+    )
     assert robot.model.opt.gravity[2] == -9.80665
     np.testing.assert_allclose(follower.data.qpos, initial, atol=1e-4)
 
@@ -201,12 +206,18 @@ def test_static_load_query_preserves_live_state_and_excludes_motion(robot):
     assert np.max(np.abs(live.qfrc_bias[ids] - stationary.qfrc_bias[ids])) > 0.01
     lift = report["joint_names"].index("vertical_move")
     assert report["effort_units"][lift] == "N"
-    assert report["required_motor_effort"][lift] == pytest.approx(5.1 * 9.80665)
+    lifted_mass = robot.model.body_subtreemass[robot.model.body("vertical_link").id]
+    assert report["required_motor_effort"][lift] == pytest.approx(lifted_mass * 9.80665)
     mujoco.mj_getState(robot.model, live, after, spec)
     np.testing.assert_array_equal(before, after)
 
 
-def test_reachable_pose_can_exceed_static_motor_limits(robot):
+def test_reachable_pose_can_exceed_an_explicitly_reduced_motor_limit(robot):
+    model = copy.copy(robot.model)
+    actuator = model.actuator("left_shoulder_lift").id
+    model.actuator_ctrlrange[actuator] = [-0.05, 0.05]
+    model.actuator_forcerange[actuator] = [-0.05, 0.05]
+    robot = replace(robot, model=model)
     pose = {
         "left_shoulder_pan": 0.2,
         "left_shoulder_lift": -2.4,

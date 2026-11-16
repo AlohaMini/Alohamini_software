@@ -141,15 +141,18 @@ def scene_robot(tmp_path_factory):
     (directory / "bundle.json").write_text(json.dumps(manifest))
     config = {"T_world_libero": [[0, -1, 0, 0.7], [1, 0, 0, -0.2], [0, 0, 1, 0.3], [0, 0, 0, 1]]}
     scene = LiberoScene(directory, 0, config)
-    return build_model(profile=ModelProfile(description="planning", initial_positions={"vertical_move": 0.2}), scene=scene)
+    return build_model(
+        profile=ModelProfile(description="planning", initial_positions={"vertical_move": 0.2}),
+        scene=scene,
+    )
 
 
 def test_scene_keeps_robot_inertia_and_named_free_object_transforms(scene_robot):
     robot = scene_robot
     report = validate_model(robot, samples=2)
     assert report["passed"], report
-    assert report["source_mass_kg"] == pytest.approx(16)
-    assert report["whole_scene_mass_kg"] == pytest.approx(16.2)
+    assert report["source_mass_kg"] == pytest.approx(11.32951)
+    assert report["whole_scene_mass_kg"] == pytest.approx(report["source_mass_kg"] + 0.2)
     assert robot.scene.validate(robot)["passed"]
     floor = robot.model.geom("floor")
     visible_floor = robot.model.geom("libero_floor_visual")
@@ -734,14 +737,25 @@ def test_static_geometry_intersections_are_not_hidden_by_mujoco_weld_filter(scen
     model = scene_robot.model
     original = model.geom("support").pos.copy()
     try:
-        model.geom("support").pos[:2] = [0, 0]
-        data = scene_robot.data()
-        base = model.geom("base_cad_link__collision_0").id
+        base = max(
+            (model.geom(name).id for name, info in scene_robot.geometry.items()
+             if info["link"] == "base_cad_link" and info["kind"] == "collision"),
+            key=lambda index: float(np.prod(model.geom_size[index])),
+        )
         support = model.geom("support").id
+        data = scene_robot.data()
+        owner = model.geom_bodyid[support]
+        model.geom("support").pos[:] = data.xmat[owner].reshape(3, 3).T @ (
+            data.geom_xpos[base] - data.xpos[owner]
+        )
+        data = scene_robot.data()
         assert not any({c.geom1, c.geom2} == {base, support} for c in data.contact)
         report = scene_robot.scene.static_intersections(scene_robot)
         assert not report["passed"]
-        assert any(p["robot_geom"] == "base_cad_link__collision_0" for p in report["intersections"])
+        assert any(
+            p["robot_geom"] == model.geom(base).name and p["scene_geom"] == "support"
+            for p in report["intersections"] + report["invalid_distance_queries"]
+        ), report
     finally:
         model.geom("support").pos[:] = original
 

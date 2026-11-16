@@ -18,6 +18,14 @@ class ActuatorSpec:
     motor_model: str
 
 
+@dataclass(frozen=True)
+class DescriptionView:
+    source: str
+    overlay: str | None = None
+    root_link: str | None = None
+    geometry: bool = True
+
+
 def asset_path(directory: Path, relative: str) -> Path:
     """Resolve a model-local file without following paths outside the asset root."""
     if not isinstance(relative, str) or not relative or "\\" in relative or ":" in relative:
@@ -49,15 +57,52 @@ class RobotModel:
     kinematic_chains: Mapping[str, str] = field(default_factory=dict)
     kinematic_presets: Mapping[str, str] = field(default_factory=dict)
     default_kinematic_preset: str | None = None
+    description_views: Mapping[str, DescriptionView] = field(default_factory=dict)
 
     def asset_path(self, relative: str) -> Path:
         return asset_path(self.directory, relative)
 
     def description_path(self, name: str) -> Path:
         """Return a description file; no fallback to another model or description."""
+        if name in self.description_views:
+            raise ValueError(f"Description {name!r} is generated; use description_xml()")
         if name not in self.descriptions:
             raise ValueError(f"Model {self.model_id!r} has no description {name!r}")
         return self.asset_path(self.descriptions[name])
+
+    @property
+    def description_names(self) -> tuple[str, ...]:
+        return (*self.descriptions, *self.description_views)
+
+    def description_source_path(self, name: str) -> Path:
+        """Return the authoritative source, including for an in-memory view."""
+        view = self.description_views.get(name)
+        return self.description_path(view.source if view is not None else name)
+
+    def description_sources(self, name: str) -> tuple[Path, ...]:
+        sources = [self.description_source_path(name)]
+        view = self.description_views.get(name)
+        if view is not None and view.overlay is not None:
+            sources.append(self.asset_path(view.overlay))
+        return tuple(sources)
+
+    def description_tree(self, name: str, *, _sources=None) -> ET.Element:
+        """Build an independent tree from a source and a declared nonphysical overlay."""
+        sources = (
+            {path: path.read_bytes() for path in self.description_sources(name)}
+            if _sources is None else _sources
+        )
+        source = self.description_source_path(name)
+        tree = ET.fromstring(sources[source])
+        view = self.description_views.get(name)
+        if view is not None:
+            from .views import derive_tree
+
+            overlay = (
+                ET.fromstring(sources[self.asset_path(view.overlay)]) if view.overlay else None
+            )
+            tree = derive_tree(tree, view, overlay)
+        return tree
 
     def kinematic_chain_path(self, name: str) -> Path:
         """Resolve an explicitly registered chain; never borrow another model's geometry."""
@@ -71,13 +116,14 @@ class RobotModel:
             raise ValueError(f"Model {self.model_id!r} has no kinematic preset {name!r}")
         return self.asset_path(self.kinematic_presets[name])
 
-    def description_xml(self, name: str) -> str:
+    def description_xml(self, name: str, *, resolve_meshes: bool = True) -> str:
         """Render a description with contained mesh file URIs; leave assets unchanged."""
-        path = self.description_path(name)
-        root = ET.parse(path).getroot()
+        path = self.description_source_path(name)
+        root = self.description_tree(name)
         for mesh in root.findall(".//mesh"):
             resource = (path.parent / mesh.attrib["filename"]).resolve()
             if not resource.is_relative_to(self.directory.resolve()) or not resource.is_file():
                 raise ValueError("Robot mesh must exist inside the model directory")
-            mesh.set("filename", resource.as_uri())
+            if resolve_meshes:
+                mesh.set("filename", resource.as_uri())
         return ET.tostring(root, encoding="unicode")

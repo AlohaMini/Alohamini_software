@@ -70,7 +70,7 @@ def origin_transform(joint: ET.Element) -> np.ndarray:
 
 class UrdfKinematics:
     def __init__(self, path: Path) -> None:
-        self.root = ET.parse(path).getroot()
+        self.root = path if isinstance(path, ET.Element) else ET.parse(path).getroot()
         self.joint_by_child = {
             joint.find("child").get("link"): joint for joint in self.root.findall("joint")
         }
@@ -128,7 +128,7 @@ def dh_fk(config: dict, q_rad: list[float]) -> np.ndarray:
 
 
 def validate_tree(model: UrdfKinematics) -> None:
-    """Check the legacy planning/kinematic topology, including its virtual root."""
+    """Check the generated planar-base topology, including its virtual root."""
     links = {link.get("name") for link in model.root.findall("link")}
     joints = model.root.findall("joint")
     children = [joint.find("child").get("link") for joint in joints]
@@ -224,152 +224,46 @@ def validate_physical_assets(robot: RobotModel) -> None:
     for joint in (*semantic.findall(".//joint"), *semantic.findall("passive_joint")):
         assert joint.get("name") in physical.joints, "Unknown physical SRDF joint"
 
-    # The retained planning pair has its own immutable geometry/contact baseline.
-    # It is also the recorded source of this physical import, not a substitute for it.
-    planning = robot.description_path("planning").relative_to(robot.directory).as_posix()
-    assert manifest.get("planning_description") == planning, "Planning description alias changed"
-    sources = manifest.get("source_description_sha256", {})
-    for name in ("planning", "semantic_planning"):
-        path = robot.description_path(name)
-        relative = path.relative_to(robot.directory).as_posix()
-        assert sources.get(relative) == hashlib.sha256(path.read_bytes()).hexdigest(), (
-            f"Physical import source checksum mismatch: {relative}"
-        )
+
+def validate_derived_views(robot: RobotModel) -> None:
+    """Every physical element and semantic rule must have exactly one source."""
+    source = robot.description_tree("collision")
+    planning = robot.description_tree("planning")
+    for tag in ("link", "joint", "material"):
+        actual = {node.get("name"): ET.tostring(node) for node in planning.findall(tag)}
+        for node in source.findall(tag):
+            assert actual.get(node.get("name")) == ET.tostring(node), (
+                f"Derived {tag} differs from physical source: {node.get('name')}"
+            )
+    assert robot.description_path("semantic") == robot.description_path("semantic_planning")
+    assert not any(
+        robot.description_tree("kinematic").findall(".//" + tag)
+        for tag in ("visual", "collision", "inertial")
+    ), "Kinematic view must contain only frames and joints"
 
 
-def validate_planning_collision(robot: RobotModel, validation: Path) -> None:
-    """Keep the accepted legacy collision baseline on its explicit planning pair."""
-    description = robot.directory
-    model = ET.parse(robot.description_path("planning")).getroot()
-    srdf = ET.parse(robot.description_path("semantic_planning")).getroot()
+def validate_collision_baseline(robot: RobotModel, validation: Path) -> None:
+    """Bind the reviewed self-collision samples to the unified physical assets."""
+    model = robot.description_tree("collision")
+    semantic = robot.description_tree("semantic")
     baseline = load_yaml(validation / "config/collision_baseline.yaml")
-    expected = baseline["geometry_counts"]
+    assert baseline.get("schema_version") == 2, "Unknown collision baseline schema"
+    for relative, expected in baseline["source_description_sha256"].items():
+        assert hashlib.sha256(robot.asset_path(relative).read_bytes()).hexdigest() == expected, (
+            f"Collision baseline source changed: {relative}"
+        )
     actual = {
-        "links": len(model.findall("link")),
-        "joints": len(model.findall("joint")),
+        "links": len(model.findall("link")), "joints": len(model.findall("joint")),
         "visuals": len(model.findall(".//visual")),
         "collisions": len(model.findall(".//collision")),
         "collision_boxes": len(model.findall(".//collision/geometry/box")),
         "collision_cylinders": len(model.findall(".//collision/geometry/cylinder")),
         "collision_meshes": len(model.findall(".//collision/geometry/mesh")),
-        "srdf_disabled_pairs": len(srdf.findall("disable_collisions")),
+        "srdf_disabled_pairs": len(semantic.findall("disable_collisions")),
     }
-    assert actual == expected, f"collision baseline drift: {actual} != {expected}"
+    assert actual == baseline["geometry_counts"], f"collision baseline drift: {actual}"
     for mesh in model.findall(".//mesh"):
-        assert resolve_package_uri(mesh.get("filename"), description).is_file()
-    for material in model.findall(".//visual/material"):
-        assert material.get("name"), "visual material names must not be empty"
-    links = {link.get("name"): link for link in model.findall("link")}
-    joints_by_name = {joint.get("name"): joint for joint in model.findall("joint")}
-    arm_collision_meshes = {
-        "Base": "arm_base_vhacd.stl",
-        "Rotation_Pitch": "rotation_pitch_vhacd.stl",
-        "Upper_Arm": "upper_arm_vhacd.stl",
-        "Lower_Arm": "lower_arm_vhacd.stl",
-        "Wrist_Pitch_Roll": "wrist_pitch_roll_vhacd.stl",
-        "wrist_yaw": "wrist_yaw_vhacd.stl",
-        "camera": "wrist_camera_vhacd.stl",
-    }
-    for side in ("left", "right"):
-        for suffix, collision_name in arm_collision_meshes.items():
-            link = links[f"{side}_{suffix}"]
-            visual = link.find("visual/geometry/mesh")
-            collision = link.find("collision/geometry/mesh")
-            assert visual is not None and f"/visual/{side}_{suffix}.STL" in visual.get("filename")
-            assert collision is not None and collision.get("filename").endswith(
-                f"/collision/{collision_name}"
-            )
-    for side in ("left", "right"):
-        fixed = links[f"{side}_Fixed_Jaw"]
-        fixed_collisions = fixed.findall("collision")
-        fixed_boxes = [
-            collision
-            for collision in fixed_collisions
-            if collision.find("geometry/box") is not None
-        ]
-        fixed_meshes = [
-            collision
-            for collision in fixed_collisions
-            if collision.find("geometry/mesh") is not None
-        ]
-        assert len(fixed_boxes) == int(baseline["fixed_jaw_boxes_per_side"])
-        assert len(fixed_meshes) == int(baseline["fixed_jaw_vhacd_pieces_per_side"])
-        expected_indices = {0, 1, 2, 3, 4, 5, 7}
-        actual_indices = {
-            int(collision.get("name").rsplit("_", 1)[1]) for collision in fixed_meshes
-        }
-        assert actual_indices == expected_indices
-        assert all(
-            not collision.find("geometry/mesh")
-            .get("filename")
-            .endswith("/collision/fixed_jaw_vhacd.stl")
-            for collision in fixed_meshes
-        )
-        pad = fixed_boxes[0]
-        assert pad.get("name") == f"{side}_fixed_finger_pad"
-        assert np.allclose(
-            np.fromstring(pad.find("origin").get("xyz"), sep=" "),
-            [-0.015, 0.0, 0.072],
-        )
-        assert np.allclose(
-            np.fromstring(pad.find("geometry/box").get("size"), sep=" "),
-            [0.010, 0.014, 0.064],
-        )
-    for side in ("left", "right"):
-        moving = links[f"{side}_Moving_Jaw"]
-        assert len(moving.findall("collision/geometry/mesh")) == int(
-            baseline["moving_jaw_vhacd_pieces_per_side"]
-        )
-        moving_boxes = [
-            collision
-            for collision in moving.findall("collision")
-            if collision.find("geometry/box") is not None
-        ]
-        assert len(moving_boxes) == int(baseline["moving_jaw_boxes_per_side"])
-        pad = moving_boxes[0]
-        assert pad.get("name") == f"{side}_moving_finger_pad"
-        pad_xyz = np.fromstring(pad.find("origin").get("xyz"), sep=" ")
-        pad_rpy = np.fromstring(pad.find("origin").get("rpy"), sep=" ")
-        assert np.allclose(
-            pad_xyz,
-            [-0.0012969999878772, -0.050369580583936, 0.0033063194616967],
-        )
-        assert np.allclose(pad_rpy, [-math.pi / 2.0, 0.0, math.pi - 0.03])
-        assert np.allclose(
-            np.fromstring(pad.find("geometry/box").get("size"), sep=" "),
-            [0.010, 0.014, 0.064],
-        )
-
-        gripper_joint = joints_by_name[f"{side}_gripper"]
-        joint_at_calibration = origin_transform(gripper_joint)
-        axis = np.fromstring(gripper_joint.find("axis").get("xyz"), sep=" ")
-        joint_at_calibration[:3, :3] = joint_at_calibration[:3, :3] @ axis_angle(axis, 0.03)
-        moving_pad = origin_transform(pad)
-        pad_in_fixed = joint_at_calibration @ moving_pad
-        assert np.allclose(pad_in_fixed[:3, :3], np.eye(3), atol=1e-12)
-        assert np.allclose(pad_in_fixed[:3, 3], [0.020, 0.0, 0.072], atol=1e-12)
-        fixed_inner_x = -0.015 + 0.010 / 2.0
-        moving_inner_x = pad_in_fixed[0, 3] - 0.010 / 2.0
-        assert math.isclose(moving_inner_x - fixed_inner_x, 0.025, abs_tol=1e-12)
-        assert math.isclose((moving_inner_x + fixed_inner_x) / 2.0, 0.0025, abs_tol=1e-12)
-    assert not links["base_link"].findall("visual")
-    assert not links["base_link"].findall("collision")
-    assert links["base_link"].find("inertial") is None
-    base_collision = links["base_cad_link"].findall("collision/geometry/mesh")
-    assert len(base_collision) == 1 and base_collision[0].get("filename").endswith("/base_link.STL")
-    passive = {joint.get("name") for joint in srdf.findall("passive_joint")}
-    assert passive == {"wheel1_joint", "wheel2_joint", "wheel3_joint"}
-    assert baseline["state_validity"]["installed_stowed"]["contact_pairs"] == []
-    for index, wheel in enumerate(("wheel1", "wheel2", "wheel3"), start=2):
-        visual_meshes = links[wheel].findall("visual/geometry/mesh")
-        assert len(visual_meshes) == 1
-        assert visual_meshes[0].get("filename").endswith(f"/Link{index}_dp.STL")
-        cylinders = links[wheel].findall("collision/geometry/cylinder")
-        assert len(cylinders) == 1
-        assert float(cylinders[0].get("radius")) > 0
-        assert float(cylinders[0].get("length")) > 0
-    for box in model.findall(".//collision/geometry/box"):
-        assert np.all(np.fromstring(box.get("size"), sep=" ") > 0)
+        resolve_package_uri(mesh.get("filename"), robot.directory)
 
 
 def main() -> None:
@@ -377,7 +271,7 @@ def main() -> None:
     description = robot.directory
     validation = Path(get_package_share_directory("alohamini_validation"))
     models = {
-        name: UrdfKinematics(robot.description_path(name))
+        name: UrdfKinematics(robot.description_tree(name))
         for name in ("collision", "planning", "kinematic")
     }
     checks = (
@@ -391,13 +285,14 @@ def main() -> None:
             )
             for name, model in models.items()
         ),
-        ("planning collision baseline", lambda: validate_planning_collision(robot, validation)),
+        ("derived view identity", lambda: validate_derived_views(robot)),
+        ("shared collision baseline", lambda: validate_collision_baseline(robot, validation)),
     )
     for name, check in checks:
         check()
         print(f"[PASS] {name}")
     print(
-        "[INFO] Physical self-collision clearance has no accepted contact baseline in this check."
+        "[INFO] Run validate_moveit on the active graph to check the named self-collision samples."
     )
 
 

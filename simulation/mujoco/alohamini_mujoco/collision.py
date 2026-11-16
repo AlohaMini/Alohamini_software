@@ -540,7 +540,7 @@ def load_bundle(description, directory):
         or metadata.get("units") != "m"
         or metadata.get("robot_model") != description.robot_model.model_id
         or not isinstance(metadata.get("links"), dict)
-        or not metadata["links"]
+        or (not metadata["links"] and "assembly_inventory" not in metadata)
         or metadata.get("coverage", "complete-link") != "complete-link"
     ):
         raise ValueError("Collision bundle has an incompatible coordinate contract")

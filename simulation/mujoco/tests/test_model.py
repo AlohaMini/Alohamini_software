@@ -28,11 +28,11 @@ def test_urdf_rpy_and_frame_direction():
 def test_native_frames_inertias_meshes_and_mass_matrix_match_urdf(robot):
     report = validate_model(robot, samples=24, seed=9)
     assert report["passed"], report
-    assert report["robot_links"] == 32
+    assert report["robot_links"] == 29
     assert report["active_joints"] == 15
     assert report["visual_geoms"] == 26
-    assert report["collision_geoms"] == 50
-    assert report["imported_mass_kg"] == pytest.approx(16.0, abs=1e-12)
+    assert report["collision_geoms"] == 1115
+    assert report["imported_mass_kg"] == pytest.approx(11.32951, abs=1e-12)
     assert report["max_inertia_error_kg_m2"] < 1e-14
     assert report["minimum_mass_matrix_eigenvalue"] > 0
     assert report["initial_contacts"] == []
@@ -79,16 +79,16 @@ def test_collision_parts_and_explicit_srdf_filters_are_retained(robot):
                 g["link"] == f"{side}_Fixed_Jaw" and g["kind"] == "collision"
                 for g in robot.geometry.values()
             )
-            == 8
+            == 209
         )
         assert (
             sum(
                 g["link"] == f"{side}_Moving_Jaw" and g["kind"] == "collision"
                 for g in robot.geometry.values()
             )
-            == 6
+            == 251
         )
-    assert robot.model.nexclude == len(robot.description.exclusions) == 38
+    assert robot.model.nexclude == len(robot.description.exclusions) == 35
     assert int(robot.model.opt.disableflags) & int(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
     for index in range(robot.model.ngeom):
         name = robot.model.geom(index).name

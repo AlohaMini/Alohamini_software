@@ -11,6 +11,7 @@ import pytest
 import rclpy
 import yaml
 from action_msgs.msg import GoalStatus
+from alohamini_validation.validate_moveit import Validator, check_collision_states, model_context
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from moveit_msgs.action import ExecuteTrajectory
@@ -27,12 +28,14 @@ from tf2_msgs.msg import TFMessage
 from trajectory_msgs.msg import JointTrajectoryPoint
 
 from alohamini.model import get_robot_model
-from alohamini_validation.validate_moveit import Validator, model_context
 
 
 @pytest.mark.parametrize(
     "description,semantic,root,virtual_base",
-    [("collision", "semantic", "base_link", False), ("planning", "semantic_planning", "root", True)],
+    [
+        ("collision", "semantic", "base_link", False),
+        ("planning", "semantic_planning", "root", True),
+    ],
 )
 def test_validator_uses_served_model_joints_and_keeps_the_lift_reference(
     description, semantic, root, virtual_base
@@ -52,7 +55,11 @@ def test_validator_uses_served_model_joints_and_keeps_the_lift_reference(
     context = SimpleNamespace(default_state=state)
     Validator.fill_state(context, request.robot_state, {"left_shoulder_pan": 0.1})
     positions = dict(
-        zip(request.robot_state.joint_state.name, request.robot_state.joint_state.position, strict=True)
+        zip(
+            request.robot_state.joint_state.name,
+            request.robot_state.joint_state.position,
+            strict=True,
+        )
     )
     assert positions.keys() == active
     assert positions["vertical_move"] == 0.2
@@ -113,8 +120,13 @@ def test_moveit_executes_through_the_native_host_bridge(robot, tmp_path):
                     target = validator.fk(side, seed)
                     recovered = validator.ik(side, target, seed)
                     np.testing.assert_allclose(validator.fk(side, recovered), target, atol=1e-4)
-                _, pairs = validator.state_validity({})
-                assert all(set(pair) <= validator.link_names for pair in pairs)
+                baseline_path = Path(get_package_share_directory("alohamini_validation"))
+                baseline = yaml.safe_load(
+                    (baseline_path / "config/collision_baseline.yaml").read_text()
+                )
+                assert set(check_collision_states(validator, baseline)) == set(
+                    baseline["state_validity"]
+                )
             finally:
                 validator.destroy_node()
             for resource, target in (

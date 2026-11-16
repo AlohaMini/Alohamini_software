@@ -2,10 +2,10 @@ name: Dependency validation
 
 on:
   pull_request:
-    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/**"]
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "models/**", "tests/**", ".github/**"]
   push:
     branches: [main]
-    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/**"]
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "models/**", "tests/**", ".github/**"]
   workflow_dispatch:
 
 permissions:
@@ -91,6 +91,8 @@ jobs:
         run: |
           python -m pytest -q --tb=short --junitxml=reports/cpu.xml \
             tests/test_dependencies.py tests/test_environment_manifests.py \
+            tests/test_model.py tests/test_model_assets.py tests/test_model_views.py \
+            tests/test_kinematic_reference.py tests/test_standard_joint_space.py \
             tests/test_dependency_maintenance.py tests/test_checkpoint_probe.py tests/test_transformers_compat.py tests/test_policy_assets.py \
             tests/test_lerobot_algorithms.py tests/test_training_precision.py \
             tests/test_distributed_validation.py tests/test_validation_loading.py \

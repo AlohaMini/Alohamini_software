@@ -159,6 +159,7 @@ class Validator(Node):
             self.root_frame, self.default_state, self.semantic = model_context(
                 *(value.string_value for value in response.values)
             )
+            self.description_xml = response.values[0].string_value
             self.link_names = {
                 link.attrib["name"]
                 for link in ET.fromstring(response.values[0].string_value).findall("link")
@@ -245,6 +246,35 @@ class Validator(Node):
         return bool(response.valid), pairs
 
 
+def check_collision_states(node, collision):
+    from alohamini.model import get_robot_model
+
+    model = get_robot_model("alohamini2pro")
+    view = "planning" if VIRTUAL_BASE_JOINTS <= node.default_state.keys() else "collision"
+    assert ET.canonicalize(node.description_xml, strip_text=True) == ET.canonicalize(
+        model.description_xml(view), strip_text=True
+    ), "MoveIt is serving a different model; rebuild and restart the ROS graph"
+
+    for state_name, state in collision["state_validity"].items():
+        values = {}
+        if "named_state" in state:
+            values = {
+                joint.attrib["name"]: float(joint.attrib["value"])
+                for group in node.semantic.findall("group_state")
+                if group.attrib["name"] == state["named_state"]
+                for joint in group.findall("joint")
+            }
+            assert values, f"Missing SRDF state: {state['named_state']}"
+        values.update(state.get("joints", {}))
+        valid, pairs = node.state_validity({key: float(value) for key, value in values.items()})
+        assert valid is bool(state["valid"]), (
+            f"{state_name}: valid={valid}, contacts={sorted(pairs)}"
+        )
+        expected_pairs = {tuple(pair) for pair in state.get("contact_pairs", [])}
+        assert pairs == expected_pairs, f"{state_name}: contacts={sorted(pairs)}"
+    return tuple(collision["state_validity"])
+
+
 def main() -> None:
     validation = Path(get_package_share_directory("alohamini_validation"))
     golden = load_yaml(validation / "config/fk_golden.yaml")
@@ -275,29 +305,7 @@ def main() -> None:
             assert orientation_error(recovered, target) < 1e-3
         print("[PASS] MoveIt IK reachable targets")
 
-        if not VIRTUAL_BASE_JOINTS <= node.default_state.keys():
-            _, pairs = node.state_validity({})
-            assert all(set(pair) <= node.link_names for pair in pairs), sorted(pairs)
-            print("[PASS] MoveIt physical state-validity service and contact link references")
-            print("[SKIP] Physical contact acceptance has no established golden baseline")
-            return
-
-        for state_name, state in collision["state_validity"].items():
-            values = state.get("joints")
-            if values is None:
-                values = {
-                    joint.attrib["name"]: float(joint.attrib["value"])
-                    for group in node.semantic.findall("group_state")
-                    if group.attrib["name"] == state["named_state"]
-                    for joint in group.findall("joint")
-                }
-                assert values, f"Missing SRDF state: {state['named_state']}"
-            valid, pairs = node.state_validity({key: float(value) for key, value in values.items()})
-            assert valid is bool(state["valid"]), (
-                f"{state_name}: valid={valid}, contacts={sorted(pairs)}"
-            )
-            expected_pairs = {tuple(pair) for pair in state.get("contact_pairs", [])}
-            assert pairs == expected_pairs, f"{state_name}: contacts={sorted(pairs)}"
+        check_collision_states(node, collision)
         print("[PASS] MoveIt collision state baseline")
     finally:
         if node is not None:

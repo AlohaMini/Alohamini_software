@@ -66,11 +66,18 @@ class Description:
     def __init__(self, robot_model, *, name="collision"):
         description_name = name
         self.robot_model = robot_model
-        self.path = robot_model.description_path(name)
-        self.source_bytes = {self.path: self.path.read_bytes()}
+        self.name = name
+        self.path = robot_model.description_source_path(name)
+        self.source_bytes = {
+            path: path.read_bytes() for path in robot_model.description_sources(name)
+        }
+        if name in robot_model.description_views:
+            path = robot_model.asset_path("model.json")
+            self.source_bytes[path] = path.read_bytes()
         self.prepared = None
         manifest_path = robot_model.directory / "config/physical_model.json"
-        if name == "collision" and manifest_path.is_file():
+        physical_source = robot_model.description_source_path("collision")
+        if self.path == physical_source and manifest_path.is_file():
             contents = manifest_path.read_bytes()
             metadata = json.loads(contents)
             relative = self.path.relative_to(robot_model.directory).as_posix()
@@ -83,11 +90,15 @@ class Description:
                 raise ValueError("Invalid shared physical model manifest")
             for relative, digest in metadata["files"].items():
                 resource = robot_model.asset_path(relative)
-                if hashlib.sha256(resource.read_bytes()).hexdigest() != digest:
+                snapshot = (
+                    self.source_bytes[resource]
+                    if resource in self.source_bytes else resource.read_bytes()
+                )
+                if hashlib.sha256(snapshot).hexdigest() != digest:
                     raise ValueError(f"Physical model asset checksum mismatch: {relative}")
             self.prepared = metadata
             self.source_bytes[manifest_path] = contents
-        self.tree = ET.fromstring(self.source_bytes[self.path])
+        self.tree = robot_model.description_tree(name, _sources=self.source_bytes)
         self.links = {link.get("name"): link for link in self.tree.findall("link")}
         if len(self.links) != len(self.tree.findall("link")) or None in self.links:
             raise ValueError("URDF must contain unique named links")
@@ -187,6 +198,11 @@ class Description:
         semantic_path = robot_model.description_path(semantic_name)
         self.semantic_path = semantic_path
         self.source_bytes[semantic_path] = semantic_path.read_bytes()
+        if self.prepared is not None:
+            relative = semantic_path.relative_to(robot_model.directory).as_posix()
+            expected = self.prepared["files"].get(relative)
+            if expected != hashlib.sha256(self.source_bytes[semantic_path]).hexdigest():
+                raise ValueError(f"Physical model asset checksum mismatch: {relative}")
         semantic = ET.fromstring(self.source_bytes[semantic_path])
         self.exclusions = []
         for node in semantic.findall("disable_collisions"):

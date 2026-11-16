@@ -18,6 +18,7 @@ from alohamini.model import get_robot_model
 from .collision import load_bundle
 from .compilation import compile_xml
 from .description import Description, numbers, origin
+from .embedded import embedded_source
 from .frames import rigid_transform
 from .inertia import MassProperties
 from .meshes import read_mesh
@@ -128,9 +129,17 @@ def build_model(robot_model=None, profile=None, *, scene=None):
     if profile.description not in ("auto", "collision", "planning"):
         raise ValueError("Unknown robot description profile")
     name = profile.description
-    external = profile.collision_bundle is not None or profile.inertial_bundle is not None
     if name == "auto":
-        name = "planning" if external and "planning" in robot_model.descriptions else "collision"
+        name = "collision"
+        view = robot_model.description_views.get("planning")
+        if view is not None and view.overlay is not None:
+            virtual = {
+                j.attrib["name"]
+                for j in ET.parse(robot_model.asset_path(view.overlay)).findall("joint")
+            }
+            requested = profile.initial_positions.keys() | (profile.locked_positions or {}).keys()
+            if virtual & requested:
+                name = "planning"
     description = Description(robot_model, name=name)
     if profile.locked_positions is None:
         profile = replace(
@@ -149,12 +158,15 @@ def build_model(robot_model=None, profile=None, *, scene=None):
         ):
             raise ValueError("Physical model requires its fixed-base fixture")
     inertial_binding = None
+    embedded_inertia = None
     if profile.inertial_bundle is not None:
         from .inertial_binding import load_inertial_bundle
 
-        description.inertials, inertial_binding = load_inertial_bundle(
-            description, profile.inertial_bundle, profile.locked_positions
-        )
+        embedded_inertia = embedded_source(runtime, "inertial", profile.inertial_bundle)
+        if embedded_inertia is None:
+            description.inertials, inertial_binding = load_inertial_bundle(
+                description, profile.inertial_bundle, profile.locked_positions
+            )
     T_world_root = rigid_transform(profile.T_world_root)
     if not math.isfinite(profile.timestep) or not 0 < profile.timestep <= 0.01:
         raise ValueError("Physics timestep must be in (0, 0.01] seconds")
@@ -166,7 +178,11 @@ def build_model(robot_model=None, profile=None, *, scene=None):
     if profile.collision_bundle is not None:
         if profile.collision_profile != "authoritative":
             raise ValueError("Use a collision bundle or cad-pieces, not both")
-        replacements, collision_metadata = load_bundle(description, profile.collision_bundle)
+        collision_metadata = embedded_source(
+            runtime, "collision", Path(profile.collision_bundle) / "collision.json"
+        )
+        if collision_metadata is None:
+            replacements, collision_metadata = load_bundle(description, profile.collision_bundle)
     if (friction < 0).any():
         raise ValueError("Friction coefficients must be nonnegative")
     for name, value in {**profile.initial_positions, **profile.locked_positions}.items():
@@ -389,11 +405,10 @@ def build_model(robot_model=None, profile=None, *, scene=None):
                 )
                 if joint.lower is not None:
                     attributes.update(limited="true", range=text([joint.lower, joint.upper]))
-                dynamics = inertial_binding if inertial_binding is not None else runtime
-                if dynamics is not None:
-                    armature = dynamics.get("joint_armature_kg_m2", {}).get(joint.name)
-                    if armature is not None:
-                        attributes["armature"] = text([armature])
+                armatures = {**(runtime or {}).get("joint_armature_kg_m2", {})}
+                armatures.update((inertial_binding or {}).get("joint_armature_kg_m2", {}))
+                if joint.name in armatures:
+                    attributes["armature"] = text([armatures[joint.name]])
                 ET.SubElement(child, "joint", **attributes)
                 ET.SubElement(
                     actuators,
@@ -476,6 +491,8 @@ def build_model(robot_model=None, profile=None, *, scene=None):
         manifest["inertia"] = "prepared CAD link-local COM and central tensors"
     if inertial_binding is not None:
         manifest["inertial_binding"] = inertial_binding
+    if embedded_inertia is not None:
+        manifest["embedded_inertial_source_sha256"] = embedded_inertia["manifest_sha256"]
     robot = RobotModel(
         description, None, profile, xml, assets, meshes, geometry, manifest, initial, scene
     )

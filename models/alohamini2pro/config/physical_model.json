@@ -23,10 +23,6 @@
     "sample_count": 5,
     "fit_rms_error_m": 0.007055547746856804
   },
-  "source_description_sha256": {
-    "urdf/alohamini2pro_planning.urdf": "8459353ebc6af5800d809b96566b5073a7fcff880c67171ab07a0bd2f98ffee6",
-    "srdf/alohamini2pro_planning.srdf": "48314b09feef0348655a8f027c40638b5232a684420aef1ce124fccf714f68e6"
-  },
   "collision_bundle_sha256": "23098536e343ab2e58108c36d14589185f07f15a1509d78c88d64b92146ae73e",
   "inertial_bundle_sha256": "b22a27a4981a026c4891fbe9b79014cf9376c5a1f54c85b27b22ffc89cd7f23e",
   "inertia_status": {
@@ -674,7 +670,8 @@
     "meshes/visual/right_wrist_yaw.STL": "287208b4608245740a148f45c31668b3de975772fa15cdbfb910cd405d39b511",
     "meshes/visual/vertical_link.STL": "ca0df2d2b789b805c808a7550d2974bf005571db91b2ac3bb929df770011da66",
     "srdf/alohamini2pro.srdf": "eb2ca182c095d3ce7ab47dbd8272888c5ae310c88793946d2b1aadfc6a42c945",
-    "urdf/alohamini2pro.urdf": "c5f2f2c2c17e0979730044a41e5db3e1db1b19550ee223de3ed64c1cfcafed0f"
+    "urdf/alohamini2pro.urdf": "c5f2f2c2c17e0979730044a41e5db3e1db1b19550ee223de3ed64c1cfcafed0f",
+    "config/planar_base.urdf": "ac32a58b9c4b672276ae8bb85fc5972fc9d00169a59847557d7a069c30468c32"
   },
   "mesh_transport": {
     "meshes/collision/structural/78f70150b9d1aec2f272444129ccc0b4a75f5ab994f2ead6988e6bf27c0cd9c4.obj": {
@@ -4224,7 +4221,6 @@
       "geometry_changed": false
     }
   },
-  "planning_description": "urdf/alohamini2pro_planning.urdf",
   "wheel_inertia": {
     "status": "engineering_estimate",
     "mass_each_kg": 0.3,
@@ -4235,5 +4231,13 @@
     "drive_limits_source": "ST3250 nominal rating"
   },
   "base_dynamics": "stationary CAD subtotal; mobile-base contact dynamics remain uncalibrated",
-  "base_frame": "base_link"
+  "base_frame": "base_link",
+  "import_source": {
+    "git_commit": "262d5318074169709925cf8dfafc0eec78eeb0f8",
+    "description_sha256": {
+      "urdf/alohamini2pro.urdf": "8459353ebc6af5800d809b96566b5073a7fcff880c67171ab07a0bd2f98ffee6",
+      "srdf/alohamini2pro.srdf": "48314b09feef0348655a8f027c40638b5232a684420aef1ce124fccf714f68e6"
+    },
+    "purpose": "Historical inputs of the prepared CAD bundles; not runtime robot descriptions."
+  }
 }

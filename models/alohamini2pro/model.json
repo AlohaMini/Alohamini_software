@@ -120,11 +120,7 @@
     "cad": "urdf/source/alohamini2pro_cad.urdf",
     "right_arm_source": "urdf/source/alohamini2pro_right_arm.urdf",
     "collision": "urdf/alohamini2pro.urdf",
-    "kinematic": "urdf/alohamini2pro_kinematic.urdf",
-    "left_kinematic": "urdf/alohamini2pro_left_kinematic.urdf",
-    "right_kinematic": "urdf/alohamini2pro_right_kinematic.urdf",
-    "planning": "urdf/alohamini2pro_planning.urdf",
-    "semantic_planning": "srdf/alohamini2pro_planning.srdf"
+    "semantic_planning": "srdf/alohamini2pro.srdf"
   },
   "kinematic_chains": {
     "left": "config/kinematics/left_chain.json",
@@ -138,5 +134,26 @@
     "geometry": "shared_physical_urdf_with_prepared_structural_collisions",
     "hardware_safety_limits": false,
     "device_calibration_included": false
+  },
+  "description_views": {
+    "planning": {
+      "source": "collision",
+      "overlay": "config/planar_base.urdf"
+    },
+    "kinematic": {
+      "source": "collision",
+      "overlay": "config/planar_base.urdf",
+      "geometry": false
+    },
+    "left_kinematic": {
+      "source": "collision",
+      "root_link": "left_Base",
+      "geometry": false
+    },
+    "right_kinematic": {
+      "source": "collision",
+      "root_link": "right_Base",
+      "geometry": false
+    }
   }
 }

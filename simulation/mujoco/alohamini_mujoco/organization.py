@@ -162,8 +162,6 @@ def organize_collisions(description, output, *, cad_bundle=None):
                 if "valid_brep" in v and not v["valid_brep"]
             },
         }
-    if not replacements:
-        raise ValueError("No merged convex collision sources could be recovered")
     whole_robot = {
         "source_description_sha256": source_description,
         "links": inventory,

@@ -1,5 +1,4 @@
 import json
-import xml.etree.ElementTree as ET
 from copy import deepcopy
 
 import numpy as np
@@ -59,7 +58,7 @@ def test_reference_pose_matches_upright_arm_forward_tool_and_horizontal_gripper(
     model = get_robot_model("alohamini2pro")
     joints = {
         j.find("child").get("link"): j
-        for j in ET.parse(model.description_path("kinematic")).getroot().findall("joint")
+        for j in model.description_tree("kinematic").findall("joint")
     }
 
     # Independent URDF composition, including the CAD-to-base_link rotation.

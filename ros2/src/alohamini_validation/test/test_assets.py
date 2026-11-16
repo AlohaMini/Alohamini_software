@@ -8,9 +8,10 @@ import pytest
 from alohamini_validation.validate_assets import (
     UrdfKinematics,
     main,
+    validate_collision_baseline,
+    validate_derived_views,
     validate_fk,
     validate_physical_assets,
-    validate_planning_collision,
 )
 from ament_index_python.packages import get_package_share_directory
 
@@ -24,7 +25,7 @@ def test_authoritative_offline_assets():
 @pytest.mark.parametrize("name", ["collision", "planning", "kinematic"])
 def test_fk_drift_fails_instead_of_refreshing_the_baseline(name):
     description = get_robot_model("alohamini2pro")
-    model = UrdfKinematics(description.description_path(name))
+    model = UrdfKinematics(description.description_tree(name))
     joint = model.joint_by_child["left_tcp"]
     joint.find("origin").set("xyz", "0 0 0.1")
     validation = Path(get_package_share_directory("alohamini_validation"))
@@ -64,30 +65,27 @@ def test_physical_description_checksum_drift_is_rejected(tmp_path, name):
         validate_physical_assets(replace(source, directory=tmp_path))
 
 
-@pytest.mark.parametrize(
-    "name,replacement", [("collision", "planning"), ("semantic", "semantic_planning")]
-)
-def test_physical_and_planning_description_pairs_cannot_be_mixed(name, replacement):
+def test_planning_view_cannot_drop_the_authoritative_collision_geometry():
     source = get_robot_model("alohamini2pro")
-    descriptions = dict(source.descriptions)
-    descriptions[name] = descriptions[replacement]
-    with pytest.raises((AssertionError, ValueError)):
-        validate_physical_assets(replace(source, descriptions=descriptions))
+    views = dict(source.description_views)
+    views["planning"] = replace(views["planning"], geometry=False)
+    with pytest.raises(AssertionError, match="differs from physical source"):
+        validate_derived_views(replace(source, description_views=views))
 
 
-def test_planning_collision_drift_keeps_the_existing_baseline(tmp_path):
+def test_collision_drift_cannot_silently_refresh_the_reviewed_baseline(tmp_path):
     source = get_robot_model("alohamini2pro")
-    model = UrdfKinematics(source.description_path("planning"))
+    model = UrdfKinematics(source.description_tree("collision"))
     link = model.root.find("link[@name='left_Upper_Arm']")
     link.remove(link.find("collision"))
-    for name in ("planning", "semantic_planning"):
+    for name in ("collision", "semantic"):
         relative = source.description_path(name).relative_to(source.directory)
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        if name == "planning":
+        if name == "collision":
             target.write_text(ET.tostring(model.root, encoding="unicode"))
         else:
             target.write_bytes(source.description_path(name).read_bytes())
     validation = Path(get_package_share_directory("alohamini_validation"))
-    with pytest.raises(AssertionError, match="collision baseline drift"):
-        validate_planning_collision(replace(source, directory=tmp_path), validation)
+    with pytest.raises(AssertionError, match="Collision baseline source changed"):
+        validate_collision_baseline(replace(source, directory=tmp_path), validation)

@@ -9,7 +9,7 @@
     "URDF mesh URIs changed to model-local relative paths; geometry and joint values unchanged",
     "right-arm source checksum updated after URI conversion",
     "Canonical physical URDF: base_link root, continuous wheels, CAD active-group inertias and shared structural collisions.",
-    "Exact STL/OBJ transport preserves all visual triangles and winding; legacy planning input retained for prepared-bundle compatibility."
+    "Exact STL/OBJ transport preserves all visual triangles and winding. Planning and kinematic views derive from the canonical physical tree; historical source revisions remain in Git."
   ],
   "files": [
     {
@@ -354,6 +354,21 @@
       "imported_sha256": "c5f2f2c2c17e0979730044a41e5db3e1db1b19550ee223de3ed64c1cfcafed0f"
     },
     {
+      "path": "urdf/source/alohamini2pro_cad.urdf",
+      "source_path": "urdf/source/alohamini2pro_cad.urdf",
+      "source_sha256": "cc6954068a74dc315ea73ea3478c5e1947abe0a87b580b41cd0d9736cb8f7fcf",
+      "imported_sha256": "c889b86226fa05df6de085d32d62d936b17c8fd0a2b18d4c7098abc3790464d4"
+    },
+    {
+      "path": "urdf/source/alohamini2pro_right_arm.urdf",
+      "source_path": "urdf/source/alohamini2pro_right_arm.urdf",
+      "source_sha256": "5c4620013708518736e0e1fab37534ca9e3356696326af23d1086d20baf206e6",
+      "imported_sha256": "31cadd6d3b74bd450f9ff2464039b655e8105a6a959c3e7a37b6e2c1adc415f5"
+    }
+  ],
+  "physical_model_manifest": "config/physical_model.json",
+  "historical_imports": [
+    {
       "path": "urdf/alohamini2pro_kinematic.urdf",
       "source_path": "urdf/alohamini2pro_kinematic.urdf",
       "source_sha256": "b1286e261d21614a0145d3b0e80924f533adad97cc820b8c7e91a2039be462c8",
@@ -370,19 +385,6 @@
       "source_path": "urdf/alohamini2pro_right_kinematic.urdf",
       "source_sha256": "c49567c8aa7c1890434958f05b136e3746c2738c536b66be148a7acb0f7f69fc",
       "imported_sha256": "c49567c8aa7c1890434958f05b136e3746c2738c536b66be148a7acb0f7f69fc"
-    },
-    {
-      "path": "urdf/source/alohamini2pro_cad.urdf",
-      "source_path": "urdf/source/alohamini2pro_cad.urdf",
-      "source_sha256": "cc6954068a74dc315ea73ea3478c5e1947abe0a87b580b41cd0d9736cb8f7fcf",
-      "imported_sha256": "c889b86226fa05df6de085d32d62d936b17c8fd0a2b18d4c7098abc3790464d4"
-    },
-    {
-      "path": "urdf/source/alohamini2pro_right_arm.urdf",
-      "source_path": "urdf/source/alohamini2pro_right_arm.urdf",
-      "source_sha256": "5c4620013708518736e0e1fab37534ca9e3356696326af23d1086d20baf206e6",
-      "imported_sha256": "31cadd6d3b74bd450f9ff2464039b655e8105a6a959c3e7a37b6e2c1adc415f5"
     }
-  ],
-  "physical_model_manifest": "config/physical_model.json"
+  ]
 }
