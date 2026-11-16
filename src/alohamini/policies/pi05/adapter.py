@@ -295,6 +295,10 @@ class PI05TrainModel(torch.nn.Module):
 
 
 class PI05Algorithm:
+    from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
+    from alohamini.policies.continuity import dense_flow_arguments
+
+    prediction_arguments = staticmethod(dense_flow_arguments)
     supports_remote_chunks = True
 
     @staticmethod

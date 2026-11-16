@@ -105,7 +105,7 @@ def nonzero_grad(module):
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_rtc_real_pi05_vjp_changes_actions_without_updating_weights(tiny_model, recipe, device):
     from alohamini.policies.rtc import RTCGuidance
-    from alohamini.rtc import RTCConfig
+    from alohamini.policies.rtc import RTCGuidanceConfig as RTCConfig
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA unavailable")
@@ -122,7 +122,7 @@ def test_rtc_real_pi05_vjp_changes_actions_without_updating_weights(tiny_model, 
         baseline = model.network.sample_actions(device, obs, noise=noise, num_steps=3)
         guided = model.network.sample_actions(
             device, obs, noise=noise, num_steps=3,
-            rtc_processor=RTCGuidance(RTCConfig(enabled=True)),
+            rtc_processor=RTCGuidance(RTCConfig()),
             prev_chunk_left_over=baseline[..., :18] + 0.1, inference_delay=1,
         )
     assert guided.shape == baseline.shape and guided.isfinite().all()
@@ -139,12 +139,15 @@ def test_rtc_native_pi05_overrides_outer_inference_mode_and_compilation(tiny_mod
 
     from alohamini.learning.policy import NativePolicy
     from alohamini.policies.pi05.adapter import PI05BatchProcessor
-    from alohamini.rtc import RTCConfig
 
     native = NativePolicy.__new__(NativePolicy)
     native.model = tiny_model().eval()
     native.config = native.model.config
     native.manifest = {"kind": "pi05"}
+    from alohamini.policies.pi05.adapter import PI05Algorithm
+    from alohamini.trajectory import ActionPrefix
+    native.algorithm = PI05Algorithm()
+    native.fps = 10
     native.names = [f"joint_{i}" for i in range(18)]
     native.fixed_current, native.fixed_dimensions = [], None
     native.processor = PI05BatchProcessor.__new__(PI05BatchProcessor)
@@ -163,11 +166,11 @@ def test_rtc_native_pi05_overrides_outer_inference_mode_and_compilation(tiny_mod
     native._observation_batch = prepare
     native.model.network.sample_actions = Mock(side_effect=AssertionError("compiled sampler"))
     with torch.inference_mode():
-        result = native.predict_action_chunk(
-            None, rtc=RTCConfig(enabled=True, replan_steps=1, inference_delay_steps=0),
-            previous_actions=torch.ones(1, 18), inference_delay=1,
+        result = native.predict_plan(
+            None, continuity="rtc", prefix=ActionPrefix(tuple(native.names), (0.0, 0.1),
+                                                       [[1.0]*18]*2, 0.01),
         )
-    assert result.shape == (2, 18) and result.isfinite().all()
+    assert len(result.actions) == 2 and torch.tensor(result.actions).isfinite().all()
     native.model.network.sample_actions.assert_not_called()
     assert all(p.grad is None for p in native.model.parameters())
 

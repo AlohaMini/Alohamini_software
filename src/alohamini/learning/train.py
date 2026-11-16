@@ -170,9 +170,7 @@ def offline_evaluate(
         policy.reset()
         with torch.inference_mode(), policy.inference_context():
             prepared = policy.processor(policy.fixed_input(batch))
-            return policy.execution_action(
-                policy.model.predict_action_chunk(prepared), context=prepared.get("_action_context")
-            ).cpu()
+            return policy.predict_prepared_actions(prepared).cpu()
 
     device = next(policy.model.parameters()).device
     if loader is None:
@@ -902,11 +900,17 @@ def _train(settings, execution):
                 model.reset()
                 with torch.no_grad(), execution.autocast():
                     prepared = processor(batch)
-                    return scale_action(
-                        processor.action(
+                    decode = getattr(components, "predict_action_samples", None)
+                    actions = (
+                        decode(model, processor, prepared, fps=validation.info["fps"])
+                        if decode is not None
+                        else processor.action(
                             model.predict_action_chunk(prepared),
                             context=prepared.get("_action_context"),
-                        ),
+                        )
+                    )
+                    return scale_action(
+                        actions,
                         getattr(model.config, "inference_action_scale_dims", ()),
                         getattr(model.config, "inference_action_scale", 1.0),
                     ).cpu()

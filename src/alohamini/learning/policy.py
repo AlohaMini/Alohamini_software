@@ -118,6 +118,7 @@ class NativePolicy:
         robot_model=None,
         offline=False,
         goal_images=None,
+        time_scale=None,
     ):
         if calibration_mode not in ("strict", "normalized", "legacy_normalized"):
             raise ValueError("calibration_mode must be strict, normalized or legacy_normalized")
@@ -183,6 +184,10 @@ class NativePolicy:
         options = self.algorithm.checkpoint_options(
             path, manifest["config"], device, n_action_steps, temporal_ensemble_coeff
         )
+        if time_scale is not None:
+            if "time_scale" not in options:
+                raise ValueError("This policy does not declare an execution time scale")
+            options["time_scale"] = time_scale
         self.model = make_policy(
             manifest["kind"],
             options,
@@ -331,6 +336,7 @@ class NativePolicy:
         self.model.reset()
         self._observation_history = None
         self._execution_actions = deque()
+        self._synchronous_plan = None
 
     def refresh_latent(self):
         """Notify AM-ACT of a task phase boundary before its next observation."""
@@ -350,6 +356,22 @@ class NativePolicy:
             action = action.clone()
             for name, value in self.fixed_dimensions["targets"].items():
                 action[..., self.names.index(name)] = value
+        return action
+
+    def predict_prepared_actions(self, batch):
+        """Batched physical commands for evaluation at dataset action offsets."""
+        decode = getattr(self.algorithm, "predict_action_samples", None)
+        if decode is None:
+            return self.execution_action(
+                self.model.predict_action_chunk(batch), context=batch.get("_action_context")
+            )
+        action = scale_action(
+            decode(self.model, self.processor, batch, fps=self.fps),
+            getattr(self.config, "inference_action_scale_dims", ()),
+            getattr(self.config, "inference_action_scale", 1.0),
+        )
+        for name, value in (self.fixed_dimensions or {}).get("targets", {}).items():
+            action[..., self.names.index(name)] = value
         return action
 
     def fixed_input(self, sample):
@@ -385,6 +407,11 @@ class NativePolicy:
                 if k not in ("action", "action_is_pad")
             }
         )
+        if getattr(self.algorithm, "predict_plan", None) is not None:
+            plan = self._plan_from_batch(batch)
+            start = max(0, plan.start_s)
+            times = np.arange(start, plan.end_s-1e-9, 1/self.fps)
+            return torch.tensor([plan.action_at(float(t)) for t in times])
         with self.inference_context():
             return (
                 self.execution_action(
@@ -394,7 +421,7 @@ class NativePolicy:
                 .cpu()
             )
 
-    def _observation_batch(self, snapshot):
+    def _observation_batch(self, snapshot, *, history=True):
         """Prepare one live Host snapshot with the checkpoint's original input contract."""
         self._check_calibration(snapshot)
         observation = {}
@@ -434,7 +461,7 @@ class NativePolicy:
             snapshot_auxiliary(snapshot.payload, self.config.input_features, self.source)
         )
         batch = {k: v[None] for k, v in observation.items()}
-        history_spec = getattr(self.algorithm, "live_history_spec", None)
+        history_spec = getattr(self.algorithm, "live_history_spec", None) if history else None
         if history_spec is not None:
             from alohamini.learning.observation_history import ObservationHistory
 
@@ -447,107 +474,95 @@ class NativePolicy:
             batch["task"] = [self.task]
         return self.processor(self.fixed_input(batch))
 
-    def validate_rtc(self, config):
-        if self.manifest["kind"] not in ("pi05", "smolvla"):
-            raise ValueError("RTC currently supports pi05 and smolvla checkpoints")
-        horizon = (
-            self.config.network["action_horizon"]
-            if self.manifest["kind"] == "pi05" else self.config.chunk_size
-        )
-        config.validate_horizon(horizon)
-        if getattr(self.config, "inference_action_scale", 1.0) <= 0:
-            raise ValueError("RTC requires positive inference_action_scale")
-        return horizon
+    @property
+    def plan_capabilities(self):
+        from alohamini.trajectory_execution import PlanCapabilities
 
-    def predict_action_chunk(
-        self, snapshot, *, rtc=None, previous_actions=None, inference_delay=0, max_steps=None
-    ):
-        """Return absolute CPU targets; optionally trim before trajectory decoding."""
-        guided = rtc is not None and rtc.enabled
-        if guided:
-            self.validate_rtc(rtc)
-        # Prefix caches must be ordinary tensors for the later denoiser VJP.
+        validate = getattr(self.algorithm, "validate_plan", None)
+        if validate is not None:
+            validate(self.config)
+        return getattr(self.algorithm, "plan_capabilities", PlanCapabilities())
+
+    def predict_plan(self, snapshot, *, prefix=None, continuity="none"):
+        """Return a named physical-time plan; model adapters own prefix guidance."""
+        from alohamini.trajectory_execution import ExecutionConfig
+
+        self.plan_capabilities.validate(ExecutionConfig(continuity=continuity))
+        guided = continuity in self.plan_capabilities.gradient_methods
         with torch.inference_mode(not guided), torch.no_grad():
-            return self._predict_action_chunk(
-                snapshot,
-                rtc=rtc if guided else None,
-                previous_actions=previous_actions,
-                inference_delay=inference_delay,
-                max_steps=max_steps,
-            )
-
-    def _predict_action_chunk(
-        self, snapshot, *, rtc, previous_actions, inference_delay, batch=None, max_steps=None
-    ):
-        if batch is None:
             batch = self._observation_batch(snapshot)
-        kwargs = {}
-        if rtc is not None:
-            from alohamini.policies.rtc import RTCGuidance
+            return self._plan_from_batch(batch, prefix=prefix, continuity=continuity)
 
-            prefix = None
-            if previous_actions is not None:
-                previous = torch.as_tensor(
-                    previous_actions, dtype=torch.float32,
-                    device=next(self.model.parameters()).device,
-                )
-                if (
-                    previous.ndim != 2 or previous.shape[1] != len(self.names)
-                    or not torch.isfinite(previous).all()
-                ):
-                    raise ValueError("RTC requires finite absolute targets")
-                previous = scale_action(
-                    previous,
-                    getattr(self.config, "inference_action_scale_dims", ()),
-                    1 / getattr(self.config, "inference_action_scale", 1.0),
-                )
-                prefix = self.processor.action_prefix(
-                    previous[None], context=batch.get("_action_context")
-                )
-            kwargs = dict(
-                rtc_processor=RTCGuidance(rtc), prev_chunk_left_over=prefix,
-                inference_delay=inference_delay,
-            )
+    def _plan_from_batch(self, batch, *, prefix=None, continuity="none"):
+        from alohamini.trajectory import DenseActionPlan
+
+        special = getattr(self.algorithm, "predict_plan", None)
         with self.inference_context():
-            action = self.model.predict_action_chunk(batch, **kwargs)
-            if (
-                not isinstance(action, torch.Tensor)
-                or action.ndim != 3
-                or action.shape[0] != 1
-                or action.shape[1] < 1
-                or action.shape[2] < 1
-            ):
-                raise ValueError("Policy returned invalid action chunk dimensions or values")
-            if max_steps is not None:
-                if type(max_steps) is not int or not 1 <= max_steps <= action.shape[1]:
-                    raise ValueError("Execution window must fit the predicted action chunk")
-                action = action[:, :max_steps]
-            raw_finite = torch.isfinite(action).all()
-            values = self.execution_action(action, context=batch.get("_action_context"))
-        if not isinstance(values, torch.Tensor) or values.shape != (
-            1, action.shape[1], len(self.names)
-        ):
+            if special is not None:
+                return special(self, batch, prefix=prefix, continuity=continuity)
+            prepare = getattr(self.algorithm, "prediction_arguments", None)
+            kwargs = prepare(self, batch, prefix, continuity) if prepare else {}
+            if continuity != "none" and prepare is None:
+                raise ValueError("Policy has no adapter for the requested continuity method")
+            actions = self._physical_actions(batch, **kwargs)
+        offset = getattr(self.algorithm, "action_offset", lambda config: 0)(self.config)
+        return DenseActionPlan(tuple(self.names), actions[offset:].tolist(), 1/self.fps)
+
+    def _physical_actions(self, batch, *, max_steps=None, **kwargs):
+        action = self.model.predict_action_chunk(batch, **kwargs)
+        if (not isinstance(action, torch.Tensor) or action.ndim != 3 or action.shape[0] != 1
+                or action.shape[1] < 1 or action.shape[2] < 1):
+            raise ValueError("Policy returned invalid action chunk dimensions")
+        if max_steps is not None:
+            if type(max_steps) is not int or not 1 <= max_steps <= action.shape[1]:
+                raise ValueError("Execution window must fit the predicted action chunk")
+            action = action[:, :max_steps]
+        raw_finite = torch.isfinite(action).all()
+        values = self.execution_action(action, context=batch.get("_action_context"))
+        if values.shape != (1, action.shape[1], len(self.names)):
             raise ValueError("Policy returned invalid absolute action chunk")
-        # Transfer the absolute outputs and raw validity in one operation. PI0.5
-        # pads model coordinates beyond the Host targets; validate those too
-        # without forcing an extra CUDA synchronization before the CPU copy.
         copied = torch.cat((values.reshape(-1).float(), raw_finite.reshape(1).float())).cpu()
         if copied[-1] != 1 or not torch.isfinite(copied[:-1]).all():
             raise ValueError("Policy returned invalid absolute action chunk values")
         return copied[:-1].reshape(action.shape[1], len(self.names))
 
+    def predict_action_chunk(self, snapshot, *, max_steps=None):
+        """Sample a physical plan at the checkpoint cadence for offline consumers."""
+        if getattr(self.algorithm, "predict_plan", None) is None:
+            with torch.inference_mode(), self.inference_context():
+                return self._physical_actions(
+                    self._observation_batch(snapshot), max_steps=max_steps
+                )
+        plan = self.predict_plan(snapshot)
+        count = max(1, int(np.ceil((plan.end_s-max(0, plan.start_s))*self.fps)))
+        if max_steps is not None:
+            count = min(count, max_steps)
+        start = max(0, plan.start_s)
+        return torch.tensor([plan.action_at(start+i/self.fps) for i in range(count)])
+
     def select_action(self, snapshot):
-        batch = self._observation_batch(snapshot)
+        if getattr(self.algorithm, "predict_plan", None) is not None:
+            import time
+
+            now = time.monotonic()
+            current = getattr(self, "_synchronous_plan", None)
+            if current is None or now-current[0] >= current[1].end_s:
+                origin = getattr(snapshot, "request_started_s", now)
+                current = (origin, self.predict_plan(snapshot))
+                self._synchronous_plan = current
+            elapsed = time.monotonic()-current[0]
+            if elapsed < current[1].start_s:
+                return None
+            values = current[1].action_at(elapsed)
+            return dict(zip(self.names, values, strict=True))
+        batch = self._observation_batch(
+            snapshot, history=not getattr(self.algorithm, "queues_online_observations", False)
+        )
         with torch.inference_mode(), self.inference_context():
             if getattr(self.processor, "decode_before_queue", False) is True:
                 if not self._execution_actions:
-                    actions = self._predict_action_chunk(
-                        snapshot,
-                        rtc=None,
-                        previous_actions=None,
-                        inference_delay=0,
-                        batch=batch,
-                        max_steps=self.config.n_action_steps,
+                    actions = self._physical_actions(
+                        batch, max_steps=self.config.n_action_steps,
                     )
                     self._execution_actions.extend(actions.numpy())
                 values = self._execution_actions.popleft()[None]

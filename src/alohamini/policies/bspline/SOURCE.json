@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/B-spline-policy/bspline-policy",
+  "revision": "61ed5f42fced971d50a89b46417493790876ccd1",
+  "paper": "https://arxiv.org/abs/2607.09648v1",
+  "license": "MIT",
+  "reference_files": [
+    "bspline_policy/bspline_policy/common/bspline_action.py",
+    "bspline_policy/bspline_policy/policy/diffusion_unet_bspline_image_policy.py",
+    "bspline_policy/bspline_policy/config/train_diffusion_unet_real_hybrid_bspline_workspace.yaml"
+  ],
+  "scope": "Error-driven episode fitting, fixed-size knot/control-point parameter windows and Diffusion UNet generation",
+  "adaptations": [
+    "Platform-native named recorded coordinates and two-arm layouts; no inferred YAM rotation conversion",
+    "Separate physical-action and trajectory-parameter features/statistics",
+    "CPU physical-time plans with explicit frame-rate conversion and monotonic-knot projection",
+    "Platform trainer, checkpoint, dataset inspection and asynchronous execution"
+  ]
+}

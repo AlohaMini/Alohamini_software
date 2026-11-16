@@ -10,6 +10,10 @@ from .processor_smolvla import SmolVLAProcessor, fit_statistics
 
 
 class SmolVLAAlgorithm:
+    from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
+    from alohamini.policies.continuity import dense_flow_arguments
+
+    prediction_arguments = staticmethod(dense_flow_arguments)
     supports_remote_chunks = True
 
     @staticmethod

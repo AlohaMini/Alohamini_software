@@ -15,6 +15,8 @@ from alohamini.remote.agent import run_session
 from alohamini.remote.link import LatestLink
 from alohamini.remote.server import serve
 from alohamini.schema import CommandIdentity
+from alohamini.trajectory import DenseActionPlan
+from alohamini.trajectory_execution import ExecutionConfig, PlanCapabilities
 
 pytest.importorskip("zmq")
 
@@ -105,6 +107,15 @@ class FakePolicy:
         assert client_id == MemoryHost.client_id
         assert fixed is None
         self.images.append(dict(snapshot.images))
+
+    @property
+    def execution(self):
+        return ExecutionConfig(enabled=True, replan_interval_s=0.1).to_dict()
+
+    plan_capabilities = PlanCapabilities()
+
+    def predict_plan(self, snapshot, prefix=None):
+        return DenseActionPlan(tuple(self.names), self.predict(snapshot), 1/self.fps)
 
     def predict(self, snapshot):
         self.calls += 1

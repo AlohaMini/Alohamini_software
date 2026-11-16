@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 from alohamini.cli import main
 from alohamini.remote.cli import main as remote_main
+from alohamini.trajectory_execution import ExecutionConfig
 
 
 def test_top_level_routes_inference_before_regular_parser():
@@ -53,7 +54,7 @@ def test_pi_command_forwards_bounded_runtime_options(capsys):
 def test_cloud_command_keeps_model_options_on_cloud():
     backend = Mock()
     with (
-        patch("alohamini.remote.server.NativeChunkPolicy", return_value=backend) as policy,
+        patch("alohamini.remote.server.NativePlanPolicy", return_value=backend) as policy,
         patch("alohamini.remote.server.serve") as serve,
     ):
         assert (
@@ -85,6 +86,7 @@ def test_cloud_command_keeps_model_options_on_cloud():
             calibration_mode="normalized", task="place block", robot_model="alohamini2pro"
         ),
         fixed_current=("arm_right", "lift_axis"),
+        execution=ExecutionConfig(enabled=True, continuity="auto"),
     )
     assert serve.call_args.args[:2] == ("tcp://127.0.0.1:5560", backend)
     assert serve.call_args.kwargs == dict(request_timeout_s=15.0)
@@ -109,7 +111,7 @@ def test_runtime_failure_is_reported_without_traceback(capsys):
 
 def test_default_cloud_command_preserves_absent_fixed_selection():
     with (
-        patch("alohamini.remote.server.NativeChunkPolicy") as policy,
+        patch("alohamini.remote.server.NativePlanPolicy") as policy,
         patch("alohamini.remote.server.serve"),
     ):
         assert remote_main(["serve", "--policy.path", "/model"]) == 0

@@ -18,12 +18,14 @@ from alohamini.errors import ProtocolError
 from alohamini.protocol import HostSnapshot
 from alohamini.remote.protocol import context_for, decode_message, encode_message, snapshot_body
 from alohamini.remote.server import (
-    NativeChunkPolicy,
+    NativePlanPolicy,
     _FatalMultipartError,
     _receive_frames,
     _Service,
     serve,
 )
+from alohamini.trajectory import DenseActionPlan
+from alohamini.trajectory_execution import ExecutionConfig, PlanCapabilities
 
 
 def snapshot():
@@ -49,6 +51,12 @@ class Backend:
         self.initialize = Mock()
         self.predict = Mock(return_value=torch.tensor([[1.0], [2.0]]))
         self.reset = Mock()
+        self.execution = ExecutionConfig(enabled=True).to_dict()
+        self.plan_capabilities = PlanCapabilities()
+
+    def predict_plan(self, snapshot, prefix=None):
+        result = self.predict(snapshot)
+        return DenseActionPlan(self.names, result, 1/self.fps)
 
 
 @contextmanager
@@ -100,13 +108,14 @@ def test_server_roundtrip_preserves_pi_clock_jpeg_and_returns_absolute_chunk():
         assert kind == "ready"
         assert ready == {
             "session": "robot-run", "id": 1, "context": context_for(initial), "fps": 30,
-            "names": ["joint.pos"], "cameras": ["forward"], "chunk_size": 2,
+            "names": ["joint.pos"], "cameras": ["forward"], "plan_kinds": ["dense"],
+            "execution": backend.execution,
             "fixed_current": [],
         }
         observation, images = request(initial, request_id=3, tick=12)
         kind, actions = rpc(client, "observation", observation, images)
-        assert kind == "actions"
-        assert actions["actions"] == [[1.0], [2.0]]
+        assert kind == "plan"
+        assert actions["plan"]["actions"] == [[1.0], [2.0]]
         for field in ("session", "id", "tick", "fps", "context"):
             assert actions[field] == observation[field]
         assert actions["inference_s"] >= 0
@@ -125,7 +134,7 @@ def test_server_rejects_replayed_ids_and_other_sessions_without_extra_prediction
     with running_server(backend) as client:
         assert rpc(client, "hello", hello, images)[0] == "ready"
         observation, images = request(request_id=2, tick=1)
-        assert rpc(client, "observation", observation, images)[0] == "actions"
+        assert rpc(client, "observation", observation, images)[0] == "plan"
         assert rpc(client, "observation", observation, images)[0] == "error"
         other, images = request(session="another-run", request_id=3)
         assert rpc(client, "hello", other, images)[0] == "error"
@@ -160,7 +169,7 @@ def test_changed_context_or_order_does_not_run_inference(change):
     backend.reset.assert_called_once()
 
 
-@pytest.mark.parametrize("result", [[], [[1.0]], [[1.0, 2.0], [3.0, 4.0]], [[float("nan")], [1.0]]])
+@pytest.mark.parametrize("result", [[], [[1.0, 2.0], [3.0, 4.0]], [[float("nan")], [1.0]]])
 def test_invalid_chunks_are_errors_and_end_session(result):
     backend = Backend()
     backend.predict.return_value = result
@@ -248,6 +257,8 @@ def native_policy_stub():
 
     policy = NativePolicy.__new__(NativePolicy)
     policy.names = ["joint.pos", "fixed.pos"]
+    policy.algorithm = SimpleNamespace()
+    policy.fps = 30
     policy.fixed_current = []
     policy.fixed_dimensions = {"targets": {"fixed.pos": 7.0}}
     policy.config = SimpleNamespace(inference_action_scale_dims=(0,), inference_action_scale=2.0)
@@ -344,17 +355,17 @@ def test_pi05_padded_model_chunk_restores_18_absolute_coordinates_from_original_
 
 
 def test_remote_backend_rejects_unsupported_capability_before_loading_model(monkeypatch):
-    from alohamini.policies.registry import algorithm
 
     # Resolve the lazy adapter before replacing its imported checkpoint function.
-    assert not getattr(algorithm("act"), "supports_remote_chunks", False)
+    monkeypatch.setattr("alohamini.policies.registry.algorithm",
+                        lambda _: SimpleNamespace(supports_remote_chunks=False))
     monkeypatch.setattr(
         "alohamini.learning.checkpoint.read_checkpoint", lambda _: (None, {"kind": "act"})
     )
     constructor = Mock(side_effect=AssertionError("Model must not load"))
     monkeypatch.setattr("alohamini.learning.policy.NativePolicy", constructor)
     with pytest.raises(ValueError, match="does not declare remote action-chunk support"):
-        NativeChunkPolicy("checkpoint")
+        NativePlanPolicy("checkpoint")
     constructor.assert_not_called()
 
 
@@ -366,7 +377,9 @@ def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkey
         names=state_names(live.robot_model), manifest={"cameras": ["forward"]}, fps=30,
         fixed_current=["lift_axis.height_mm"], fixed_dimensions=None,
         fixed_deployment={}, reset=Mock(), bind_robot=Mock(),
-        predict_action_chunk=Mock(return_value=torch.zeros(5, 18)),
+        predict_plan=Mock(return_value=DenseActionPlan(
+            tuple(state_names(live.robot_model)), torch.zeros(5, 18), 1/30)),
+        plan_capabilities=PlanCapabilities(),
     )
     monkeypatch.setattr(
         "alohamini.learning.checkpoint.read_checkpoint", lambda _: (None, {"kind": kind})
@@ -375,16 +388,16 @@ def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkey
     monkeypatch.setattr(
         "alohamini.client.control_feedback_valid", Mock(side_effect=AssertionError("Pi clock only"))
     )
-    backend = NativeChunkPolicy("checkpoint", chunk_size=3, fixed_current="lift_axis")
+    backend = NativePlanPolicy("checkpoint", chunk_size=3, fixed_current="lift_axis")
     fixed = {"version": 1, "targets": {"lift_axis.height_mm": live.payload["lift_axis.height_mm"]}}
     backend.initialize(live, "pi-client", 30, fixed=fixed)
     assert policy._fixed_current_bound
     capture = policy.fixed_deployment["current_capture"]
     assert (capture["request_started_s"], capture["received_s"]) == (100.0, 100.02)
-    assert backend.predict(live).shape == (3, 18)
-    policy.predict_action_chunk.assert_called_once_with(live, max_steps=3)
-    with pytest.raises(ValueError, match="exactly match"):
-        backend.initialize(live, "pi-client", 20, fixed=fixed)
+    assert len(backend.predict_plan(live).actions) == 3
+    policy.predict_plan.assert_called_once_with(live, prefix=None, continuity="none")
+    backend.initialize(live, "pi-client", 20, fixed=fixed)
+    assert backend.fps == 20
     with pytest.raises(ValueError, match="selection differs"):
         backend.initialize(live, "pi-client", 30, fixed=None)
     wrong = copy.deepcopy(fixed)
@@ -392,6 +405,6 @@ def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkey
     with pytest.raises(ValueError, match="differs from its initialization snapshot"):
         backend.initialize(live, "pi-client", 30, fixed=wrong)
     with pytest.raises(ValueError, match="execution horizon"):
-        NativeChunkPolicy("checkpoint", chunk_size=5)
+        NativePlanPolicy("checkpoint", chunk_size=6)
     with pytest.raises(ValueError, match=r"\[1, 512\]"):
-        NativeChunkPolicy("checkpoint", chunk_size=513)
+        NativePlanPolicy("checkpoint", chunk_size=513)

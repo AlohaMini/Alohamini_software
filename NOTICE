@@ -480,3 +480,9 @@ and the Robbyant Team). Native platform data, trainer and checkpoint adapters
 replace the upstream framework wrappers. Retained licenses and full source
 metadata are in policies/xiaomi_robotics1/ and policies/lingbot_vla_v2/.
 No pretrained weights are distributed.
+
+The B-spline Policy episode fitting and parameter codec adapt
+B-spline-policy/bspline-policy at 61ed5f42fced971d50a89b46417493790876ccd1
+(MIT, Copyright 2026 Haoyu Xiong). The retained license and source metadata are
+in policies/bspline/LICENSE.bspline and SOURCE.json. Native training and
+physical-time execution use the platform's named recorded action coordinates.

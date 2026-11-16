@@ -156,9 +156,11 @@ def main(argv: list[str] | None = None) -> int:
         "--goal-images", dest="goal_images", type=json.loads, default=argparse.SUPPRESS,
         help='目标图像映射，例如 {"forward":"/path/goal.png"}；仅用于支持视觉目标的策略',
     )
-    from alohamini.rtc import add_rtc_arguments
+    from alohamini.trajectory_execution import add_inference_arguments
 
-    add_rtc_arguments(evaluator)
+    add_inference_arguments(evaluator)
+    evaluator.add_argument("--policy.time_scale", dest="time_scale", type=float,
+                           default=argparse.SUPPRESS)
     evaluator.add_argument(
         "--policy.n_action_steps",
         dest="n_action_steps",
@@ -444,9 +446,9 @@ def main(argv: list[str] | None = None) -> int:
             options.pop("command")
             checkpoint = options.pop("checkpoint")
             device = options.pop("device")
-            from alohamini.rtc import pop_rtc_options
+            from alohamini.trajectory_execution import pop_inference_options
 
-            rtc = pop_rtc_options(options)
+            execution = pop_inference_options(options)
             overrides = {
                 key: options.pop(key)
                 for key in (
@@ -457,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
                     "fixed_current",
                     "calibration_mode",
                     "goal_images",
+                    "time_scale",
                 )
                 if key in options
             }
@@ -483,16 +486,16 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                         **overrides,
                     )
-                    if policy.fps != options["fps"]:
+                    if not execution.enabled and policy.fps != options["fps"]:
                         raise ValueError("Evaluation FPS must match the checkpoint")
-                    if rtc.enabled:
-                        from alohamini.learning.rtc import RTCPolicy
+                    if execution.enabled:
+                        from alohamini.learning.trajectory_execution import TrajectoryExecutor
 
-                        return RTCPolicy(policy, rtc)
+                        return TrajectoryExecutor(policy, execution, control_fps=options["fps"])
                     return policy
 
                 options["policy_factory"] = load_checkpoint
-            elif device is not None or overrides or rtc.enabled:
+            elif device is not None or overrides or execution.enabled:
                 raise ValueError("Checkpoint options require --policy.path, not --policy")
             evaluate(**options)
             return 0

@@ -216,7 +216,9 @@ class Execution:
                 initial,
                 options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
             )
-            register_fsdp_forward_method(model, "predict_action_chunk")
+            for method in ("predict_action_chunk", "predict_parameters"):
+                if callable(getattr(model, method, None)):
+                    register_fsdp_forward_method(model, method)
             return model, optimizer
         # RankBatchSampler already shards/resumes data. Scheduler steps are counted
         # in successful updates, not batches or ranks. Neither is prepared twice.

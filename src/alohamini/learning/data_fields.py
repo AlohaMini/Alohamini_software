@@ -27,7 +27,8 @@ def prepare_fields(samples, settings, components, *, options=None):
     configuration = deepcopy(settings.get("data", {}))
     if not active(configuration):
         FieldTransforms(configuration)
-        return samples
+        prepare = getattr(components, "prepare_dataset", None)
+        return prepare(samples, options or {}) if prepare else samples
     if not getattr(components, "supports_field_transforms", False):
         raise ValueError("This algorithm has not registered the common numeric-field adapter")
     if (

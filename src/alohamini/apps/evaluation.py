@@ -399,8 +399,8 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                         **({"fixed_dimensions": fixed_config} if fixed_targets else {}),
                         "policy_action": {name: float(value[name]) for name in names},
                         **(
-                            {"rtc_timing": deepcopy(policy.rtc_timing)}
-                            if isinstance(getattr(policy, "rtc_timing", None), dict) else {}
+                            {"execution_timing": deepcopy(policy.execution_timing)}
+                            if isinstance(getattr(policy, "execution_timing", None), dict) else {}
                         ),
                         "issued_command": asdict(identity),
                         "host_timing": timing,
