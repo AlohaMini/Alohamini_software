@@ -199,6 +199,8 @@ NVENC 与 CPU 编码的图像像素和文件大小可能不同。
 
 后续使用相同采集命令加 `--resume`，可省略 `--fixed-dimensions`；程序自动恢复保存的目标。
 
+录制结果为 LeRobot v3 数据集。
+
 | 文件 | 内容 |
 | --- | --- |
 | `meta/info.json`、`meta/alohamini.json` | 字段定义、型号、标定和单位 |
@@ -213,7 +215,7 @@ NVENC 与 CPU 编码的图像像素和文件大小可能不同。
 alohamini dataset check ~/Alohamini_workspace/datasets/pickup_01
 ```
 
-自动识别 AlohaMini 和 LeRobot v3 数据；两个解码选项检查完整图像和视频。`--output-json <新文件>` 保存报告。`VALID` 表示结构检查通过；训练前仍须检查缺帧和保护事件等警告。
+加 `--decode-videos` 检查视频内容，`--output-json <新文件>` 保存报告。`VALID` 表示结构检查通过；训练前仍须检查缺帧和保护事件等警告。
 
 保存中断时保留原目录，恢复到新目录：
 
@@ -225,7 +227,7 @@ alohamini dataset recover ~/Alohamini_workspace/datasets/pickup_01 \
 仅恢复完整帧，不修改原数据。异常中断留下的 `*.pending/` 用于恢复，不要手动删除。
 按 `R` 或左方向键重录会删除当前回合的临时图片和日志。
 
-AlohaMini 或 LeRobot v3 数据的索引、媒体引用异常时，修复到新目录：
+数据集的索引、媒体引用异常时，修复到新目录：
 
 ```bash
 alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
@@ -242,11 +244,11 @@ alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
 
 ```bash
 alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
-  --output ~/Alohamini_workspace/datasets/pickup_01_lerobot \
+  --output ~/Alohamini_workspace/datasets/pickup_01_copy \
   --format lerobot-v3
 ```
 
-默认 state 为双臂关节位置、底盘速度、升降高度（alohamini2pro 共 18 维），action 不变，反馈保留。`--state` 选择输入字段；纯视觉副本及训练见 [训练与部署](training.md#导出与纯视觉副本)。
+默认 state 为双臂关节位置、底盘速度、升降高度（AM-ARM 共 18 维），action 不变，反馈保留。`--state` 选择输入字段；纯视觉副本及训练见 [训练与部署](training.md#导出与纯视觉副本)。
 
 当前数据的视频在导出时原样复制，不重新编码。恢复与导出须使用新目录；`.pending-*` 表示导出未完成。
 
@@ -259,7 +261,7 @@ alohamini replay --dataset pickup_01 \
   --host <PI_IP> --robot_model <型号> --episode 0
 ```
 
-支持 AlohaMini 数据集及其 LeRobot v3 导出；自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。
+自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。
 
 默认按数据集帧率回放；`--fps` 覆盖帧率，`--speed` 调整倍率。低频或跳帧可能漏掉关键动作，无法保证底盘路径精确复现。
 
