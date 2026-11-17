@@ -522,7 +522,7 @@ Notebook 入口见 [Notebook](notebook.md)，LeRobot 权重使用见 [LeRobot](l
 
 | `--inference.type` | 行为 |
 |---|---|
-| `sync`（本地默认） | 同步预测与执行 |
+| `sync`（本地默认） | 执行当前动作块后再预测；TCP 块间制动保持 |
 | `async` | 后台预测；ACT／DP 默认按时间切换，BSP 默认相位对齐 |
 | `rtc` | 后台预测并进行去噪前缀引导；目前支持 π0.5／SmolVLA |
 
@@ -537,10 +537,11 @@ ACT 异步执行时须关闭时间融合：`--policy.temporal_ensemble_coeff non
 | `--inference.replan_interval_s` | 自动（TCP 为 `0.25`） | 重规划时间预算，单位秒 |
 | `--inference.prediction_lead_s` | `0.1` | 提前预测预算下限，单位秒 |
 | `--inference.max_prediction_age_s` | `5` | 源观测最大年龄，单位秒 |
+| `--inference.startup_timeout_s` | `15` | 首次及 TCP 同步块间预测等待上限，单位秒 |
 
-异步执行的 `--fps` 是命令查询频率，可与 checkpoint 数据 FPS 不同。
+TCP 执行及异步执行的 `--fps` 是命令查询频率，可与 checkpoint 数据 FPS 不同。
 
-TCP 推理使用 `--inference.type=async`，执行机须安装 `kinematics` 扩展。跟踪滞后时自动放慢并重新预测，预测过期仍须停止使用。可选的 TCP 参考限制如下（默认值；速度、加速度分别为 m/s、m/s² 或 rad/s、rad/s²）：
+TCP 动作 checkpoint 加载后自动启用 TCP 跟踪，`sync`／`async` 共用限速和恢复；执行机须安装 `kinematics` 扩展。跟踪滞后时自动放慢，预测过期后制动保持。可选参考限制如下（默认值；速度、加速度分别为 m/s、m/s² 或 rad/s、rad/s²）：
 
 ```bash
 --inference.tcp_tracking='{
@@ -549,11 +550,11 @@ TCP 推理使用 `--inference.type=async`，执行机须安装 `kinematics` 扩�
 }'
 ```
 
-关节位置、速度及加速度限制仍有效。失败时制动保持并重新预测，超过 1 s 或连续 3 次新预测失败时停止；`sync` 模式任一点 IK 失败会拒绝整块动作。
+关节位置、速度及加速度限制仍有效。IK 失败时制动保持并重新预测，超过 1 s 或连续 3 次新预测失败时停止；正常同步块间等待使用 `startup_timeout_s`。
 TCP 暂不支持 `rtc`、ACT 时间融合、单个手臂关节固定覆盖及 Host 关节动作缩放。参考跟踪允许路径偏差，不含碰撞避障或 jerk 约束，尚未完成实机验证。
 
 预测过期、有效轨迹耗尽或 Host 状态变化时停止使用旧计划；TCP 异步执行只在上述恢复预算内保持等待。
-评估记录保存执行参数及源观测时间。云端服务默认 `async`，也可选择 `rtc`；
+评估记录保存执行参数及源观测时间。云端服务默认 `async`，支持 `rtc`，TCP 动作 checkpoint 也可选择 `sync`；
 使用相同 `--inference.*` 参数，Pi 从服务端握手读取配置。
 两端必须使用相同平台版本，旧动作块协议不兼容。
 

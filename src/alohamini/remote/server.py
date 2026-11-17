@@ -51,13 +51,13 @@ class NativePlanPolicy:
         self.policy = NativePolicy(
             checkpoint, device=device, fixed_current=fixed_current, **options
         )
-        from dataclasses import replace
-
         from alohamini.trajectory_execution import ExecutionConfig
 
         self.plan_capabilities = self.policy.plan_capabilities
-        requested = replace(execution or ExecutionConfig(continuity="auto"), enabled=True)
+        requested = execution or ExecutionConfig(enabled=True, continuity="auto")
         self.execution_config = self.plan_capabilities.resolve(requested)
+        if not requested.enabled and self.plan_capabilities.kinds != ("tcp",):
+            raise ValueError("Remote sync currently requires a TCP action checkpoint")
         self.execution = self.execution_config.to_dict()
         self.chunk_size = chunk_size
         if chunk_size is not None:
@@ -125,16 +125,21 @@ class NativePlanPolicy:
             prefix=prefix,
             continuity=self.execution_config.continuity,
         )
-        if self.chunk_size is not None:
+        count = self.chunk_size
+        if not self.execution_config.enabled:
+            steps = getattr(self.policy.config, "n_action_steps", None)
+            if steps is not None:
+                count = steps if count is None else min(count, steps)
+        if count is not None:
             from alohamini.trajectory import DenseActionPlan
 
             if getattr(plan, "kind", None) == "tcp":
                 from dataclasses import replace
 
-                plan = replace(plan, actions=plan.actions[: self.chunk_size])
+                plan = replace(plan, actions=plan.actions[:count])
             elif isinstance(plan, DenseActionPlan):
                 plan = DenseActionPlan(
-                    plan.names, plan.actions[: self.chunk_size], plan.period_s, plan.start_s
+                    plan.names, plan.actions[:count], plan.period_s, plan.start_s
                 )
             else:
                 raise ValueError("--chunk-size only applies to sampled action plans")

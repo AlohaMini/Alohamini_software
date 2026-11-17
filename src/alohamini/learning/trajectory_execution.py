@@ -9,12 +9,30 @@ from alohamini.trajectory import committed_prefix, plan_from_dict
 from alohamini.trajectory_execution import prediction_timing
 
 
+def prepare_execution(policy, config=None, *, control_fps=None):
+    """Select protection from checkpoint action semantics, scheduling separately."""
+    from alohamini.trajectory_execution import ExecutionConfig
+
+    if isinstance(policy, TrajectoryExecutor):
+        return policy
+    config = ExecutionConfig() if config is None else config
+    tcp = getattr(policy, "tcp_reference_actions", False) is True
+    if config.enabled or tcp:
+        return TrajectoryExecutor(policy, config, control_fps=control_fps)
+    if config != ExecutionConfig():
+        raise ValueError("Synchronous tracking options require a TCP action checkpoint")
+    if control_fps is not None and policy.fps != control_fps:
+        raise ValueError("Evaluation FPS must match the checkpoint")
+    return policy
+
+
 class TrajectoryExecutor:
+    # select_action never blocks the control loop, including sync scheduling.
     asynchronous = True
 
     def __init__(self, policy, config, *, clock=time.monotonic, executor=None, control_fps=None):
-        if not config.enabled:
-            raise ValueError("TrajectoryExecutor requires enabled asynchronous execution")
+        if not config.enabled and policy.plan_capabilities.kinds != ("tcp",):
+            raise ValueError("Synchronous trajectory tracking requires a TCP action checkpoint")
         config = policy.plan_capabilities.resolve(config)
         self.policy, self.settings, self.clock = policy, config, clock
         self.fps = policy.fps if control_fps is None else control_fps
@@ -33,6 +51,7 @@ class TrajectoryExecutor:
         self.generation += 1
         self.origin = self.clock()
         self.plan = self.plan_sampled_s = None
+        self.plan_started_s = self.sync_wait_since = None
         self.staged = None
         self.last_tick = -1
         self.latency_s = 0.0
@@ -59,6 +78,11 @@ class TrajectoryExecutor:
         )
         return plan, self.clock()
 
+    def _activate(self, plan, sampled_s, now):
+        self.plan, self.plan_sampled_s = plan, sampled_s
+        self.plan_started_s = sampled_s if self.settings.enabled else now
+        self.sync_wait_since = None
+
     def select_action(self, snapshot):
         if self.closed:
             raise RuntimeError("Trajectory executor is closed")
@@ -75,23 +99,33 @@ class TrajectoryExecutor:
                 plan = plan_from_dict(plan.to_dict(), names=self.names)
                 if plan.to_dict()["kind"] not in self.policy.plan_capabilities.kinds:
                     raise ValueError("Policy returned an undeclared trajectory type")
+                if not self.settings.enabled:
+                    from dataclasses import replace
+
+                    steps = getattr(getattr(self.policy, "config", None), "n_action_steps", None)
+                    if steps is not None:
+                        plan = replace(plan, actions=plan.actions[:steps])
                 self.latency_s = max(0, finished_s - sampled_s)
                 age = now - sampled_s
-                expired = age < 0 or age >= min(plan.end_s, self.settings.max_prediction_age_s)
+                expired = (
+                    age < 0
+                    or age >= self.settings.max_prediction_age_s
+                    or (self.settings.enabled and age >= plan.end_s)
+                )
                 if expired and getattr(plan, "kind", None) != "tcp":
                     raise RuntimeError("Trajectory prediction expired before execution")
                 if expired:
                     if self.tcp_tracker is not None:
                         self.tcp_tracker.needs_replan = True
-                elif age < plan.start_s:
+                elif self.settings.enabled and age < plan.start_s:
                     self.staged = (plan, sampled_s)
                 else:
-                    self.plan, self.plan_sampled_s = plan, sampled_s
+                    self._activate(plan, sampled_s, now)
 
         if self.staged is not None:
             candidate, sampled_s = self.staged
             if now >= sampled_s + candidate.start_s:
-                self.plan, self.plan_sampled_s = candidate, sampled_s
+                self._activate(candidate, sampled_s, now)
                 self.staged = None
 
         sampled_s = snapshot.request_started_s
@@ -105,12 +139,31 @@ class TrajectoryExecutor:
             observation_age_s=now - sampled_s,
         )
         due = self.plan is None
-        if self.plan is not None:
+        if self.plan is not None and self.settings.enabled:
             deadline = min(self.plan.end_s, self.settings.max_prediction_age_s)
             if self.settings.replan_interval_s is not None:
                 deadline = min(deadline, self.settings.replan_interval_s)
             due = now - self.plan_sampled_s >= deadline - lead
-        due = due or (self.tcp_tracker is not None and self.tcp_tracker.needs_replan)
+        if self.tcp_tracker is not None:
+            if self.settings.enabled:
+                due = due or self.tcp_tracker.needs_replan
+            elif self.plan is not None:
+                completed = (
+                    self.tcp_tracker.completed(self.plan)
+                    or now - self.plan_sampled_s >= self.settings.max_prediction_age_s
+                ) and self.tcp_tracker.failed_plan is not self.plan
+                if completed and self.sync_wait_since is None:
+                    self.sync_wait_since = now
+                due = (
+                    completed
+                    or self.tcp_tracker.status == "holding"
+                    or now - self.plan_sampled_s >= self.settings.max_prediction_age_s
+                ) and self.tcp_tracker.stationary
+                if (
+                    self.sync_wait_since is not None
+                    and now - self.sync_wait_since > self.settings.startup_timeout_s
+                ):
+                    raise RuntimeError("Synchronous TCP prediction wait timed out")
         newer = self.plan_sampled_s is None or sampled_s > self.plan_sampled_s
         if self.future is None and self.staged is None and due and newer:
             prefix = None
@@ -131,8 +184,9 @@ class TrajectoryExecutor:
             if now - self.origin > self.settings.startup_timeout_s:
                 raise RuntimeError("Trajectory prediction startup timed out")
             return None
-        elapsed = now - self.plan_sampled_s
-        if now < self.plan_sampled_s + self.plan.start_s:
+        age = now - self.plan_sampled_s
+        elapsed = now - self.plan_started_s
+        if now < self.plan_started_s + self.plan.start_s:
             return None
         tcp = getattr(self.plan, "kind", None) == "tcp"
         if elapsed >= min(self.plan.end_s, self.settings.max_prediction_age_s) and not tcp:
@@ -148,7 +202,14 @@ class TrajectoryExecutor:
                 snapshot,
                 elapsed,
                 now,
-                expired=elapsed >= self.settings.max_prediction_age_s,
+                expired=age >= self.settings.max_prediction_age_s,
+                holding=(
+                    not self.settings.enabled
+                    and (
+                        self.tcp_tracker.completed(self.plan)
+                        or age >= self.settings.max_prediction_age_s
+                    )
+                ),
             )
         else:
             values = self.plan.action_at(max(self.plan.start_s, elapsed))
@@ -156,7 +217,7 @@ class TrajectoryExecutor:
         self.execution_timing = dict(
             observation_request_started_s=self.plan_sampled_s,
             execution_elapsed_s=elapsed,
-            prediction_age_s=elapsed,
+            prediction_age_s=age,
             inference_delay_s=self.latency_s,
         )
         if tcp:

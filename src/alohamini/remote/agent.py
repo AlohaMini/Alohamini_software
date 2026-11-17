@@ -25,14 +25,28 @@ class ObservationRequest:
 
 
 class PlanBuffer:
-    """Accepted physical-time trajectory, anchored only to the Pi observation clock."""
+    """Pi-clock execution; sync starts at delivery while source age remains bounded."""
 
-    def __init__(self, session, context, names, fps, max_age_s, plan_kinds, tcp_settings=None):
+    def __init__(
+        self,
+        session,
+        context,
+        names,
+        fps,
+        max_age_s,
+        plan_kinds,
+        tcp_settings=None,
+        *,
+        synchronous=False,
+        wait_timeout_s=15.0,
+    ):
         self.session, self.context = session, context
         self.names, self.fps = tuple(names), fps
         self.max_age_s, self.plan_kinds = max_age_s, tuple(plan_kinds)
         self.requests = OrderedDict()
         self.plan = self.sampled_s = None
+        self.started_s = self.sync_wait_since = None
+        self.synchronous, self.wait_timeout_s = synchronous, wait_timeout_s
         self.staged = None
         self.last_response_id = 0
         self.last_pop_tick = -1
@@ -89,9 +103,9 @@ class PlanBuffer:
             if old_id <= request_id:
                 del self.requests[old_id]
         age = now - record.sampled_s
-        if (
-            not 0 <= age < min(self.max_age_s, plan.end_s)
-            or (tick - record.tick) / self.fps >= plan.end_s - 1e-9
+        if not 0 <= age < self.max_age_s or (
+            not self.synchronous
+            and (age >= plan.end_s or (tick - record.tick) / self.fps >= plan.end_s - 1e-9)
         ):
             self.expired += 1
             if getattr(self.plan, "kind", None) != "tcp":
@@ -99,14 +113,33 @@ class PlanBuffer:
             elif self.tcp_tracker is not None:
                 self.tcp_tracker.needs_replan = True
             return 0
-        self.skipped += max(0, tick - record.tick)
-        if age < plan.start_s:
+        if not self.synchronous:
+            self.skipped += max(0, tick - record.tick)
+        if not self.synchronous and age < plan.start_s:
             self.staged = (plan, record.sampled_s, request_id)
         else:
             self.plan, self.sampled_s, self.accepted_plan_id = plan, record.sampled_s, request_id
+            self.started_s = None if self.synchronous else record.sampled_s
+            self.sync_wait_since = None
             self.staged = None
         self.first_tick = tick
-        return math.ceil((plan.end_s - max(age, plan.start_s)) * self.fps)
+        start = plan.start_s if self.synchronous else max(age, plan.start_s)
+        return math.ceil((plan.end_s - start) * self.fps)
+
+    def ready_for_prediction(self, now):
+        if self.plan is None:
+            return True
+        tracker = self.tcp_tracker
+        completed = (
+            tracker.completed(self.plan) or now - self.sampled_s >= self.max_age_s
+        ) and tracker.failed_plan is not self.plan
+        if completed and self.sync_wait_since is None:
+            self.sync_wait_since = now
+        if self.sync_wait_since is not None and now - self.sync_wait_since > self.wait_timeout_s:
+            raise RuntimeError("Synchronous TCP prediction wait timed out")
+        return (
+            completed or tracker.status == "holding" or now - self.sampled_s >= self.max_age_s
+        ) and tracker.stationary
 
     def remaining_s(self, now):
         if self.plan is None:
@@ -121,6 +154,11 @@ class PlanBuffer:
                         self.max_age_s - (now - self.sampled_s),
                     ),
                 )
+        if self.synchronous:
+            return max(
+                0.0,
+                min(self.plan.end_s - self.plan.start_s, self.max_age_s - (now - self.sampled_s)),
+            )
         return max(0, min(self.plan.end_s, self.max_age_s) - (now - self.sampled_s))
 
     def pop(self, tick, now, snapshot=None):
@@ -128,16 +166,20 @@ class PlanBuffer:
             plan, sampled_s, request_id = self.staged
             if now >= sampled_s + plan.start_s:
                 self.plan, self.sampled_s, self.accepted_plan_id = plan, sampled_s, request_id
+                self.started_s = sampled_s
                 self.staged = None
         if tick < self.first_tick or tick <= self.last_pop_tick or self.plan is None:
             return None
-        elapsed = now - self.sampled_s
+        if self.started_s is None:
+            self.started_s = now
+        age = now - self.sampled_s
+        elapsed = now - self.started_s
         tcp = getattr(self.plan, "kind", None) == "tcp"
         if self.remaining_s(now) <= 0 and not tcp:
             self.plan = None
             self.accepted_plan_id = None
             return None
-        if now < self.sampled_s + self.plan.start_s:
+        if now < self.started_s + self.plan.start_s:
             return None
         self.last_pop_tick = tick
         if tcp:
@@ -147,12 +189,18 @@ class PlanBuffer:
                 raise ValueError("TCP execution requires fresh measured joint feedback")
             if self.tcp_tracker is None:
                 self.tcp_tracker = TCPTracker(fps=self.fps, settings=self.tcp_settings)
+            if self.synchronous:
+                self.ready_for_prediction(now)
             values = self.tcp_tracker.step(
                 self.plan,
                 snapshot,
                 elapsed,
                 now,
-                expired=elapsed >= self.max_age_s,
+                expired=age >= self.max_age_s,
+                holding=(
+                    self.synchronous
+                    and (self.tcp_tracker.completed(self.plan) or age >= self.max_age_s)
+                ),
             )
         else:
             values = self.plan.action_at(max(self.plan.start_s, elapsed))
@@ -285,8 +333,8 @@ def run_session(
 
         try:
             execution = ExecutionConfig(**ready["execution"])
-            if not execution.enabled:
-                raise ValueError("Remote trajectory execution must be enabled")
+            if not execution.enabled and plan_kinds != ["tcp"]:
+                raise ValueError("Remote sync requires a TCP action checkpoint")
         except (TypeError, KeyError, ValueError) as exc:
             raise ProtocolError(f"Invalid trajectory execution settings: {exc}") from exc
         max_prediction_age_s = min(max_prediction_age_s, execution.max_prediction_age_s)
@@ -298,6 +346,8 @@ def run_session(
             max_prediction_age_s,
             plan_kinds,
             tcp_settings=execution.tcp_tracking,
+            synchronous=not execution.enabled,
+            wait_timeout_s=execution.startup_timeout_s,
         )
         pending = False
         last_request_tick = -1
@@ -349,10 +399,13 @@ def run_session(
                 latency_s=buffer.last_round_trip_s or 0,
                 observation_age_s=now - snapshot.request_started_s,
             )
-            due = buffer.plan is None or buffer.remaining_s(now) <= lead
-            due = due or (buffer.tcp_tracker is not None and buffer.tcp_tracker.needs_replan)
-            if execution.replan_interval_s is not None:
-                due = due or age >= execution.replan_interval_s - lead
+            if execution.enabled:
+                due = buffer.plan is None or buffer.remaining_s(now) <= lead
+                due = due or (buffer.tcp_tracker is not None and buffer.tcp_tracker.needs_replan)
+                if execution.replan_interval_s is not None:
+                    due = due or age >= execution.replan_interval_s - lead
+            else:
+                due = buffer.ready_for_prediction(now)
             if not pending and buffer.staged is None and due and source_tick > last_request_tick:
                 request_id += 1
                 body = dict(

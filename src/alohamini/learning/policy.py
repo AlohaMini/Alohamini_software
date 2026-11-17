@@ -517,7 +517,7 @@ class NativePolicy:
                 self._require_fixed_current()
                 if continuity != "none" or prefix is not None:
                     raise ValueError(
-                        "TCP tracking currently supports async without RTC prefixes"
+                        "TCP tracking supports sync/async without RTC prefixes"
                     )
                 if (getattr(self.config, "inference_action_scale_dims", ())
                         and getattr(self.config, "inference_action_scale", 1.0) != 1.0):

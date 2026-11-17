@@ -520,16 +520,12 @@ def _main(argv: list[str] | None = None) -> int:
                         ),
                         **overrides,
                     )
-                    if not execution.enabled and policy.fps != options["fps"]:
-                        raise ValueError("Evaluation FPS must match the checkpoint")
-                    if execution.enabled:
-                        from alohamini.learning.trajectory_execution import TrajectoryExecutor
+                    from alohamini.learning.trajectory_execution import prepare_execution
 
-                        return TrajectoryExecutor(policy, execution, control_fps=options["fps"])
-                    return policy
+                    return prepare_execution(policy, execution, control_fps=options["fps"])
 
                 options["policy_factory"] = load_checkpoint
-            elif device is not None or overrides or execution.enabled:
+            elif device is not None or overrides or execution != type(execution)():
                 raise ValueError("Checkpoint options require --policy.path, not --policy")
             evaluate(**options)
             return 0

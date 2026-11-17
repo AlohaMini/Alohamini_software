@@ -453,6 +453,10 @@ def evaluate(
     if not callable(factory):
         raise ValueError("Policy factory is not callable")
     policy = factory()
+    if getattr(policy, "tcp_reference_actions", False) is True:
+        from alohamini.learning.trajectory_execution import prepare_execution
+
+        policy = prepare_execution(policy, control_fps=fps)
     if not all(callable(getattr(policy, name, None)) for name in ("reset", "select_action")):
         raise ValueError("Policy must provide reset() and select_action(snapshot)")
     if not isinstance(getattr(policy, "robot_metadata", None), Mapping):

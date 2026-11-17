@@ -82,6 +82,24 @@ class TCPTracker:
         self.reference_governor = None
         self.stopped_reason = None
 
+    def completed(self, plan):
+        governor = self.reference_governor
+        return governor is not None and governor.plan is plan and governor.elapsed_s >= plan.end_s
+
+    @property
+    def stationary(self):
+        if self.geometry is None:
+            return True
+        velocities = [
+            model.pink_solver().previous_velocity for _, _, _, model in self.geometry.arms
+        ]
+        if self.reference_governor is not None:
+            velocities += [
+                self.reference_governor.linear_velocity,
+                self.reference_governor.angular_velocity,
+            ]
+        return all(np.max(np.abs(velocity)) <= 1e-8 for velocity in velocities)
+
     def _bind(self, plan, snapshot):
         signature = plan.geometry_signature
         if self.signature is not None and signature != self.signature:
@@ -157,7 +175,7 @@ class TCPTracker:
             raise RuntimeError(f"TCP recovery exhausted; control stopped: {reason}")
         return self._hold(source, previous, dt)
 
-    def step(self, plan, snapshot, elapsed_s, now, *, expired=False):
+    def step(self, plan, snapshot, elapsed_s, now, *, expired=False, holding=False):
         if self.stopped_reason is not None:
             raise RuntimeError(f"TCP controller stopped: {self.stopped_reason}")
         source = self._bind(plan, snapshot)
@@ -190,6 +208,18 @@ class TCPTracker:
         if dt > 0.25:
             self.stopped_reason = "control tick gap exceeded 0.25 s"
             raise RuntimeError("TCP control tick gap exceeded 0.25 s; control stopped")
+        if holding and plan is not self.failed_plan:
+            # Between synchronous predictions there is no old trajectory to
+            # advance. Brake at control cadence without spending the IK-failure
+            # budget; the executor separately bounds prediction wait time.
+            if any(
+                np.max(np.abs(q - actual)) > self.settings.max_joint_tracking_error_rad
+                for q, actual in zip(self.command_joints, measured, strict=True)
+            ):
+                self.stopped_reason = "Measured joints diverged during TCP hold"
+                raise RuntimeError(self.stopped_reason)
+            self.status, self.needs_replan = "waiting", False
+            return tuple(map(float, self._hold(source, previous, dt)))
         if plan is self.failed_plan:
             return tuple(
                 map(

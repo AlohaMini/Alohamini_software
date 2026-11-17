@@ -56,7 +56,11 @@ class PlanCapabilities:
         """Resolve adapter defaults before execution or the remote handshake."""
         if settings.continuity == "auto":
             settings = replace(settings, continuity=self.default_continuity)
-        if settings.replan_interval_s is None and self.default_replan_interval_s is not None:
+        if (
+            settings.enabled
+            and settings.replan_interval_s is None
+            and self.default_replan_interval_s is not None
+        ):
             settings = replace(settings, replan_interval_s=self.default_replan_interval_s)
         if self.kinds == ("tcp",) and settings.tcp_tracking is None:
             from .tcp_execution import TCPTrackingConfig
@@ -98,7 +102,7 @@ def add_inference_arguments(parser, *, default="sync"):
         dest="inference_tcp_tracking",
         type=json.loads,
         default=SUPPRESS,
-        help="TCP 在线跟踪配置的 JSON 对象，仅 async",
+        help="TCP 动作 checkpoint 的跟踪限制，JSON 对象，与推理模式无关",
     )
 
     parser.add_argument(
@@ -127,6 +131,13 @@ def add_inference_arguments(parser, *, default="sync"):
         default=SUPPRESS,
     )
     parser.add_argument(
+        "--inference.startup_timeout_s",
+        dest="inference_startup_timeout_s",
+        type=float,
+        default=SUPPRESS,
+        help="首次及同步块间等待预测的时间上限，单位秒",
+    )
+    parser.add_argument(
         "--inference.continuity",
         dest="inference_continuity",
         choices=("none", "phase"),
@@ -145,11 +156,9 @@ def pop_inference_options(options, *, remote=False):
         if "inference_" + n in options
     }
     if mode == "sync":
-        if remote:
-            raise ValueError("Remote inference requires --inference.type=async or rtc")
-        if fields:
-            raise ValueError("Inference tuning requires --inference.type=async or rtc")
-        return ExecutionConfig()
+        if {"replan_interval_s", "prediction_lead_s", "continuity"} & fields.keys():
+            raise ValueError("Early replanning and continuity tuning require async or rtc")
+        return ExecutionConfig(**fields)
     if mode == "rtc" and "continuity" in fields:
         raise ValueError("--inference.continuity only applies to --inference.type=async")
     if mode == "rtc" and "tcp_tracking" in fields:

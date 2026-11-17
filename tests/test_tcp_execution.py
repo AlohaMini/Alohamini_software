@@ -288,7 +288,8 @@ def test_local_executor_keeps_running_control_ticks_between_predictions():
 
 
 @pytest.mark.parametrize("remote", [False, True])
-def test_retiming_extends_nominal_window_but_never_extends_prediction_age(remote):
+@pytest.mark.parametrize("synchronous", [False, True])
+def test_retiming_extends_nominal_window_but_never_extends_prediction_age(remote, synchronous):
     from unittest.mock import Mock
 
     from test_trajectory import Worker
@@ -307,11 +308,20 @@ def test_retiming_extends_nominal_window_but_never_extends_prediction_age(remote
     )
     executor = TrajectoryExecutor(
         policy,
-        ExecutionConfig(enabled=True, max_prediction_age_s=0.3, tcp_tracking=settings),
+        ExecutionConfig(enabled=not synchronous, max_prediction_age_s=0.3, tcp_tracking=settings),
         executor=worker,
         clock=lambda: clock.now,
     )
-    buffer = PlanBuffer("run", {}, plan.names, 30, 0.3, ["tcp"], tcp_settings=settings)
+    buffer = PlanBuffer(
+        "run",
+        {},
+        plan.names,
+        30,
+        0.3,
+        ["tcp"],
+        tcp_settings=settings,
+        synchronous=synchronous,
+    )
 
     def observation():
         observed = snapshot(state, plan.names)
@@ -353,6 +363,214 @@ def test_retiming_extends_nominal_window_but_never_extends_prediction_age(remote
                 assert clock.now - 100 > plan.end_s
                 assert tracker.status == "tracking"
                 assert tracker.reference_governor.elapsed_s < plan.end_s
-        assert tracker.status == "holding" and tracker.needs_replan
+        assert tracker.status == ("waiting" if synchronous else "holding")
+        assert tracker.needs_replan == (not synchronous)
     finally:
         executor.close()
+
+
+def synchronous_executor(*, count=20, steps=2, **options):
+    from unittest.mock import Mock
+
+    from test_trajectory import Worker
+
+    state, clock, worker = joint_state(), SimpleNamespace(now=100.0), Worker()
+    plan = plan_for(state, count=count)
+    policy = SimpleNamespace(
+        names=plan.names,
+        fps=30,
+        task="pick",
+        reset=Mock(),
+        config=SimpleNamespace(n_action_steps=steps),
+        plan_capabilities=PlanCapabilities(kinds=("tcp",), default_replan_interval_s=0.25),
+        predict_plan=Mock(return_value=plan),
+    )
+    executor = TrajectoryExecutor(
+        policy,
+        ExecutionConfig(**options),
+        executor=worker,
+        clock=lambda: clock.now,
+    )
+    return executor, policy, clock, worker, state
+
+
+def test_sync_executes_its_window_before_predicting_and_holds_during_slow_inference():
+    executor, policy, clock, worker, state = synchronous_executor()
+
+    def observation():
+        return SimpleNamespace(
+            request_started_s=clock.now, payload=dict(zip(policy.names, state, strict=True))
+        )
+
+    def advance():
+        clock.now += 1 / 30 + 1e-7
+        result = executor.select_action(observation())
+        assert result is not None
+        state[:] = [result[name] for name in policy.names]
+
+    try:
+        assert executor.select_action(observation()) is None
+        clock.now += 0.3  # Inference is longer than the selected two-sample window.
+        worker.complete()
+        command = executor.select_action(observation())
+        state[:] = [command[name] for name in policy.names]
+        assert len(executor.plan.actions) == 2
+        assert executor.tcp_tracker.reference_governor.elapsed_s == 0
+        assert executor.execution_timing["prediction_age_s"] == pytest.approx(0.3)
+        for _ in range(60):
+            completed = executor.tcp_tracker.completed(executor.plan)
+            advance()
+            if not completed:
+                assert len(worker.jobs) == 1  # Sync never prefetches a moving block.
+            if len(worker.jobs) == 2:
+                break
+        assert len(worker.jobs) == 2 and executor.tcp_tracker.stationary
+        held = state.copy()
+        previous_plan = executor.plan
+        for _ in range(40):  # Normal inference wait does not consume the 1 s IK-failure budget.
+            advance()
+            assert executor.tcp_tracker.status == "waiting"
+            np.testing.assert_allclose(state[:14], held[:14], atol=1e-10)
+        assert policy.predict_plan.call_count == 1 and len(worker.jobs) == 2
+        worker.complete()
+        advance()
+        assert policy.predict_plan.call_count == 2
+        assert executor.plan is not previous_plan
+        assert executor.tcp_tracker.reference_governor.elapsed_s == 0
+    finally:
+        executor.close()
+
+
+def test_sync_ik_failure_brakes_and_requests_a_replacement_before_the_window_ends(monkeypatch):
+    executor, policy, clock, worker, state = synchronous_executor(count=60, steps=60)
+
+    def advance():
+        clock.now += 1 / 30 + 1e-7
+        observed = snapshot(state, policy.names)
+        observed.request_started_s = clock.now
+        result = executor.select_action(observed)
+        assert result is not None
+        state[:] = [result[name] for name in policy.names]
+
+    try:
+        observed = snapshot(state, policy.names)
+        observed.request_started_s = clock.now
+        executor.select_action(observed)
+        worker.complete()
+        for _ in range(10):
+            advance()
+        tracker = executor.tcp_tracker
+        solver = tracker.geometry.arms[1][3].pink_solver()
+        original = solver.step
+        monkeypatch.setattr(
+            solver, "step", lambda *a, **k: (_ for _ in ()).throw(ValueError("IK failure"))
+        )
+        advance()
+        assert tracker.status == "holding" and not tracker.completed(executor.plan)
+        monkeypatch.setattr(solver, "step", original)
+        for _ in range(20):
+            advance()
+            if len(worker.jobs) == 2:
+                break
+        assert len(worker.jobs) == 2 and tracker.stationary
+        policy.predict_plan.return_value = plan_for(state)
+        worker.complete()
+        advance()
+        assert tracker.status == "tracking" and tracker.failed_plans == 0
+    finally:
+        executor.close()
+
+
+@pytest.mark.parametrize("remote", [False, True])
+def test_sync_normal_prediction_wait_has_a_separate_bounded_timeout(remote):
+    executor, policy, clock, worker, state = synchronous_executor(startup_timeout_s=0.15)
+    try:
+        if remote:
+            from dataclasses import replace
+
+            plan = policy.predict_plan.return_value
+            plan = replace(plan, actions=plan.actions[:2])
+            buffer = PlanBuffer(
+                "run", {}, plan.names, 30, 5, ["tcp"], synchronous=True, wait_timeout_s=0.15
+            )
+            buffer.remember(1, 0, clock.now)
+            buffer.accept(
+                dict(
+                    id=1,
+                    session="run",
+                    context={},
+                    tick=0,
+                    fps=30,
+                    names=list(plan.names),
+                    plan=plan.to_dict(),
+                    inference_s=0,
+                ),
+                now=clock.now,
+                tick=0,
+            )
+        else:
+            observed = snapshot(state, policy.names)
+            observed.request_started_s = clock.now
+            executor.select_action(observed)
+            worker.complete()
+        with pytest.raises(RuntimeError, match="prediction wait timed out"):
+            for tick in range(90):
+                clock.now += 1 / 30 + 1e-7
+                observed = snapshot(state, policy.names)
+                observed.request_started_s = clock.now
+                result = (
+                    buffer.pop(tick, clock.now, observed)
+                    if remote
+                    else executor.select_action(observed)
+                )
+                state[:] = [result[name] for name in policy.names]
+    finally:
+        executor.close()
+
+
+def test_remote_sync_uses_the_same_tracking_hold_and_observation_age_contract():
+    state, plan = joint_state(), plan_for(count=3)
+    buffer = PlanBuffer("run", {}, plan.names, 30, 5, ["tcp"], synchronous=True)
+    now, tick = 100.3, 9
+
+    def accept(request_id, sampled, candidate):
+        buffer.remember(request_id, tick, sampled)
+        return buffer.accept(
+            dict(
+                id=request_id,
+                session="run",
+                context={},
+                tick=tick,
+                fps=30,
+                names=list(candidate.names),
+                plan=candidate.to_dict(),
+                inference_s=0.3,
+            ),
+            now=now,
+            tick=tick,
+        )
+
+    assert accept(1, 100, plan) == 3  # Keep the whole sync window despite inference delay.
+
+    def advance():
+        nonlocal now, tick
+        now, tick = now + 1 / 30, tick + 1
+        result = buffer.pop(tick, now, snapshot(state, plan.names))
+        assert result is not None
+        state[:] = [result[name] for name in plan.names]
+
+    for _ in range(90):
+        if buffer.ready_for_prediction(now):
+            break
+        advance()
+    assert buffer.ready_for_prediction(now) and buffer.tcp_tracker.stationary
+    held, request_started = state.copy(), now
+    for _ in range(40):
+        advance()
+        assert buffer.tcp_tracker.status == "waiting"
+        np.testing.assert_allclose(state[:14], held[:14], atol=1e-10)
+    replacement = plan_for(state)
+    assert accept(2, request_started, replacement) == len(replacement.actions)
+    advance()
+    assert buffer.tcp_tracker.reference_governor.elapsed_s == 0
+    assert buffer.tcp_tracker.status == "tracking" and buffer.skipped == 0
