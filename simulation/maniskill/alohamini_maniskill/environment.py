@@ -82,16 +82,19 @@ class AlohaMini2Pro(BaseAgent):
             self.raw_robot.get_qpos(),
             timestep=self.scene.px.timestep,
         )
+        self._position_indices = [
+            names.index(n) for n in self.controller.controllers["joints"].config.joint_names
+        ]
+
+    def set_action(self, action):
+        super().set_action(action)
+        controller = self.controller.controllers["joints"]
+        goal = self.position_control.goal.copy()
+        goal[self._position_indices] = controller._target_qpos[0].cpu().numpy()
+        self.position_control.set_goal(goal)
 
     def before_simulation_step(self):
         super().before_simulation_step()
-        controller = self.controller.controllers["joints"]
-        goal = self.position_control.goal.copy()
-        for name, value in zip(
-            controller.config.joint_names, controller._target_qpos[0].cpu().numpy(), strict=True
-        ):
-            goal[self.position_control.names.index(name)] = value
-        self.position_control.set_goal(goal)
         if self.base_motion.mode == "kinematic":
             self.robot.set_pose(
                 Pose.create(sapien.Pose(self.base_motion.step(self.scene.px.timestep)))
@@ -130,10 +133,27 @@ class AlohaMini2Pro(BaseAgent):
 class AlohaMiniResearchEnv(BaseEnv):
     SUPPORTED_ROBOTS = ["alohamini2pro"]
 
-    def __init__(self, *args, scene_config=None, **kwargs):
+    def __init__(self, *args, scene_config=None, viewer_refresh_hz=None, **kwargs):
         self.configuration = load_scene(scene_config)
         self.objects = {}
+        self._view_clock = None
         super().__init__(*args, robot_uids="alohamini2pro", **kwargs)
+        if viewer_refresh_hz is not None:
+            if self.render_mode != "human":
+                raise ValueError("Viewer refresh requires render_mode='human'")
+            from .viewer import ViewerClock
+
+            self._view_clock = ViewerClock(
+                self.render_human,
+                timestep=1 / self.sim_freq,
+                refresh_hz=viewer_refresh_hz,
+                control_period=1 / self.control_freq,
+            )
+
+    def _after_simulation_step(self):
+        super()._after_simulation_step()
+        if self._view_clock is not None:
+            self._view_clock.step()
 
     @property
     def _default_sim_config(self):

@@ -296,7 +296,7 @@ def build_model(robot_model=None, profile=None, *, scene=None):
                 conaffinity="1",
                 group="3",
                 friction=text(friction),
-                rgba="0.1 0.8 0.3 0.3",
+                rgba="0.1 0.8 0.3 1",
             )
         entry = {
             "link": link_name,

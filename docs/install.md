@@ -2,18 +2,32 @@
 
 PC 使用 `alohamini` 环境进行遥操、数采和开发；树莓派使用轻量的 `alohamini_host` 环境连接硬件。
 
-## 准备
+## 0. 仓库与环境准备
 
-两台机器均需安装 Conda，并下载本仓库。未安装 Conda 时，在 Bash 中执行（自动匹配 PC x86_64 / 树莓派 aarch64）：
+未安装 Git 时，在 Bash 中执行：
 
 ```bash
 sudo apt update
-sudo apt install -y curl ca-certificates
+sudo apt install -y git curl ca-certificates
+```
+
+未安装 Conda 时，在 Bash 中执行（自动匹配 PC x86_64 / 树莓派 aarch64）：
+
+```bash
 curl -fsSL "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-$(uname -m).sh" -o /tmp/miniconda.sh
 bash /tmp/miniconda.sh -b -p "$HOME/miniconda3"
 "$HOME/miniconda3/bin/conda" init bash
 source "$HOME/.bashrc"
 ```
+
+克隆仓库，再进入仓库根目录：
+
+```bash
+git clone https://github.com/AlohaMini/Alohamini_software.git
+cd Alohamini_software
+```
+
+已有仓库时，直接进入其根目录，无需重复克隆。
 
 新装 Ubuntu / Debian 若提示找不到 `python`，可安装系统命令别名：
 
@@ -42,9 +56,10 @@ python -m pip install --require-hashes --no-build-isolation -r env/pc-linux-64.l
 python -m pip install --no-deps --no-build-isolation -e '.[pc]'
 ```
 
-PC 环境包含遥操、数采、Notebook 及四种策略的训练依赖。
+PC 环境包含遥操、数采、Notebook 和策略训练依赖。
 基座权重和 tokenizer 按需准备，见[训练与部署](training.md)。
-键盘遥操需要 X11 桌面；仅使用主臂时可加 `--no_keyboard`。
+
+**键盘遥操需要 X11 桌面。**
 
 ## 2. 树莓派
 
@@ -57,7 +72,7 @@ python -m pip install --require-hashes --no-build-isolation -r env/host-linux-aa
 python -m pip install --no-deps --no-build-isolation -e '.[host]'
 ```
 
-Host 环境只包含舵机、相机和通信依赖，不安装 PyTorch 或 ROS。
+Host 环境包含舵机、相机和通信依赖。
 
 ## 3. 可选扩展
 
@@ -125,16 +140,28 @@ sudo apt install /tmp/virtualgl_3.1.5_amd64.deb
 
 ### ManiSkill 与 RoboTwin
 
-两者使用独立环境：ManiSkill 3.0.1 配套 SAPIEN 3.0.3；RoboTwin 配套 SAPIEN 3.0.0b1。先按 [ManiSkill](https://maniskill.readthedocs.io/en/latest/user_guide/getting_started/installation.html) 或 [RoboTwin](https://robotwin-platform.github.io/doc/usage/robotwin-install.html) 安装运行环境，再在对应环境、仓库根目录安装适配包：
+两个后端按需安装。ManiSkill 使用 PC 环境：
 
 ```bash
-# ManiSkill 环境
-python -m pip install -e . -e ./simulation/maniskill
+conda activate alohamini
+python -m pip install -e ./simulation/maniskill
+python -m pip check
 ```
 
+RoboTwin 按[官方步骤](https://robotwin-platform.github.io/doc/usage/robotwin-install.html)准备环境和源码，环境命名为 `alohamini_robotwin`。其规划接口使用 MPLib 0.2.1、NumPy 1.26：
+
 ```bash
-# RoboTwin 环境，需包含可用的 cuRobo/CUDA
+conda activate alohamini_robotwin
 python -m pip install -e . -e ./simulation/robotwin
+python -m pip check
+```
+
+ManiSkill 适配使用 SAPIEN 3.0.3，RoboTwin 适配使用 SAPIEN 3.0.0b1。两者共用平台机器人资产。
+
+Linux X11 混合显卡窗口使用 Xephyr：
+
+```bash
+sudo apt install xserver-xephyr xauth
 ```
 
 ### LIBERO 场景与参考数据
@@ -159,11 +186,11 @@ python -m pip install -e '.[kinematics]'
 conda deactivate
 ```
 
-Ubuntu 22.04 使用 ROS2 Humble，Ubuntu 24.04 使用 ROS2 Jazzy；分别安装对应发行版的 colcon 和 rosdep。在系统 Python 终端执行：
+Ubuntu 22.04 使用 ROS2 Humble，Ubuntu 24.04 使用 ROS2 Jazzy；分别安装对应发行版的 colcon 和 rosdep。在系统 Python 终端中，从仓库根目录执行：
 
 ```bash
-source ~/Alohamini/ros2/env.bash --base
-cd ~/Alohamini/ros2
+source ros2/env.bash --base
+cd ros2
 rosdep install --from-paths src --ignore-src -r -y
 ```
 

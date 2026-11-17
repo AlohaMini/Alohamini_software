@@ -4,29 +4,48 @@ import argparse
 import json
 import math
 import os
+import sys
 import time
 from pathlib import Path
 
 
 def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description="AlohaMini RoboTwin research scene")
     parser.add_argument("operation", choices=["view"])
     parser.add_argument("--source", required=True, type=Path, help="RoboTwin checkout")
     parser.add_argument("--scene-config", type=Path)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--window-mode", choices=("auto", "native", "isolated"), default="auto")
     parser.add_argument("--steps", type=int, default=1000)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     if args.steps <= 0:
         parser.error("--steps must be positive")
     source = args.source.expanduser().resolve()
     config = None if args.scene_config is None else args.scene_config.expanduser().resolve()
     if not (source / "envs/robot/robot.py").is_file():
         parser.error("--source must point to a RoboTwin checkout")
+    if not args.headless:
+        from alohamini.simulation.x11_window import isolated_window, run_isolated_window
+
+        if isolated_window(args.window_mode):
+            return run_isolated_window(
+                [
+                    sys.executable,
+                    "-m",
+                    "alohamini_robotwin.cli",
+                    *arguments,
+                    "--window-mode",
+                    "native",
+                ],
+                title="AlohaMini - RoboTwin",
+            )
     # RoboTwin imports object metadata relative to the checkout. This CLI owns
     # the process; the reusable model loader never changes a caller's cwd.
     os.chdir(source)
     import sapien
 
+    from alohamini.simulation.frames import transform
     from alohamini.simulation.sapien_scene import add_objects
     from alohamini.simulation.scene import load_scene
 
@@ -58,8 +77,13 @@ def main(argv=None):
 
             viewer = Viewer()
             viewer.set_scene(scene)
-            viewer.set_camera_xyz(1.5, 1.5, 1.3)
-            viewer.set_camera_rpy(0, math.atan2(0.7, math.sqrt(4.5)), -3 * math.pi / 4)
+            viewer.set_camera_pose(
+                sapien.Pose(
+                    transform(
+                        [1.5, 1.5, 1.3], [0, math.atan2(0.7, math.sqrt(4.5)), -3 * math.pi / 4]
+                    )
+                )
+            )
         step = 0
         while (viewer is not None and not viewer.closed) or (args.headless and step < args.steps):
             start = time.monotonic()

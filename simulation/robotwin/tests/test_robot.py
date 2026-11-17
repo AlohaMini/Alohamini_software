@@ -103,3 +103,21 @@ def test_base_motion_matches_body_twist_and_motor_caps(robot):
         shared.frame("base_link"), integrate_base(initial, velocity, 0.2), rtol=0, atol=1e-6
     )
     assert np.all(np.abs(shared.robot.get_qf()) <= shared.control.effort_limits + 1e-5)
+
+
+def test_cooked_gripper_geometry_matches_shared_assets(robot):
+    from simulation.asset_assertions import (
+        assert_cooked_gripper_shapes,
+        assert_structural_primitives,
+    )
+
+    robot, _ = robot
+    shared = robot.shared
+    assert_cooked_gripper_shapes(
+        shared.description.robot_model.directory,
+        {n: link.get_collision_shapes() for n, link in shared.links.items()},
+    )
+    assert_structural_primitives(
+        shared.description,
+        {n: link.get_collision_shapes() for n, link in shared.links.items()},
+    )

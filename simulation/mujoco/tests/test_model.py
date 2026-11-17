@@ -31,7 +31,7 @@ def test_native_frames_inertias_meshes_and_mass_matrix_match_urdf(robot):
     assert report["robot_links"] == 29
     assert report["active_joints"] == 15
     assert report["visual_geoms"] == 26
-    assert report["collision_geoms"] == 1115
+    assert report["collision_geoms"] == len(robot.description.tree.findall(".//collision"))
     assert report["imported_mass_kg"] == pytest.approx(11.32951, abs=1e-12)
     assert report["max_inertia_error_kg_m2"] < 1e-14
     assert report["minimum_mass_matrix_eigenvalue"] > 0
@@ -73,21 +73,16 @@ def test_gravity_generalized_forces_match_urdf_potential_energy(robot):
 
 
 def test_collision_parts_and_explicit_srdf_filters_are_retained(robot):
-    for side in ("left", "right"):
-        assert (
-            sum(
-                g["link"] == f"{side}_Fixed_Jaw" and g["kind"] == "collision"
-                for g in robot.geometry.values()
-            )
-            == 209
-        )
-        assert (
-            sum(
-                g["link"] == f"{side}_Moving_Jaw" and g["kind"] == "collision"
-                for g in robot.geometry.values()
-            )
-            == 251
-        )
+    root = robot.description.robot_model.directory
+    reference = json.loads((root / "config/gripper_reference.json").read_text())
+    certificate = json.loads((root / "config/gripper_collision.json").read_text())
+    for kind, record in reference["parts"].items():
+        expected = record["retained_collision_count"] + len(certificate["parts"][kind]["pieces"])
+        for name in record["links"]:
+            assert len(robot.description.links[name].findall("collision")) == expected
+            assert sum(
+                g["link"] == name and g["kind"] == "collision" for g in robot.geometry.values()
+            ) == expected
     assert robot.model.nexclude == len(robot.description.exclusions) == 35
     assert int(robot.model.opt.disableflags) & int(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
     for index in range(robot.model.ngeom):

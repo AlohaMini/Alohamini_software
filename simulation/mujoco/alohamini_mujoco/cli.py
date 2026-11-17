@@ -13,8 +13,12 @@ from pathlib import Path
 
 import mujoco
 
+from alohamini.paths import WorkspacePaths
+
 from .control import FollowerSettings, JointTrajectory
 from .model import ModelProfile, build_model
+
+_LAUNCH_DIRECTORY = "_ALOHAMINI_MUJOCO_LAUNCH_DIRECTORY"
 
 
 def _path_argument(value: str) -> Path:
@@ -22,7 +26,50 @@ def _path_argument(value: str) -> Path:
         raise argparse.ArgumentTypeError(
             "path cannot be empty; provide a path or set the referenced environment variable"
         )
-    return Path(value)
+    path = Path(value).expanduser()
+    # A viewer re-executes in its export directory. Explicit CLI inputs and
+    # outputs retain the launch directory's relative-path semantics.
+    launch_directory = os.environ.get(_LAUNCH_DIRECTORY)
+    if launch_directory and not path.is_absolute():
+        path = (Path(launch_directory) / path).resolve()
+    return path
+
+
+def _viewer_directory() -> Path:
+    return (WorkspacePaths().root / "simulation" / "viewer").resolve()
+
+
+def _exec_viewer(executable, command, environment):
+    """Set native export paths by changing only the CLI process before exec.
+
+    MuJoCo's native File actions use fixed filenames relative to the process
+    directory. Routing precedes model loading and creation of viewer threads;
+    reusable viewer APIs never change their caller's working directory.
+    """
+    destination = _viewer_directory()
+    destination.mkdir(parents=True, exist_ok=True)
+    previous = Path.cwd()
+    environment = environment.copy()
+    environment.setdefault(_LAUNCH_DIRECTORY, str(previous))
+    print(f"Viewer files: {destination}", flush=True)
+    try:
+        os.chdir(destination)
+        os.execvpe(executable, command, environment)
+    finally:
+        # exec replaces this process. Restore on launch failure, and when
+        # tests substitute an executor that returns or raises.
+        os.chdir(previous)
+
+
+def _route_viewer_files(argv):
+    destination = _viewer_directory()
+    if Path.cwd() == destination:
+        return
+    _exec_viewer(
+        sys.executable,
+        [sys.executable, "-m", "alohamini_mujoco.cli", *argv],
+        os.environ.copy(),
+    )
 
 
 def _egl_window(device: int, argv: list[str]):
@@ -89,7 +136,7 @@ def _egl_window(device: int, argv: list[str]):
     environment["MUJOCO_GL"] = "glfw"
     environment["PYGLFW_LIBRARY_VARIANT"] = "x11"
     print(f"EGL window: device egl{device}, lossless RGB (VirtualGL)", flush=True)
-    os.execvpe(executable, command, environment)
+    _exec_viewer(executable, command, environment)
 
 
 def main(argv=None):
@@ -170,10 +217,13 @@ def main(argv=None):
         if args.resume and args.reset_indices is None:
             parser.error("--resume requires --reset-indices")
     try:
+        arguments = list(sys.argv[1:] if argv is None else argv)
         if getattr(args, "window_egl_device", None) is not None:
             if args.operation != "view" and not args.view:
                 raise ValueError("--window-egl-device requires --view")
-            _egl_window(args.window_egl_device, list(sys.argv[1:] if argv is None else argv))
+            _egl_window(args.window_egl_device, arguments)
+        if args.operation == "view" or getattr(args, "view", False):
+            _route_viewer_files(arguments)
         if args.operation == "replay":
             from .collection import replay_episode
 

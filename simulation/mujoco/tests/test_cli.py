@@ -1,8 +1,15 @@
 import os
 import sys
+from pathlib import Path
 
 import pytest
 from alohamini_mujoco import cli
+
+
+@pytest.fixture(autouse=True)
+def viewer_workspace(monkeypatch, tmp_path):
+    monkeypatch.setenv("ALOHAMINI_WORKSPACE", str(tmp_path / "workspace"))
+    monkeypatch.delenv(cli._LAUNCH_DIRECTORY, raising=False)
 
 
 @pytest.mark.parametrize("empty", ["", " \t "])
@@ -106,6 +113,11 @@ def test_active_egl_window_does_not_relaunch_and_replays_normally(monkeypatch):
         pytest.fail("An already configured EGL viewer must not recursively relaunch")
 
     monkeypatch.setattr(cli.os, "execvpe", unexpected_exec)
+    launch_directory = Path.cwd()
+    monkeypatch.setenv(cli._LAUNCH_DIRECTORY, str(launch_directory))
+    directory = cli._viewer_directory()
+    directory.mkdir(parents=True)
+    monkeypatch.chdir(directory)
     calls = []
 
     def replay(dataset, **kwargs):
@@ -114,7 +126,86 @@ def test_active_egl_window_does_not_relaunch_and_replays_normally(monkeypatch):
 
     monkeypatch.setattr(collection, "replay_episode", replay)
     assert cli.main(["replay", "dataset", "--view", "--paused", "--window-egl-device", "0"]) == 0
-    assert calls == [("dataset", {"view": True, "paused": True, "collisions": False})]
+    assert calls == [
+        (str(launch_directory / "dataset"),
+         {"view": True, "paused": True, "collisions": False})
+    ]
+
+
+def test_plain_viewer_reexecs_in_workspace_and_retains_relative_paths(monkeypatch):
+    launch_directory = Path.cwd()
+    arguments = ["view", "--scene-config=examples/simulation/research.json", "--paused"]
+    destination = cli._viewer_directory()
+
+    class Relaunched(BaseException):
+        pass
+
+    def execute(executable, command, environment):
+        assert executable == sys.executable
+        assert command == [sys.executable, "-m", "alohamini_mujoco.cli", *arguments]
+        assert Path.cwd() == destination
+        assert environment[cli._LAUNCH_DIRECTORY] == str(launch_directory)
+        raise Relaunched
+
+    monkeypatch.setattr(cli.os, "execvpe", execute)
+    with pytest.raises(Relaunched):
+        cli.main(arguments)
+    assert Path.cwd() == launch_directory
+    assert cli._LAUNCH_DIRECTORY not in os.environ
+    assert destination.is_dir()
+
+
+def test_routed_viewer_paths_use_launch_directory_for_inputs_and_outputs(monkeypatch, tmp_path):
+    launch_directory = tmp_path / "launch"
+    launch_directory.mkdir()
+    monkeypatch.setenv(cli._LAUNCH_DIRECTORY, str(launch_directory))
+    destination = cli._viewer_directory()
+    destination.mkdir(parents=True)
+    monkeypatch.chdir(destination)
+    for path in ("scene.json", "dataset", "checkpoint", "results/report", "asset/collision"):
+        assert cli._path_argument(path) == launch_directory / path
+    assert cli._path_argument(str(tmp_path / "absolute")) == tmp_path / "absolute"
+    assert cli._path_argument("~/dataset") == Path.home() / "dataset"
+
+
+def test_viewer_launch_failure_restores_caller_directory(monkeypatch):
+    original = Path.cwd()
+
+    def failed(*args):
+        raise OSError("launch failed")
+
+    monkeypatch.setattr(cli.os, "execvpe", failed)
+    with pytest.raises(OSError, match="launch failed"):
+        cli._route_viewer_files(["view"])
+    assert Path.cwd() == original
+    assert cli._LAUNCH_DIRECTORY not in os.environ
+
+
+def test_headless_replay_does_not_route_native_exports(monkeypatch):
+    from alohamini_mujoco import collection
+
+    original = Path.cwd()
+    calls = []
+
+    def unexpected_route(*args):
+        pytest.fail("Headless operations must keep their existing output-path behavior")
+
+    def replay(dataset, **kwargs):
+        calls.append(str(dataset))
+        return {"passed": True}
+
+    monkeypatch.setattr(cli, "_route_viewer_files", unexpected_route)
+    monkeypatch.setattr(collection, "replay_episode", replay)
+    assert cli.main(["replay", "dataset"]) == 0
+    assert calls == ["dataset"]
+    assert Path.cwd() == original
+    assert not cli._viewer_directory().exists()
+
+
+def test_viewer_default_directory_is_under_home_workspace(monkeypatch, tmp_path):
+    monkeypatch.delenv("ALOHAMINI_WORKSPACE")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert cli._viewer_directory() == tmp_path / "Alohamini_workspace/simulation/viewer"
 
 
 @pytest.mark.parametrize("arguments", [

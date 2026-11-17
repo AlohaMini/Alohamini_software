@@ -106,3 +106,45 @@ def test_base_motion_and_complete_snapshot_restore(env):
     env.reset(seed=4)
     np.testing.assert_allclose(agent.frame("base_link"), initial, rtol=0, atol=1e-6)
     np.testing.assert_allclose(agent.base_motion.wheel_positions, 0)
+
+
+def test_viewer_observes_each_physics_step_without_changing_control_or_dynamics(env):
+    from types import SimpleNamespace
+
+    env.reset(seed=7)
+    task, agent = env.unwrapped, env.unwrapped.agent
+    initial = copy.deepcopy(task.get_state_dict())
+    action = agent.hold_action()
+    action[0, agent.action_joint_names.index("left_elbow_flex")] += 0.02
+    env.step(action)
+    expected_q = agent.raw_robot.get_qpos().copy()
+    expected_controller = agent.position_control.state()
+    task.set_state_dict(initial)
+    calls = []
+    task._view_clock = SimpleNamespace(step=lambda: calls.append(1))
+    try:
+        env.step(action)
+    finally:
+        task._view_clock = None
+    assert len(calls) == task.sim_freq // task.control_freq
+    np.testing.assert_allclose(agent.raw_robot.get_qpos(), expected_q, rtol=0, atol=1e-7)
+    for key, value in expected_controller.items():
+        np.testing.assert_array_equal(agent.position_control.state()[key], value)
+
+
+def test_cooked_gripper_hulls_preserve_the_shared_asset_geometry(env):
+    from simulation.asset_assertions import (
+        assert_cooked_gripper_shapes,
+        assert_structural_primitives,
+    )
+
+    env.reset(seed=8)
+    agent = env.unwrapped.agent
+    assert_cooked_gripper_shapes(
+        agent.description.robot_model.directory,
+        {n: link._objs[0].get_collision_shapes() for n, link in agent.robot.links_map.items()},
+    )
+    assert_structural_primitives(
+        agent.description,
+        {n: link._objs[0].get_collision_shapes() for n, link in agent.robot.links_map.items()},
+    )

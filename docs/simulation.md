@@ -39,6 +39,7 @@ alohamini-mujoco view --window-egl-device 0 \
 | 右方向键 | 暂停时推进一个物理步 |
 | F9 | 复位并暂停 |
 | F8 | 切换视觉模型与碰撞几何 |
+| T | 切换半透明显示 |
 | F6 | 切换坐标系显示 |
 | Tab／Shift + Tab | 显示或隐藏左／右面板 |
 | 左键拖动 | 旋转视角 |
@@ -48,17 +49,25 @@ alohamini-mujoco view --window-egl-device 0 \
 
 普通 `view` 中，左键双击选中连杆，Ctrl + 右键拖动施加平移外力，Ctrl + 左键拖动施加转矩；Ctrl + Shift + 右键拖动在水平面施力。
 
+`alohamini-mujoco` 窗口的 `Print data`、模型导出和截图默认保存到 `~/Alohamini_workspace/simulation/viewer/`；自定义工作区使用 `ALOHAMINI_WORKSPACE`。命令中的相对路径按启动目录解析。
+
 ## ManiSkill 与 RoboTwin
 
 在 ManiSkill 环境查看同一场景：
 
 ```bash
+conda activate alohamini
 alohamini-maniskill view --scene-config examples/simulation/research.json
 ```
+
+窗口目标刷新率为 60 FPS，使用 `--render-fps 30` 可调整。控制频率由场景的 `control_frequency_hz` 设置，物理步长由 `timestep_s` 设置。
+
+Linux X11 混合显卡默认使用隔离窗口，保留原生查看器。`--window-mode native` 使用直接窗口，`--window-mode isolated` 强制隔离窗口。
 
 在 RoboTwin 环境查看，`--source` 指向其源码目录：
 
 ```bash
+conda activate alohamini_robotwin
 alohamini-robotwin view --source /path/to/RoboTwin \
   --scene-config examples/simulation/research.json
 ```

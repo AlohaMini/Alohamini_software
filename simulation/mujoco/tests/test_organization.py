@@ -67,8 +67,8 @@ def test_every_link_and_retained_primitive_has_explicit_provenance(organized):
     description, path, report = organized
     assert report["links"].keys() == description.links.keys()
     assert report["physical_links"] + report["coordinate_links"] == 29
-    assert report["source_collision_shapes"] == 1115
-    assert report["organized_collision_shapes"] == 1115
+    expected = len(description.tree.findall(".//collision"))
+    assert report["source_collision_shapes"] == report["organized_collision_shapes"] == expected
     meshes, provenance = load_bundle(description, path)
     assert meshes == {}  # Canonical convex pieces are already independent.
     assert report["links"]["vertical_link"]["representation"] == "retained_source"
@@ -113,7 +113,7 @@ def test_native_organized_robot_preserves_frames_inertias_limits_and_contact_pol
     report = validate_model(robot, samples=4, seed=13)
     assert report["passed"], report
     assert report["robot_links"] == 29 and report["active_joints"] == 15
-    assert report["collision_geoms"] == 1115
+    assert report["collision_geoms"] == len(robot.description.tree.findall(".//collision"))
     assert report["imported_mass_kg"] == pytest.approx(11.32951, abs=1e-12)
     assert report["max_inertia_error_kg_m2"] < 1e-14
     assert robot.model.nexclude == 35
@@ -164,7 +164,7 @@ def test_portable_export_keeps_primitives_and_every_recovered_shell(organized, t
     description, path, _ = organized
     export = export_collision_urdf(description, path, tmp_path / "portable")
     tree = ET.parse(export / "robot.urdf").getroot()
-    assert sum(len(link.findall("collision")) for link in tree.findall("link")) == 1115
+    assert len(tree.findall(".//collision")) == len(description.tree.findall(".//collision"))
     assert len(tree.find("link[@name='left_Upper_Arm']").findall("collision")) == len(
         description.links["left_Upper_Arm"].findall("collision")
     )

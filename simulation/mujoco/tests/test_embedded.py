@@ -7,6 +7,8 @@ import pytest
 from alohamini_mujoco.embedded import embedded_source
 from alohamini_mujoco.model import PARKED_JOINTS, ModelProfile, build_model
 
+from alohamini.model import get_robot_model
+
 
 def test_only_exact_embedded_inertial_input_is_recognized(tmp_path):
     path = tmp_path / "inertia.json"
@@ -45,4 +47,7 @@ def test_explicit_virtual_base_coordinates_select_a_generated_view():
     assert model.description.name == "planning"
     assert model.description.root == "root"
     assert model.data().body("base_link").xpos[0] == pytest.approx(0.1)
-    assert len(model.description.tree.findall(".//collision")) == 1115
+    physical = get_robot_model("alohamini2pro").description_tree("collision")
+    assert len(model.description.tree.findall(".//collision")) == len(
+        physical.findall(".//collision")
+    )
