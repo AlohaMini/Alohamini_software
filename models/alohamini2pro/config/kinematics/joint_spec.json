@@ -5,6 +5,20 @@
   "reference_pose": "upright_forward",
   "ticks_per_revolution": 4096,
   "reference_capture": {"samples": 3, "max_span_deg": 0.5},
+  "calibration_pose": {
+    "name": "folded_endpoints",
+    "arm_joints": {
+      "shoulder_pan": "reference",
+      "shoulder_lift": "upper",
+      "elbow_flex": "lower",
+      "wrist_flex": "upper",
+      "wrist_yaw": "reference",
+      "wrist_roll": "reference"
+    },
+    "gripper": "closed",
+    "contact": "manual_light_link_or_housing_contact",
+    "angle_basis": "nominal_model_endpoints_pending_hardware_qualification"
+  },
   "derivation": "left_right_source_range_intersection_rounded_inward_to_whole_degrees",
   "sources": [
     "urdf/alohamini2pro.urdf",

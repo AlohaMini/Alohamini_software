@@ -92,6 +92,8 @@ def _capture(bus, names, policy):
     samples = [bus.read_positions(names) for _ in range(policy["samples"])]
     result = {}
     for name in names:
+        if any(type(sample[name]) is not int or not 0 <= sample[name] < 4096 for sample in samples):
+            raise ValueError(f"{name}: reference encoder is outside the single-turn range")
         first = samples[0][name]
         offsets = [(sample[name] - first + 2048) % 4096 - 2048 for sample in samples]
         if (max(offsets) - min(offsets)) * 360 / 4096 > policy["max_span_deg"]:
@@ -185,15 +187,18 @@ def calibrate(
                     values = {m.name: existing[side][m.name] for m in bus.actuators}
                     bus.write_calibration(values)
                 return
-            response = input(
-                "Place BOTH arms in upright_forward: upper arms vertical up; forearms and "
-                "grippers forward; shoulder pan and wrist yaw neutral; grippers CLOSED. "
-                "Support the arms and lift. Hold still and press ENTER once: "
-            )
-            if response.strip():
-                raise InterruptedError("Reference capture cancelled")
-            original, names = {}, {}
+            original, names, values, reference_ticks, mappings = {}, {}, {}, {}, {}
             for side, bus in buses.items():
+                response = input(
+                    f"Fold the {side.upper()} arm: joints 1/5/6 aligned to neutral; "
+                    "joint 2 at the folded upper stop, joint 3 at the folded lower stop, "
+                    "joint 4 at the folded upper stop; gripper CLOSED. "
+                    "Use light contact only; do not squeeze the housings. "
+                    "Support the arms and lift. "
+                    f"Hold this arm still and press ENTER to capture {side}: "
+                )
+                if response.strip():
+                    raise InterruptedError(f"{side.title()} reference capture cancelled")
                 original[side] = bus.read_calibration()
                 names[side] = [m.name for m in bus.actuators if leader or m.name.startswith("arm_")]
                 bus.configure_calibration(names[side], preserve_other_motors=True)
@@ -204,8 +209,6 @@ def calibrate(
                         if m.name in names[side]
                     }
                 )
-            values, reference_ticks, mappings = {}, {}, {}
-            for side, bus in buses.items():
                 arm, ticks, mapping = side_calibration(
                     spec,
                     side,
@@ -216,8 +219,19 @@ def calibrate(
                 values[side] = arm if leader else {**original[side], **arm}
                 reference_ticks.update(ticks)
                 mappings[side] = mapping
-            for side, bus in buses.items():
                 bus.write_calibration({name: values[side][name] for name in names[side]})
+                readback = _capture(bus, names[side], spec.descriptor["reference_capture"])
+                for name, actual in readback.items():
+                    suffix = name if leader else name.removeprefix(f"arm_{side}_")
+                    expected = mapping["joints"][suffix]["capture_tick"]
+                    error_deg = abs(actual - expected) * 360 / 4096
+                    if error_deg > spec.descriptor["reference_capture"]["max_span_deg"]:
+                        raise CalibrationMismatchError(
+                            f"{name}: reference position readback differs after offset write "
+                            f"(expected={expected}, actual={actual}); support the arm, "
+                            "power-cycle servo power and retry"
+                        )
+                print(f"{side.title()} reference captured; torque remains off.")
             if leader:
                 motor_payloads = {paths[side]: calibration_bytes(values[side]) for side in buses}
                 motor_files = {paths[side]: actuators[side] for side in buses}
@@ -231,6 +245,12 @@ def calibrate(
                 robot_model=robot_model,
                 role=target,
                 reference_pose=spec.descriptor["reference_pose"],
+                capture_pose=spec.descriptor["calibration_pose"]["name"],
+                capture_ticks={
+                    f"arm_{side}_{suffix}": entry["capture_tick"]
+                    for side, mapping in mappings.items()
+                    for suffix, entry in mapping["joints"].items()
+                },
                 specification_sha256=spec.signature,
                 boundary_policy=spec.descriptor["boundary_policy"],
                 reference_ticks=reference_ticks,
@@ -255,3 +275,8 @@ def calibrate(
             for path in motor_payloads:
                 print(f"Calibration and reference profile saved: {path}")
             print("Both arms remain torque-off; no lift homing or movement command was sent.")
+            # Some STS firmware retains an internal turn count across offset writes:
+            # https://github.com/huggingface/lerobot/issues/5324
+            print(
+                "Support the arms and lift; power-cycle SERVO power before Host or teleoperation."
+            )

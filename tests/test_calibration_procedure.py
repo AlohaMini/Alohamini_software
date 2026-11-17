@@ -101,7 +101,7 @@ class CalibrationProcedureTests(unittest.TestCase):
             self.original[side] = {i: bytes(values) for i, values in serial.registers.items()}
 
     def run_calibration(self, response=""):
-        responses = response if isinstance(response, list) else [response]
+        responses = response if isinstance(response, list) else [response, response]
         with (
             patch("builtins.input", side_effect=responses) as prompt,
             contextlib.redirect_stdout(io.StringIO()),
@@ -141,7 +141,7 @@ class CalibrationProcedureTests(unittest.TestCase):
     def test_one_pose_writes_both_leaders_and_generates_matching_profiles(self):
         self.configure()
         prompt = self.run_calibration()
-        self.assertEqual(prompt.call_count, 1)
+        self.assertEqual(prompt.call_count, 2)
         for side in ("left", "right"):
             path = self.root / f"am_leader_bi_{side}.json"
             values = load_motor_calibration(path, self.actuators[side])
@@ -150,11 +150,89 @@ class CalibrationProcedureTests(unittest.TestCase):
             self.assertEqual(len(profile["reference_ticks"]), 14)
             for motor in self.actuators[side]:
                 entry = values[motor.name]
-                self.assertEqual(entry.homing_offset, 1577 - 2047)
                 self.assertEqual(entry.drive_mode, 0)
+                full_name = f"arm_{side}_{motor.name}"
+                captured = profile["capture_ticks"][full_name]
+                self.assertEqual((1577 - entry.homing_offset) % 4096, captured)
+                self.assertEqual(
+                    self.serials[f"/dev/test-{side}"].get(motor.motor_id, 56, 2), captured
+                )
                 self.assertEqual(
                     profile["arms"][side]["joints"][motor.name]["reference_tick"], 2047
                 )
+        self.assert_passive_and_closed()
+
+    def test_each_side_is_sampled_at_its_own_confirmation(self):
+        self.configure("robot")
+        prompts = []
+
+        def place(prompt):
+            prompts.append(prompt)
+            self.assertFalse(list(self.root.rglob("*.json")))
+            left, right = self.serials["/dev/test-left"], self.serials["/dev/test-right"]
+            if len(prompts) == 1:
+                self.assertIn("LEFT", prompt)
+                left.set(1, 56, 2, 1930)
+            else:
+                self.assertIn("RIGHT", prompt)
+                self.assertEqual(left.get(1, 31, 2), 0x800 | 240)
+                left.set(1, 56, 2, 3123)  # Moving the completed arm must not resample it.
+                right.set(1, 56, 2, 2400)
+            return ""
+
+        with patch("builtins.input", side_effect=place), contextlib.redirect_stdout(io.StringIO()):
+            calibrate(
+                "robot",
+                self.model_name,
+                calibration_dir=self.root,
+                left_port="/dev/test-left",
+                right_port="/dev/test-right",
+            )
+        values = load_motor_calibration(
+            self.root / "AlohaMiniRobot.json", get_robot_model(self.model_name).actuators
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertEqual(values["arm_left_shoulder_pan"].homing_offset, -240)
+        self.assertEqual(values["arm_right_shoulder_pan"].homing_offset, 230)
+        self.assert_passive_and_closed()
+
+    def test_cancel_second_side_restores_the_already_zeroed_first_side(self):
+        self.configure("robot")
+        with self.assertRaises(InterruptedError):
+            self.run_calibration(["", "cancel"])
+        self.assert_restored()
+        self.assert_passive_and_closed()
+        self.assertFalse(list(self.root.rglob("*.json")))
+
+    def test_incorrect_post_offset_position_is_rejected_and_rolled_back(self):
+        from alohamini.hardware.feetech_device import FeetechBusDevice
+
+        self.configure("robot")
+        actual_read = FeetechBusDevice.read_positions
+        count = 0
+
+        def shifted(bus, names):
+            nonlocal count
+            count += 1
+            positions = actual_read(bus, names)
+            return {name: value + (20 if count > 3 else 0) for name, value in positions.items()}
+
+        with patch.object(FeetechBusDevice, "read_positions", new=shifted):
+            with self.assertRaisesRegex(ValueError, "readback differs"):
+                self.run_calibration()
+        self.assert_restored()
+        self.assert_passive_and_closed()
+        self.assertFalse(list(self.root.rglob("*.json")))
+
+    def test_full_turn_feedback_is_not_silently_wrapped_during_capture(self):
+        self.configure("robot")
+        with patch(
+            "alohamini.hardware.feetech_device.FeetechBusDevice.read_positions",
+            side_effect=lambda names: dict.fromkeys(names, 6144),
+        ):
+            with self.assertRaisesRegex(ValueError, "outside the single-turn range"):
+                self.run_calibration()
+        self.assert_restored()
         self.assert_passive_and_closed()
 
     def test_default_ports_run_usb_setup_then_continue_the_same_reference_capture(self):
@@ -169,7 +247,7 @@ class CalibrationProcedureTests(unittest.TestCase):
         ):
             calibrate("leader", self.model_name, calibration_dir=self.root)
         self.assertEqual(setup.call_args.args, ("leader",))
-        prompt.assert_called_once()
+        self.assertEqual(prompt.call_count, 2)
         self.assertIsNotNone(
             load_reference_profile(self.root / "am_leader_bi_left.json", self.model_name)
         )
@@ -273,7 +351,7 @@ class CalibrationProcedureTests(unittest.TestCase):
 
         with patch("alohamini.calibration.reference.os.replace", side_effect=fail_once):
             with self.assertRaises(OSError):
-                self.run_calibration(["c", ""])
+                self.run_calibration(["c", "", ""])
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         self.assert_restored()
         self.assert_passive_and_closed()

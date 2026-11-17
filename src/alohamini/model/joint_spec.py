@@ -172,6 +172,32 @@ class ModelJointSpecification:
         } != expected:
             raise ValueError("Specification joint names differ from the model actuators")
         self.joints = MappingProxyType(joints)
+        pose = data["calibration_pose"]
+        if (
+            pose.get("name") != "folded_endpoints"
+            or set(pose.get("arm_joints", {})) != set(_ARM_SUFFIXES)
+            or pose.get("gripper") != "closed"
+            or pose.get("contact") != "manual_light_link_or_housing_contact"
+            or pose.get("angle_basis") != "nominal_model_endpoints_pending_hardware_qualification"
+        ):
+            raise ValueError("Provide the explicit, unqualified folded calibration pose")
+        capture_positions = {}
+        for name, row in joints.items():
+            if row.unit != "rad":
+                continue
+            suffix = name.split("_", 1)[1].removesuffix("_joint")
+            if suffix == "gripper":
+                capture_positions[name] = row.reference
+                continue
+            endpoint = pose["arm_joints"][suffix]
+            if endpoint not in ("reference", "lower", "upper"):
+                raise ValueError(f"{name}: invalid calibration-pose endpoint")
+            capture_positions[name] = {
+                "reference": row.reference,
+                "lower": row.lower,
+                "upper": row.upper,
+            }[endpoint]
+        self.capture_positions = MappingProxyType(capture_positions)
         self.validate()
 
     @classmethod
@@ -250,6 +276,8 @@ class ModelJointSpecification:
             "robot_model": model.model_id,
             "specification_version": self._descriptor["specification_version"],
             "specification_sha256": self.signature,
+            "calibration_pose": self._descriptor["calibration_pose"]["name"],
+            "calibration_q_rad": dict(self.capture_positions),
             "checks": checks,
             **self._descriptor["validation"],
         }

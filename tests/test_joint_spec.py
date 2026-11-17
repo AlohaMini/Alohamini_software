@@ -105,6 +105,22 @@ def test_feedback_tolerance_classifies_without_moving_the_coordinate(specificati
     assert row.upper == pytest.approx(math.radians(125))
 
 
+def test_folded_capture_is_separate_from_the_existing_model_coordinate_reference(specification):
+    for side in ("left", "right"):
+        assert specification.capture_positions[f"{side}_shoulder_lift"] == 0
+        assert specification.capture_positions[f"{side}_elbow_flex"] == 0
+        assert specification.capture_positions[f"{side}_wrist_flex"] == math.radians(87)
+        assert specification.joints[f"{side}_shoulder_lift"].reference == -math.pi / 2
+        assert specification.joints[f"{side}_elbow_flex"].reference == math.pi / 2
+        assert specification.joints[f"{side}_wrist_flex"].reference == 0
+    descriptor = specification.descriptor
+    descriptor["calibration_pose"]["arm_joints"] = {
+        name: "reference" for name in descriptor["arm_joints"]
+    }
+    other = ModelJointSpecification(specification.model, descriptor)
+    assert other.joints == specification.joints
+
+
 def test_new_specification_does_not_reinterpret_existing_checkpoint_ranges():
     old = StandardJointSpace.from_model()
     saved = old.descriptor

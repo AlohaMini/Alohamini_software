@@ -78,6 +78,32 @@ def test_one_leader_commands_two_followers_without_changing_its_calibration():
     assert leader == original
 
 
+@pytest.mark.parametrize("raw", [0, 1, 988, 1023, 1024, 2047, 2048, 3036, 3071, 4094, 4095])
+def test_folded_capture_keeps_the_full_model_travel_on_one_encoder_branch(raw):
+    spec, sides, _, mappings = device_calibration(raw)
+    quantum = 2 * np.pi / 4096
+    for side, mapping in mappings.items():
+        for suffix, entry in mapping["joints"].items():
+            name = f"{side}_{'wrist_yaw_joint' if suffix == 'wrist_yaw' else suffix}"
+            calibration = sides[side][f"arm_{side}_{suffix}"]
+            observed = (raw - calibration.homing_offset) % 4096
+            assert observed == entry["capture_tick"]
+            assert calibration.range_min <= observed <= calibration.range_max
+            converter = encoder(entry)
+            assert converter.position_from_tick(observed) == pytest.approx(
+                spec.capture_positions[name], abs=quantum + 1e-10
+            )
+            assert converter.position_from_tick(entry["reference_tick"]) == pytest.approx(
+                spec.joints[name].reference, abs=1e-12
+            )
+            assert entry["safe_q_min_rad"] == pytest.approx(
+                spec.joints[name].lower, abs=quantum + 1e-10
+            )
+            assert entry["safe_q_max_rad"] == pytest.approx(
+                spec.joints[name].upper, abs=quantum + 1e-10
+            )
+
+
 @pytest.mark.parametrize("raw", [0, 600, 4095])
 def test_generated_gripper_preserves_both_named_endpoints(raw):
     spec, sides, _, mappings = device_calibration(raw)
@@ -105,6 +131,12 @@ def save_robot(tmp_path, raw=4095):
         robot_model=spec.model.model_id,
         role="robot",
         reference_pose="upright_forward",
+        capture_pose=spec.descriptor["calibration_pose"]["name"],
+        capture_ticks={
+            f"arm_{side}_{suffix}": entry["capture_tick"]
+            for side, mapping in arms.items()
+            for suffix, entry in mapping["joints"].items()
+        },
         specification_sha256=spec.signature,
         boundary_policy=spec.descriptor["boundary_policy"],
         reference_ticks=ticks,
@@ -184,10 +216,27 @@ def test_recorded_reference_uses_exact_device_ticks_and_same_physical_pose(tmp_p
             )
     for arm in descriptor["arms"]:
         for coordinate in arm["coordinates"]:
-            assert coordinate["encoder"]["reference_tick"] == 2048
+            motor_name = coordinate["field"].removesuffix(".pos")
+            assert coordinate["encoder"]["reference_tick"] == profile["reference_ticks"][motor_name]
             i = fields.names.index(coordinate["field"])
             assert fields.joint(state[i], coordinate) == pytest.approx(0, abs=2 * np.pi / 4096)
     assert np.isfinite(fields.absolute(state)).all()
+    folded = list(state)
+    for arm in descriptor["arms"]:
+        for coordinate in arm["coordinates"]:
+            motor_name = coordinate["field"].removesuffix(".pos")
+            i = fields.names.index(coordinate["field"])
+            folded[i] = (
+                values[motor_name].position_units().from_tick(profile["capture_ticks"][motor_name])
+            )
+            model_name = motor_name.removeprefix("arm_")
+            if model_name.endswith("wrist_yaw"):
+                model_name += "_joint"
+            assert fields.joint(folded[i], coordinate) == pytest.approx(
+                spec.capture_positions[model_name] - spec.joints[model_name].reference,
+                abs=4 * np.pi / 4096,
+            )
+    assert np.isfinite(fields.absolute(folded)).all()
     motors["arm_left_shoulder_pan"]["homing_offset"] += 1
     with pytest.raises(ValueError, match="Reference calibration differs"):
         descriptor_from_reference_pose(info, "upright_forward")
@@ -223,6 +272,11 @@ def test_generated_ros_maps_decode_the_reference_and_reject_another_calibration(
     positions = mapper.observation_to_joint_positions(observation, metadata)
     for name, row in spec.joints.items():
         assert positions[name] == pytest.approx(row.reference, abs=2 * np.pi / 4096)
+    for name, tick in profile["capture_ticks"].items():
+        observation[f"{name}.pos"] = mapper.tick_to_host(tick, metadata["motors"][name])
+    positions = mapper.observation_to_joint_positions(observation, metadata)
+    for name, expected in spec.capture_positions.items():
+        assert positions[name] == pytest.approx(expected, abs=4 * np.pi / 4096)
     metadata["motors"]["arm_left_shoulder_pan"]["homing_offset"] += 1
     with pytest.raises(ValueError, match="mapping differs"):
         mapper.observation_to_joint_positions(observation, metadata)
@@ -242,6 +296,12 @@ def test_generated_leader_profile_loads_through_passive_leader(tmp_path):
         robot_model=spec.model.model_id,
         role="leader",
         reference_pose="upright_forward",
+        capture_pose=spec.descriptor["calibration_pose"]["name"],
+        capture_ticks={
+            f"arm_{side}_{suffix}": entry["capture_tick"]
+            for side, mapping in arms.items()
+            for suffix, entry in mapping["joints"].items()
+        },
         specification_sha256=spec.signature,
         boundary_policy=spec.descriptor["boundary_policy"],
         reference_ticks=ticks,

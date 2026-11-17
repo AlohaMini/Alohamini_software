@@ -30,22 +30,34 @@ def side_calibration(spec, side, actuators, positions, *, leader):
         raw = positions[motor.name]
         if type(raw) is not int or not 0 <= raw < 4096:
             raise ValueError(f"{motor.name}: invalid reference encoder reading")
-        # STS offsets span [-2047, 2047]. The raw=4095 case needs the adjacent
-        # centre count; retain that exact reference instead of losing a tick.
-        reference = 2048 if raw == 4095 else 2047
         scale = row.direction * math.tau / 4096
-        endpoints = [reference + (q - row.reference) / scale for q in (row.lower, row.upper)]
+        capture_q = spec.capture_positions[name]
+        # Keep the existing model reference near the encoder centre. The
+        # operator's folded pose need not be at that centre; otherwise the
+        # shoulder's 199-degree travel would cross the single-turn branch.
         # Decimal model endpoints can differ from an exact encoder count by
         # ~1e-8 ticks; retain that count without extending travel by a full tick.
-        lower = max(0, math.ceil(min(endpoints) - 1e-7))
-        upper = min(4095, math.floor(max(endpoints) + 1e-7))
+        for reference in (2047, 2048):
+            endpoints = [reference + (q - row.reference) / scale for q in (row.lower, row.upper)]
+            lower = max(0, math.ceil(min(endpoints) - 1e-7))
+            upper = min(4095, math.floor(max(endpoints) + 1e-7))
+            capture_tick = max(
+                lower, min(upper, round(reference + (capture_q - row.reference) / scale))
+            )
+            offset = (raw - capture_tick + 2048) % 4096 - 2048
+            if offset != -2048:
+                break
+        else:
+            raise ValueError(f"{motor.name}: reference offset is not representable")
         if not lower <= reference <= upper or lower == upper:
             raise ValueError(f"{motor.name}: model interval cannot fit the encoder reference")
         q_limits = sorted(row.reference + (tick - reference) * scale for tick in (lower, upper))
         quantum = math.tau / 4096
         if max(q_limits[0] - row.lower, row.upper - q_limits[1]) > quantum + 1e-10:
             raise ValueError(f"{motor.name}: model travel crosses an unsupported encoder branch")
-        entry = MotorCalibration(motor.motor_id, 0, raw - reference, lower, upper)
+        if abs(row.reference + (capture_tick - reference) * scale - capture_q) > quantum + 1e-10:
+            raise ValueError(f"{motor.name}: folded reference cannot fit the encoder branch")
+        entry = MotorCalibration(motor.motor_id, 0, offset, lower, upper)
         calibrations[motor.name] = entry
         full_name = f"arm_{side}_{suffix}"
         ticks[full_name] = reference
@@ -54,6 +66,8 @@ def side_calibration(spec, side, actuators, positions, *, leader):
             model=motor.motor_model,
             reference_tick=reference,
             reference_q_rad=row.reference,
+            capture_tick=capture_tick,
+            capture_q_rad=capture_q,
             sign=row.direction,
             joint_per_encoder_ratio=1.0,
             safe_q_min_rad=q_limits[0],
@@ -79,6 +93,7 @@ def side_calibration(spec, side, actuators, positions, *, leader):
             side=side,
             ticks_per_revolution=4096,
             status="generated_from_reference_pose",
+            capture_pose=spec.descriptor["calibration_pose"]["name"],
             joints=joints,
         ),
     )
@@ -159,6 +174,7 @@ def load_reference_profile(calibration_path, robot_model):
         or profile.get("robot_model") != robot_model
         or profile.get("specification_sha256") != spec.signature
         or profile.get("reference_pose") != spec.descriptor["reference_pose"]
+        or profile.get("capture_pose") != spec.descriptor["calibration_pose"]["name"]
         or profile.get("boundary_policy") != spec.descriptor["boundary_policy"]
         or profile.get("calibration_sha256", {}).get(calibration_path.name) != digest
     ):
@@ -168,7 +184,7 @@ def load_reference_profile(calibration_path, robot_model):
     leader = profile.get("role") == "leader"
     if profile.get("role") not in ("leader", "robot"):
         raise ValueError("Invalid reference calibration role")
-    references = {}
+    references, captures = {}, {}
     for side in ("left", "right"):
         motors = tuple(m for m in spec.model.actuators if m.bus == side)
         if leader:
@@ -197,8 +213,8 @@ def load_reference_profile(calibration_path, robot_model):
         for motor in motors:
             if leader or motor.name.startswith("arm_"):
                 full_name = f"arm_{side}_{motor.name}" if leader else motor.name
-                reference = profile["reference_ticks"][full_name]
-                positions[motor.name] = (reference + values[motor.name].homing_offset) % 4096
+                captured = profile["capture_ticks"][full_name]
+                positions[motor.name] = (captured + values[motor.name].homing_offset) % 4096
         expected, ticks, mapping = side_calibration(spec, side, motors, positions, leader=leader)
         if (
             expected != {name: values[name] for name in expected}
@@ -208,6 +224,14 @@ def load_reference_profile(calibration_path, robot_model):
                 "Reference mapping differs from model coordinates or motor calibration"
             )
         references.update(ticks)
+        captures.update(
+            {
+                f"arm_{side}_{suffix}": entry["capture_tick"]
+                for suffix, entry in mapping["joints"].items()
+            }
+        )
     if profile["reference_ticks"] != references:
         raise ValueError("Reference encoder ticks differ from their generated mappings")
+    if profile["capture_ticks"] != captures:
+        raise ValueError("Captured encoder ticks differ from the folded pose")
     return profile
