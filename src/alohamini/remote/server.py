@@ -25,7 +25,13 @@ class NativePlanPolicy:
     """Load only the cloud model; never connect to a Host or open hardware."""
 
     def __init__(
-        self, checkpoint, *, device="cuda", chunk_size=None, overrides=None, fixed_current=None,
+        self,
+        checkpoint,
+        *,
+        device="cuda",
+        chunk_size=None,
+        overrides=None,
+        fixed_current=None,
         execution=None,
     ):
         from alohamini.learning.checkpoint import read_checkpoint
@@ -34,9 +40,7 @@ class NativePlanPolicy:
         _, manifest = read_checkpoint(checkpoint)
         component = algorithm(manifest["kind"])
         if not getattr(component, "supports_remote_chunks", False):
-            raise ValueError(
-                f"{manifest['kind']} does not declare remote action-chunk support"
-            )
+            raise ValueError(f"{manifest['kind']} does not declare remote action-chunk support")
         if chunk_size is not None and (type(chunk_size) is not int or not 1 <= chunk_size <= 512):
             raise ValueError("chunk_size must be an integer in [1, 512]")
         options = dict(overrides or {})
@@ -57,8 +61,8 @@ class NativePlanPolicy:
         self.execution = self.execution_config.to_dict()
         self.chunk_size = chunk_size
         if chunk_size is not None:
-            if self.plan_capabilities.kinds != ("dense",):
-                raise ValueError("--chunk-size only applies to dense action plans")
+            if self.plan_capabilities.kinds not in (("dense",), ("tcp",)):
+                raise ValueError("--chunk-size only applies to sampled action plans")
             if chunk_size > component.action_horizon(self.policy.config):
                 raise ValueError("Remote chunk_size exceeds the policy execution horizon")
         self.names = tuple(self.policy.names)
@@ -117,15 +121,23 @@ class NativePlanPolicy:
         if not self._initialized:
             raise RuntimeError("Remote policy has not been initialized")
         plan = self.policy.predict_plan(
-            snapshot, prefix=prefix, continuity=self.execution_config.continuity,
+            snapshot,
+            prefix=prefix,
+            continuity=self.execution_config.continuity,
         )
         if self.chunk_size is not None:
             from alohamini.trajectory import DenseActionPlan
 
-            if not isinstance(plan, DenseActionPlan):
-                raise ValueError("--chunk-size only applies to dense action plans")
-            plan = DenseActionPlan(plan.names, plan.actions[:self.chunk_size],
-                                   plan.period_s, plan.start_s)
+            if getattr(plan, "kind", None) == "tcp":
+                from dataclasses import replace
+
+                plan = replace(plan, actions=plan.actions[: self.chunk_size])
+            elif isinstance(plan, DenseActionPlan):
+                plan = DenseActionPlan(
+                    plan.names, plan.actions[: self.chunk_size], plan.period_s, plan.start_s
+                )
+            else:
+                raise ValueError("--chunk-size only applies to sampled action plans")
         return plan
 
     def reset(self):
@@ -236,12 +248,23 @@ class _Service:
                 self.backend.reset()
                 raise
             self.session = _Session(
-                route, token, context, client_id, fps, request_id, tick,
-                snapshot.received_s, time.monotonic(),
+                route,
+                token,
+                context,
+                client_id,
+                fps,
+                request_id,
+                tick,
+                snapshot.received_s,
+                time.monotonic(),
             )
             return "ready", {
-                "session": token, "id": request_id, "context": context, "fps": fps,
-                "names": list(self.backend.names), "cameras": list(self.backend.cameras),
+                "session": token,
+                "id": request_id,
+                "context": context,
+                "fps": fps,
+                "names": list(self.backend.names),
+                "cameras": list(self.backend.cameras),
                 "fixed_current": list(getattr(self.backend, "fixed_current", ())),
                 "plan_kinds": list(self.backend.plan_capabilities.kinds),
                 "execution": self.backend.execution,
@@ -267,8 +290,11 @@ class _Service:
             self.end()
             raise
         if (
-            context != current.context or client_id != current.client_id or fps != current.fps
-            or tick < current.tick or snapshot.received_s < current.received_s
+            context != current.context
+            or client_id != current.client_id
+            or fps != current.fps
+            or tick < current.tick
+            or snapshot.received_s < current.received_s
         ):
             self.end()
             raise ProtocolError("Remote Host context, control rate or observation order changed")
@@ -287,8 +313,8 @@ class _Service:
                 if type(plan_id) is not int or plan_id not in self.plans:
                     raise ProtocolError("Prefix refers to an unknown accepted trajectory plan")
                 previous_time, previous = self.plans[plan_id]
-                offset = snapshot.request_started_s-previous_time
-                if offset <= 0 or offset+delay >= previous.end_s:
+                offset = snapshot.request_started_s - previous_time
+                if offset <= 0 or offset + delay >= previous.end_s:
                     raise ProtocolError("Inference delay exceeds the remaining trajectory overlap")
                 prefix = committed_prefix(previous, offset, fps, delay)
             elif self.plans and self.backend.execution.get("continuity", "none") != "none":
@@ -297,7 +323,7 @@ class _Service:
             plan = plan_from_dict(plan.to_dict(), names=self.backend.names)
             if plan.to_dict()["kind"] not in self.backend.plan_capabilities.kinds:
                 raise ValueError("Policy returned an undeclared trajectory kind")
-            inference_s = time.monotonic()-started
+            inference_s = time.monotonic() - started
             if inference_s > self.timeout_s:
                 raise TimeoutError("Remote inference exceeded the request time budget")
         except KeyError as exc:
@@ -310,9 +336,14 @@ class _Service:
         while len(self.plans) > 16:
             del self.plans[next(iter(self.plans))]
         return "plan", {
-            "session": token, "id": request_id, "tick": tick, "fps": fps,
-            "context": context, "names": list(self.backend.names),
-            "plan": plan.to_dict(), "inference_s": inference_s,
+            "session": token,
+            "id": request_id,
+            "tick": tick,
+            "fps": fps,
+            "context": context,
+            "names": list(self.backend.names),
+            "plan": plan.to_dict(),
+            "inference_s": inference_s,
         }
 
 
@@ -374,10 +405,14 @@ def serve(endpoint, backend, stop_event, *, request_timeout_s=10.0, poll_timeout
                 kind, body, images = decode_message(parts)
                 kind, response = service.handle(route, kind, body, images)
             except (ProtocolError, ValueError, TypeError, RuntimeError, TimeoutError) as exc:
-                kind, response = "error", {
-                    "session": body.get("session"), "id": body.get("id"),
-                    "message": str(exc)[:4096],
-                }
+                kind, response = (
+                    "error",
+                    {
+                        "session": body.get("session"),
+                        "id": body.get("id"),
+                        "message": str(exc)[:4096],
+                    },
+                )
             if stop_event.is_set():
                 break
             try:

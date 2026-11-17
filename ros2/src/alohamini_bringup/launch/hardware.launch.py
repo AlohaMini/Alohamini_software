@@ -55,6 +55,11 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("start_native_reader", default_value="true"),
             DeclareLaunchArgument(
+                "ik_python",
+                default_value="",
+                description="Pink worker Python; empty uses conda run -n alohamini",
+            ),
+            DeclareLaunchArgument(
                 "native_python",
                 default_value="",
                 description="Joy-Con reader Python; empty uses conda run -n alohamini",
@@ -115,6 +120,7 @@ def generate_launch_description() -> LaunchDescription:
                             "use_rviz": _all_true("use_rviz", "enable_joycon"),
                             "start_native_reader": LaunchConfiguration("start_native_reader"),
                             "native_python": LaunchConfiguration("native_python"),
+                            "ik_python": LaunchConfiguration("ik_python"),
                         }.items(),
                     )
                 ],

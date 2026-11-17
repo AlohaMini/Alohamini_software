@@ -151,6 +151,25 @@ def plan_from_dict(value, *, names=None):
     if not isinstance(value, dict) or value.get("version") != 1:
         raise ValueError("Unsupported trajectory plan version")
     kind = value.get("kind")
+    if kind == "tcp":
+        from .tcp_trajectory import TCPActionPlan
+
+        keys = {
+            "version",
+            "kind",
+            "names",
+            "actions",
+            "period_s",
+            "start_s",
+            "descriptor",
+            "fixed_targets",
+        }
+        if set(value) != keys:
+            raise ValueError("Invalid TCP trajectory plan fields")
+        plan = TCPActionPlan(**{k: v for k, v in value.items() if k not in ("version", "kind")})
+        if names is not None and plan.names != tuple(names):
+            raise ValueError("Trajectory action layout changed")
+        return plan
     keys = (
         {"version", "kind", "names", "actions", "period_s", "start_s"}
         if kind == "dense"

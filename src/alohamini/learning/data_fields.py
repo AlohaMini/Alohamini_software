@@ -281,3 +281,16 @@ class FieldProcessor:
         )
         result = torch.as_tensor(restored, dtype=torch.float32, device=values.device)
         return result[:, 0] if single else result
+
+    def tcp_action(self, tensor, *, context):
+        """Unnormalize to absolute TCP references, without any inverse kinematics."""
+        transform = self.field_transform
+        if transform.action not in ("tcp_absolute", "tcp_delta"):
+            raise ValueError("TCP references require TCP action fields")
+        values = self.processor.action(tensor, context=context).detach().float().cpu().numpy()
+        if transform.action == "tcp_delta":
+            if context is None:
+                raise ValueError("TCP deltas require the original observation anchor")
+            anchor = transform.geometry.absolute(context.detach().float().cpu().numpy())
+            values = transform.relative.decode(anchor, values)
+        return values

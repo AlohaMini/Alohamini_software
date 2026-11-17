@@ -60,6 +60,22 @@ class KinematicFields:
                         "Joint unit must be model rad/deg or "
                         "explicitly calibrated host/encoder units"
                     )
+            limits = (
+                np.tile([-np.inf, np.inf], (len(coordinates), 1))
+                if geometry.joint_limits is None
+                else np.array(geometry.joint_limits, dtype=float)
+            )
+            for j, coordinate in enumerate(coordinates):
+                if coordinate["unit"] not in ("host", "encoder"):
+                    continue
+                encoder = EncoderCalibration(**coordinate["encoder"])
+                if encoder.position_min_rad is not None:
+                    limits[j, 0] = max(limits[j, 0], encoder.position_min_rad)
+                    limits[j, 1] = min(limits[j, 1], encoder.position_max_rad)
+            if np.any(limits[:, 0] >= limits[:, 1]):
+                raise ValueError("Model and installed encoder joint limits do not overlap")
+            if np.isfinite(limits).all():
+                geometry.joint_limits = tuple(map(tuple, limits))
             grip = arm.get("gripper")
             gi = None
             if grip is not None:
@@ -300,7 +316,14 @@ class KinematicFields:
                     target[:3, :3] = self.rotation.decode(
                         pose[offset + 3 : offset + self.arm_pose_width]
                     )
-                    seed = model.inverse(target, seed, **self.descriptor.get("ik", {}))
+                    try:
+                        seed = model.inverse(target, seed, **self.descriptor.get("ik", {}))
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"TCP IK failed: arm={arm['name']}, chunk_step={step}, "
+                            f"frame={arm['frame']}, target={target.tolist()}, "
+                            f"seed_rad={seed.tolist()}; {exc}"
+                        ) from exc
                     for i, q, c in zip(indices, seed, arm["coordinates"], strict=True):
                         output[index + (step, i)] = self.source_joint(q, c)
                     if gi is not None:

@@ -37,6 +37,11 @@ class TrajectoryExecutor:
         self.last_tick = -1
         self.latency_s = 0.0
         self.execution_timing = None
+        self.tcp_tracker = None
+        if self.policy.plan_capabilities.kinds == ("tcp",):
+            from alohamini.tcp_execution import TCPTracker
+
+            self.tcp_tracker = TCPTracker(fps=self.fps, settings=self.settings.tcp_tracking)
         self.task_at_reset = getattr(self.policy, "task", None)
 
     def close(self):
@@ -72,9 +77,13 @@ class TrajectoryExecutor:
                     raise ValueError("Policy returned an undeclared trajectory type")
                 self.latency_s = max(0, finished_s - sampled_s)
                 age = now - sampled_s
-                if age < 0 or age >= min(plan.end_s, self.settings.max_prediction_age_s):
+                expired = age < 0 or age >= min(plan.end_s, self.settings.max_prediction_age_s)
+                if expired and getattr(plan, "kind", None) != "tcp":
                     raise RuntimeError("Trajectory prediction expired before execution")
-                if age < plan.start_s:
+                if expired:
+                    if self.tcp_tracker is not None:
+                        self.tcp_tracker.needs_replan = True
+                elif age < plan.start_s:
                     self.staged = (plan, sampled_s)
                 else:
                     self.plan, self.plan_sampled_s = plan, sampled_s
@@ -89,7 +98,10 @@ class TrajectoryExecutor:
         if not math.isfinite(sampled_s) or sampled_s > now:
             raise ValueError("Observation has an invalid local monotonic timestamp")
         delay, lead = prediction_timing(
-            self.settings, self.plan, fps=self.fps, latency_s=self.latency_s,
+            self.settings,
+            self.plan,
+            fps=self.fps,
+            latency_s=self.latency_s,
             observation_age_s=now - sampled_s,
         )
         due = self.plan is None
@@ -98,10 +110,11 @@ class TrajectoryExecutor:
             if self.settings.replan_interval_s is not None:
                 deadline = min(deadline, self.settings.replan_interval_s)
             due = now - self.plan_sampled_s >= deadline - lead
+        due = due or (self.tcp_tracker is not None and self.tcp_tracker.needs_replan)
         newer = self.plan_sampled_s is None or sampled_s > self.plan_sampled_s
         if self.future is None and self.staged is None and due and newer:
             prefix = None
-            if self.plan is not None:
+            if self.plan is not None and getattr(self.plan, "kind", None) != "tcp":
                 prefix = committed_prefix(
                     self.plan, sampled_s - self.plan_sampled_s, self.fps, delay
                 )
@@ -121,10 +134,24 @@ class TrajectoryExecutor:
         elapsed = now - self.plan_sampled_s
         if now < self.plan_sampled_s + self.plan.start_s:
             return None
-        if elapsed >= min(self.plan.end_s, self.settings.max_prediction_age_s):
+        tcp = getattr(self.plan, "kind", None) == "tcp"
+        if elapsed >= min(self.plan.end_s, self.settings.max_prediction_age_s) and not tcp:
             raise RuntimeError("Trajectory plan exhausted or expired")
         # Subtracting a large clock origin can round just below a valid start.
-        values = self.plan.action_at(max(self.plan.start_s, elapsed))
+        if tcp:
+            from alohamini.tcp_execution import TCPTracker
+
+            if self.tcp_tracker is None:
+                self.tcp_tracker = TCPTracker(fps=self.fps, settings=self.settings.tcp_tracking)
+            values = self.tcp_tracker.step(
+                self.plan,
+                snapshot,
+                elapsed,
+                now,
+                expired=elapsed >= self.settings.max_prediction_age_s,
+            )
+        else:
+            values = self.plan.action_at(max(self.plan.start_s, elapsed))
         self.last_tick = tick
         self.execution_timing = dict(
             observation_request_started_s=self.plan_sampled_s,
@@ -132,4 +159,10 @@ class TrajectoryExecutor:
             prediction_age_s=elapsed,
             inference_delay_s=self.latency_s,
         )
+        if tcp:
+            governor = self.tcp_tracker.reference_governor
+            self.execution_timing.update(
+                tcp_reference_elapsed_s=governor.elapsed_s,
+                tcp_reference_rate=governor.rate,
+            )
         return dict(zip(self.names, values, strict=True))

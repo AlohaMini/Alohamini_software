@@ -43,6 +43,24 @@ def inject(node, *payloads):
         node.receive_inputs()
 
 
+def test_ik_worker_failure_holds_both_arms_until_input_release(real_node):
+    for arm in real_node.arms.values():
+        arm.active = True
+        arm.target_pose = {"position": [0.2, 0.0, 0.2], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    engaged = input_payload(
+        buttons={"trigger": False, "relatch": False, "shoulder": False, "sl": True}
+    )
+    with patch.object(
+        real_node.kinematics["left"], "step", side_effect=TimeoutError("IK deadline")
+    ) as solve:
+        real_node.update_arm_differential("left", engaged, time.monotonic(), .02)
+        assert all(not arm.active and arm.fault_latched for arm in real_node.arms.values())
+        real_node.update_arm_differential("left", engaged, time.monotonic(), .02)
+        assert solve.call_count == 1
+        real_node.update_arm_differential("left", input_payload(), time.monotonic(), .02)
+        assert not real_node.arms["left"].fault_latched
+
+
 def test_preview_interfaces_do_not_use_real_robot_topics(real_node):
     for publisher in real_node.publishers:
         assert publisher.topic_name.startswith("/alohamini_plan_only/") or publisher.topic_name in (

@@ -151,10 +151,18 @@ tar -xzf /path/to/alohamini-mujoco-assets-v1.tar.gz \
 
 ## 5. ROS2 依赖
 
-在已安装 ROS2 Humble、colcon 和 rosdep 的系统 Python 终端执行：
+Joy-Con 差分 IK 使用 `alohamini` 环境中的 Pink 工作进程。在该环境安装：
 
 ```bash
-source /opt/ros/humble/setup.bash
+conda activate alohamini
+python -m pip install -e '.[kinematics]'
+conda deactivate
+```
+
+Ubuntu 22.04 使用 ROS2 Humble，Ubuntu 24.04 使用 ROS2 Jazzy；分别安装对应发行版的 colcon 和 rosdep。在系统 Python 终端执行：
+
+```bash
+source ~/Alohamini/ros2/env.bash --base
 cd ~/Alohamini/ros2
 rosdep install --from-paths src --ignore-src -r -y
 ```

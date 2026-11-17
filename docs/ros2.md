@@ -1,18 +1,26 @@
 # ROS2
 
-树莓派按使用手册启动 Host；PC 使用 ROS2 Humble 的系统 Python，不在 Conda 环境中运行 ROS 节点。
+树莓派按使用手册启动 Host；PC 的 ROS 节点使用系统 Python，不在 Conda 环境中运行。
+
+| PC 系统 | ROS2 | 系统 Python |
+|---|---|---|
+| Ubuntu 22.04 | Humble | 3.10 |
+| Ubuntu 24.04 | Jazzy | 3.12 |
+
+两套组合共用源码、模型与配置；构建及安装目录按 ROS 发行版隔离，不能复用另一发行版的编译产物。
+Pink／Pinocchio 安装在 `alohamini` 环境；ROS 遥操通过本机 IPC 调用常驻 IK 工作进程，不在 ROS Python 中安装其二进制依赖。
 
 ## 构建
 
 完成 [ROS2 依赖安装](install.md#5-ros2-依赖)，在系统 Python 终端构建：
 
 ```bash
-source /opt/ros/humble/setup.bash
-cd ~/Alohamini/ros2
-/usr/bin/python3 -m colcon build --symlink-install \
-  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
-source install/local_setup.bash
+cd ~/Alohamini
+bash ros2/build.bash
+source ros2/env.bash
 ```
+
+环境脚本按 Ubuntu 版本选择 Humble 或 Jazzy，也可先设置 `export ALOHAMINI_ROS_DISTRO=humble` 或 `jazzy`。切换发行版须使用新终端；依赖分别安装。构建目录为 `ros2/build/<发行版>`，安装目录为 `ros2/install/<发行版>`。
 
 `alohamini_core` 从平台根目录安装同一份 Python 源码和模型资产，无需另装 LeRobot、PyTorch 或新建 Conda 环境。
 
@@ -116,12 +124,13 @@ ros2 run alohamini_validation validate_tf
 
 ```bash
 conda deactivate
-source /opt/ros/humble/setup.bash
-source ~/Alohamini/ros2/install/local_setup.bash
+source ~/Alohamini/ros2/env.bash
 ros2 launch alohamini_joycon_teleop preview.launch.py
 ```
 
 启动后保持手柄静止约两秒完成 IMU 校准。读取器独立运行于 `alohamini` 环境；ROS 节点使用系统 Python。预览无需 Host，同时启动只规划的 MoveIt，状态、TF 和 FK/IK 服务位于 `/alohamini_plan_only`。不要再单独启动 `plan_only.launch.py`。不接手柄时可加 `start_native_reader:=false`，无桌面时加 `use_rviz:=false`。
+
+启动入口自动启动 Pink IK 工作进程，默认使用 `conda run -n alohamini python`；可通过 `ik_python:=/绝对路径/python` 指定已安装 `kinematics` 扩展的解释器。工作进程只计算关节目标；Host 命令仍由 ROS Bridge 发送。停止 launch 时一并退出，工作进程异常退出会结束该 launch。
 
 真机整机启动（不要重复启动 Bringup 或读取器）：
 
@@ -140,6 +149,7 @@ ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> \
 - 未按 `SL/SR` 时，摇杆控制底盘；右肩键加横向摇杆转向，左肩键加纵向摇杆控制升降。
 
 默认差分 IK 不做碰撞规划，须留出安全空间。Host 电流保护与 ROS 关节限位仍有效，不能替代避障。
+差分跟踪使用 Pink／Pinocchio／DAQP，按实际控制周期限制关节位置、速度及加速度。`ik_max_joint_acceleration_rad_s2` 默认 8；`dls_*` 增益、速度、位移及限位余量参数继续有效。RPC 超时默认 0.05 s，失败时停止双臂的新动作并锁定故障。参数文件为 `ros2/src/alohamini_joycon_teleop/config/joycon.yaml`。
 
 记录原始手柄输入并离线回放（相对路径保存到工作区 `logs/`）：
 

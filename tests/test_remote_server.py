@@ -37,9 +37,14 @@ def snapshot():
 def request(source=None, *, session="robot-run", request_id=1, tick=0):
     source = snapshot() if source is None else source
     return {
-        "session": session, "id": request_id, "tick": tick, "fps": 30,
-        "client_id": "pi-client", "context": context_for(source),
-        "snapshot": snapshot_body(source), "fixed": None,
+        "session": session,
+        "id": request_id,
+        "tick": tick,
+        "fps": 30,
+        "client_id": "pi-client",
+        "context": context_for(source),
+        "snapshot": snapshot_body(source),
+        "fixed": None,
     }, source.images
 
 
@@ -56,7 +61,7 @@ class Backend:
 
     def predict_plan(self, snapshot, prefix=None):
         result = self.predict(snapshot)
-        return DenseActionPlan(self.names, result, 1/self.fps)
+        return DenseActionPlan(self.names, result, 1 / self.fps)
 
 
 @contextmanager
@@ -97,18 +102,55 @@ def rpc(client, kind, body, images=None):
     return kind, response
 
 
+def test_server_transmits_tcp_references_without_solving_the_future_chunk(monkeypatch):
+    from test_tcp_execution import plan_for
+
+    from alohamini.kinematics.arm import SerialArmKinematics
+
+    plan = plan_for()
+    body = plan.to_dict()
+    body["actions"][-1][0] = 100.0
+    from alohamini.trajectory import plan_from_dict
+
+    plan = plan_from_dict(body)
+    backend = Backend()
+    backend.names = plan.names
+    backend.plan_capabilities = PlanCapabilities(kinds=("tcp",))
+    backend.predict_plan = lambda observation, prefix=None: plan
+    monkeypatch.setattr(
+        SerialArmKinematics, "inverse", lambda *a, **k: pytest.fail("server-side future IK")
+    )
+    hello, images = request()
+    with running_server(backend) as client:
+        kind, ready = rpc(client, "hello", hello, images)
+        assert kind == "ready" and ready["plan_kinds"] == ["tcp"]
+        observation, images = request(request_id=2, tick=1)
+        kind, response = rpc(client, "observation", observation, images)
+        assert kind == "plan" and response["plan"]["kind"] == "tcp"
+        assert response["plan"]["actions"][-1][0] == 100.0
+
+
 def test_server_roundtrip_preserves_pi_clock_jpeg_and_returns_absolute_chunk():
     backend = Backend()
     initial = snapshot()
     hello, images = request(initial)
-    with running_server(backend) as client, patch(
-        "alohamini.datasets.images.decode_host_image", side_effect=AssertionError("No proxy decode")
+    with (
+        running_server(backend) as client,
+        patch(
+            "alohamini.datasets.images.decode_host_image",
+            side_effect=AssertionError("No proxy decode"),
+        ),
     ):
         kind, ready = rpc(client, "hello", hello, images)
         assert kind == "ready"
         assert ready == {
-            "session": "robot-run", "id": 1, "context": context_for(initial), "fps": 30,
-            "names": ["joint.pos"], "cameras": ["forward"], "plan_kinds": ["dense"],
+            "session": "robot-run",
+            "id": 1,
+            "context": context_for(initial),
+            "fps": 30,
+            "names": ["joint.pos"],
+            "cameras": ["forward"],
+            "plan_kinds": ["dense"],
             "execution": backend.execution,
             "fixed_current": [],
         }
@@ -357,8 +399,10 @@ def test_pi05_padded_model_chunk_restores_18_absolute_coordinates_from_original_
 def test_remote_backend_rejects_unsupported_capability_before_loading_model(monkeypatch):
 
     # Resolve the lazy adapter before replacing its imported checkpoint function.
-    monkeypatch.setattr("alohamini.policies.registry.algorithm",
-                        lambda _: SimpleNamespace(supports_remote_chunks=False))
+    monkeypatch.setattr(
+        "alohamini.policies.registry.algorithm",
+        lambda _: SimpleNamespace(supports_remote_chunks=False),
+    )
     monkeypatch.setattr(
         "alohamini.learning.checkpoint.read_checkpoint", lambda _: (None, {"kind": "act"})
     )
@@ -374,11 +418,19 @@ def test_backend_pi_capture_does_not_compare_pi_timestamps_to_cloud_clock(monkey
     live = snapshot()
     policy = SimpleNamespace(
         config=SimpleNamespace(network={"action_horizon": 5}, chunk_size=5, n_action_steps=4),
-        names=state_names(live.robot_model), manifest={"cameras": ["forward"]}, fps=30,
-        fixed_current=["lift_axis.height_mm"], fixed_dimensions=None,
-        fixed_deployment={}, reset=Mock(), bind_robot=Mock(),
-        predict_plan=Mock(return_value=DenseActionPlan(
-            tuple(state_names(live.robot_model)), torch.zeros(5, 18), 1/30)),
+        names=state_names(live.robot_model),
+        manifest={"cameras": ["forward"]},
+        fps=30,
+        fixed_current=["lift_axis.height_mm"],
+        fixed_dimensions=None,
+        fixed_deployment={},
+        reset=Mock(),
+        bind_robot=Mock(),
+        predict_plan=Mock(
+            return_value=DenseActionPlan(
+                tuple(state_names(live.robot_model)), torch.zeros(5, 18), 1 / 30
+            )
+        ),
         plan_capabilities=PlanCapabilities(),
     )
     monkeypatch.setattr(

@@ -131,24 +131,22 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 
 ### 关节、TCP 与相对目标
 
-`--state` 选择模型输入字段；以下参数选择 state/action 的表示。转换后计算统计与归一化，原数据不变。
+`--state` 选择输入字段，以下参数选择输入和动作的表示；原数据不变。
 
 | 参数 | 选项与用途 |
 | --- | --- |
-| `--data.state_representation` | `recorded` 保留记录值；`tcp` 将臂关节位置替换为末端位姿，保留其他所选字段 |
-| `--data.action_representation` | `recorded` 保留控制目标；`joint_delta` 相对当前观测的关节目标，夹爪与其他字段保持绝对；`tcp_absolute` 绝对末端目标；`tcp_delta` 相对当前观测的末端目标 |
-| `--data.joint_delta_fields` | `joint_delta` 的动作字段到观测字段 JSON 映射；平台手臂关节按型号名称自动绑定，外部数据须显式指定，字段应使用相同坐标与单位 |
-| `--data.rotation_representation` | TCP 旋转编码：`rotvec`（默认，3 维）；`rotation_6d`（6 维，旋转矩阵前两行）；同时作用于所选 TCP state/action |
-| `--data.tcp_delta_frame` | 仅用于 `tcp_delta`：`base`（默认）在各臂基座系表达增量；`tool` 在当前末端系表达相对位姿，夹爪等其他字段保持绝对目标 |
-| `--data.kinematics.reference_pose` | 覆盖自动选择，使用指定型号预设，如 `upright_forward` |
-| `--data.kinematics.spec` | 自定义坐标与几何 JSON，见[弧度坐标示例](../examples/datasets/kinematics-radians.json) |
-| `--data.kinematics.path` | 复用已解析的转换描述 JSON |
+| `--data.state_representation` | `recorded`：原始输入；`tcp`：将臂关节位置改为末端位姿 |
+| `--data.action_representation` | `recorded`：原始控制目标；`joint_delta`：相对关节目标；`tcp_absolute`：绝对末端目标；`tcp_delta`：相对末端目标 |
+| `--data.joint_delta_fields` | 外部数据的动作字段到观测字段 JSON 映射；平台关节自动匹配，双方坐标与单位须一致 |
+| `--data.rotation_representation` | `rotvec`（默认，3 维）或 `rotation_6d`（6 维） |
+| `--data.tcp_delta_frame` | TCP 增量坐标系：`base`（默认，各臂基座）或 `tool`（当前末端） |
+| `--data.kinematics.reference_pose` | 型号标定预设，如 `upright_forward` |
+| `--data.kinematics.spec` / `--data.kinematics.path` | 自定义映射 JSON / 映射文件路径，见[示例](../examples/datasets/kinematics-radians.json) |
 
-`kinematics` 可省略：复用配置/checkpoint 中的描述，否则读取数据集 `meta/kinematics.json`，再使用型号默认预设；`alohamini2pro` 默认 `upright_forward`，绑定采集期标定。显式指定时三种来源选一。
-ACT 默认保留记录表示；Spirit 默认使用 TCP state 和 TCP 增量动作。
-GR00T 默认 `joint_delta`，state 保留记录表示；TCP 须显式开启。HyVLA 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
+输入和动作可独立选择；未指定时沿用[策略预设](#策略选择)。相对动作均以当前观测为基准，整段共用同一基准；夹爪等其他字段仍为绝对目标。
+TCP 位置单位为 m，旋转向量单位为 rad；左右臂分别使用 `left_Base`、`right_Base`。
 
-对按 `upright_forward` 姿态完成半圈归零的 `alohamini2pro` 数据：
+TCP 训练示例：
 
 ```bash
 alohamini train --policy.type=act \
@@ -159,20 +157,9 @@ alohamini train --policy.type=act \
   --run_name=act_tcp_01 --background
 ```
 
-该标定姿态要求大臂竖直向上、小臂及夹爪向前、夹爪开合平面水平，肩部转向与腕部偏转居中。
-预设读取采集期的编码器范围、方向及归零参数；选择预设不会移动机器人或重新归零。
-Host 归一化值、编码器 tick 不能直接标为模型关节角 `rad`／`deg`；自定义数据须声明参考角、参考编码器值、方向、传动比和几何。
-
-state 与 action 可独立选择：只转换动作时使用 `--data.state_representation=recorded`。
-ACT 使用 `--state=none` 预测 TCP 动作时，原数据仍须保留关节观测供转换及 IK 使用。
-TCP 动作不支持 ACT 时间融合。
-
-每臂输出位置 3 维（m）及旋转向量 3 维（rad）或 6D 旋转；夹爪按配置追加，底盘速度和升降高度透传。
-内置双臂分别使用 `left_Base`、`right_Base`，不隐含世界坐标。
-`tcp_delta` 的整段动作共用当前观测锚点，不是相邻帧差或逐步累积；旋转按矩阵组合。
-推理还原目标后连续求 IK，不可达、越界或不收敛时报错。
-
-需要复用转换描述时，可先导出，再用 `--data.kinematics.path` 加载：
+标定默认读取数据集 `meta/kinematics.json`，缺省使用型号预设。`alohamini2pro` 的 `upright_forward` 要求采集时按大臂向上、小臂与夹爪向前、夹爪开合平面水平的姿态归零。
+非标准标定或外部数据须指定实际映射；Host 归一化值和编码器 tick 不能直接作为 rad／deg。
+映射随 checkpoint 保存，部署时须与机器人标定一致。需要导出映射时：
 
 ```bash
 mkdir -p "$HOME/Alohamini_workspace/configs"
@@ -181,14 +168,9 @@ python -m alohamini.datasets.kinematic_fields \
   --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
 ```
 
-非标准中位数据须用 `--data.kinematics.spec/path` 指定实际映射；缺少 Host 标定的外部数据也须提供描述。
-导出自定义 JSON 时增加 `--spec`。已有双六关节臂 Host YAML 时，也可使用
-`--left-map /path/left.yaml --right-map /path/right.yaml`；每关节须包含匹配采集期的
-`motor_calibration`（`homing_offset`、`range_min`、`range_max`、`drive_mode`）。
-导出文件须尚不存在；命令只生成转换描述，不改写数据。
-
-字段、单位、几何、编码器映射与统计量随 checkpoint 保存；续训不依赖原配置文件。
-部署须匹配来源坐标，关节比例迁移不能替代 TCP 映射。动作转换始终使用记录的控制目标，不替换为未来实测反馈。
+导出文件须尚不存在；自定义映射加 `--spec`，使用 Host 标定文件加 `--left-map /path/left.yaml --right-map /path/right.yaml`。
+训练时通过 `--data.kinematics.path` 加载；`reference_pose`、`spec`、`path` 三选一。
+TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理设置见[推理模式](#推理模式)。
 
 ## 4. 训练
 
@@ -552,13 +534,25 @@ ACT 异步执行时须关闭时间融合：`--policy.temporal_ensemble_coeff non
 
 | 参数 | 默认值 | 用途 |
 |---|---|---|
-| `--inference.replan_interval_s` | 自动 | 固定重规划周期，单位秒 |
+| `--inference.replan_interval_s` | 自动（TCP 为 `0.25`） | 重规划时间预算，单位秒 |
 | `--inference.prediction_lead_s` | `0.1` | 提前预测预算下限，单位秒 |
 | `--inference.max_prediction_age_s` | `5` | 源观测最大年龄，单位秒 |
 
 异步执行的 `--fps` 是命令查询频率，可与 checkpoint 数据 FPS 不同。
 
-预测过期、有效轨迹耗尽或 Host 状态变化时停止使用旧计划。
+TCP 推理使用 `--inference.type=async`，执行机须安装 `kinematics` 扩展。跟踪滞后时自动放慢并重新预测，预测过期仍须停止使用。可选的 TCP 参考限制如下（默认值；速度、加速度分别为 m/s、m/s² 或 rad/s、rad/s²）：
+
+```bash
+--inference.tcp_tracking='{
+  "max_tcp_linear_velocity":0.2, "max_tcp_linear_acceleration":0.5,
+  "max_tcp_angular_velocity":1.0, "max_tcp_angular_acceleration":2.0
+}'
+```
+
+关节位置、速度及加速度限制仍有效。失败时制动保持并重新预测，超过 1 s 或连续 3 次新预测失败时停止；`sync` 模式任一点 IK 失败会拒绝整块动作。
+TCP 暂不支持 `rtc`、ACT 时间融合、单个手臂关节固定覆盖及 Host 关节动作缩放。参考跟踪允许路径偏差，不含碰撞避障或 jerk 约束，尚未完成实机验证。
+
+预测过期、有效轨迹耗尽或 Host 状态变化时停止使用旧计划；TCP 异步执行只在上述恢复预算内保持等待。
 评估记录保存执行参数及源观测时间。云端服务默认 `async`，也可选择 `rtc`；
 使用相同 `--inference.*` 参数，Pi 从服务端握手读取配置。
 两端必须使用相同平台版本，旧动作块协议不兼容。
@@ -738,6 +732,7 @@ ss -ltn '( sport = :5560 )'
 
 `--fps` 设置 Pi 的命令查询频率，checkpoint 数据频率用于解释轨迹时间。
 密集动作可用服务端 `--chunk-size 32` 缩短可执行窗口，不能超过模型窗口；BSP 不接受该参数。
+TCP 同样支持 `--chunk-size`，执行端须安装 `kinematics` 扩展。
 这些参数不保证云端持续按执行频率返回结果。迟到结果跳过过期前缀，动作耗尽或 Host 会话、控制参考变化时停止，需显式重新运行。
 
 | 树莓派 `run` 参数 | 默认值 | 用途 |

@@ -132,6 +132,10 @@ class JoyConTeleop(Node):
             "control_rate_hz": 50.0,
             "ik_rate_hz": 20.0,
             "arm_control_mode": "differential",
+            "ik_qp_solver": "daqp",
+            "ik_max_joint_acceleration_rad_s2": 8.0,
+            "ik_endpoint": "",
+            "ik_rpc_timeout_sec": 0.05,
             "ik_timeout_sec": 0.3,
             "deadzone": 0.25,
             "tcp_speed_m_s": 0.15,
@@ -154,7 +158,6 @@ class JoyConTeleop(Node):
             "dls_damping": 0.04,
             "dls_max_joint_velocity_rad_s": 1.5,
             "dls_max_joint_step_rad": 0.10,
-            "dls_command_horizon_sec": 0.12,
             "dls_max_target_error_m": 0.025,
             "dls_joint_limit_margin_rad": 0.03,
             "avoid_collisions": True,
@@ -247,6 +250,20 @@ class JoyConTeleop(Node):
         self.kinematics = {
             side: AlohaMiniArmKinematics.from_description(side) for side in ("left", "right")
         }
+        self.ik_worker = None
+        if self.get_parameter("ik_endpoint").value:
+            from alohamini.kinematics.worker import PinkWorkerClient
+
+            self.ik_worker = PinkWorkerClient(
+                str(self.get_parameter("ik_endpoint").value),
+                timeout_s=float(self.get_parameter("ik_rpc_timeout_sec").value),
+            )
+            versions = self.ik_worker.request("health", timeout_ms=10000)
+            self.get_logger().info(
+                f"IK worker ready: Pink {versions['pink']}, Pinocchio {versions['pinocchio']}"
+            )
+            for geometry in self.kinematics.values():
+                geometry.ik_client = self.ik_worker
         self.preview_base = [0.0, 0.0, 0.0]
         self.lift_target = self.positions["vertical_move"]
         self.measured_lift = self.lift_target
@@ -346,6 +363,8 @@ class JoyConTeleop(Node):
             self.update_lift(None, False, time.monotonic(), 0.0)
         self.input_socket.close()
         self.zmq_context.term()
+        if self.ik_worker is not None:
+            self.ik_worker.close()
         return super().destroy_node()
 
     def on_bridge_status(self, message: DiagnosticArray) -> None:
@@ -945,6 +964,10 @@ class JoyConTeleop(Node):
                 self.get_logger().info(
                     f"[{side}] released; finishing the last commanded TCP target"
                 )
+        if arm.active:
+            geometry = getattr(self, "kinematics", {}).get(side)
+            if geometry is not None:
+                geometry.reset_tracking()
         arm.active = False
 
     def update_arm(
@@ -1006,6 +1029,8 @@ class JoyConTeleop(Node):
             arm.fault_latched = False
             arm.hand_anchor_orientation = None
             arm.tcp_anchor_orientation = None
+            return
+        if arm.fault_latched:
             return
         if not arm.active:
             arm.active = True
@@ -1088,32 +1113,31 @@ class JoyConTeleop(Node):
         target[:3, 3] = proposed["position"]
         target[:3, :3] = quaternion_to_matrix(proposed["orientation"])
         solve_started = time.perf_counter()
-        # The control timer stays at the configured realtime rate, but a
-        # slightly longer position
-        # look-ahead prevents every command from collapsing to a few servo
-        # ticks when Bridge anchors JointJog displacements at fresh feedback.
-        # Preview needs no such look-ahead because its joint state accepts the
-        # candidate exactly and has no static friction or bus latency.
-        command_dt = (
-            max(
+        try:
+            candidate, metrics = self.kinematics[side].step(
+                seed,
+                target,
                 dt,
-                float(self.get_parameter("dls_command_horizon_sec").value),
+                position_gain=float(self.get_parameter("dls_position_gain").value),
+                orientation_gain=float(self.get_parameter("dls_orientation_gain").value),
+                orientation_weight=float(self.get_parameter("dls_orientation_weight").value),
+                damping=float(self.get_parameter("dls_damping").value),
+                max_joint_velocity=float(self.get_parameter("dls_max_joint_velocity_rad_s").value),
+                max_joint_step=float(self.get_parameter("dls_max_joint_step_rad").value),
+                joint_limit_margin=float(self.get_parameter("dls_joint_limit_margin_rad").value),
+                qp_solver=str(self.get_parameter("ik_qp_solver").value),
+                max_joint_acceleration=float(
+                    self.get_parameter("ik_max_joint_acceleration_rad_s2").value
+                ),
             )
-            if self.hardware_mode
-            else dt
-        )
-        candidate, metrics = self.kinematics[side].step(
-            seed,
-            target,
-            command_dt,
-            position_gain=float(self.get_parameter("dls_position_gain").value),
-            orientation_gain=float(self.get_parameter("dls_orientation_gain").value),
-            orientation_weight=float(self.get_parameter("dls_orientation_weight").value),
-            damping=float(self.get_parameter("dls_damping").value),
-            max_joint_velocity=float(self.get_parameter("dls_max_joint_velocity_rad_s").value),
-            max_joint_step=float(self.get_parameter("dls_max_joint_step_rad").value),
-            joint_limit_margin=float(self.get_parameter("dls_joint_limit_margin_rad").value),
-        )
+        except (ValueError, RuntimeError, TimeoutError, ImportError) as exc:
+            # Both arms share the worker session. A transport reset invalidates
+            # both velocity histories, so stop both before accepting new input.
+            for stopped_side in ("left", "right"):
+                self.deactivate_arm(stopped_side, cancel_goal=True)
+                self.arms[stopped_side].fault_latched = True
+            self.warn_ik(side, f"Pink tracking failed; both arms held: {exc}")
+            return
         self.max_dls_ms[side] = max(
             self.max_dls_ms[side],
             (time.perf_counter() - solve_started) * 1.0e3,
@@ -1143,7 +1167,7 @@ class JoyConTeleop(Node):
         elif metrics["max_joint_step_rad"] < 1.0e-5 and residual > 0.005:
             self.warn_ik(
                 side,
-                f"DLS stalled with residual={residual:.3f} m; "
+                f"Pink tracking stalled with residual={residual:.3f} m; "
                 f"sigma_min={metrics['minimum_singular_value']:.4f} "
                 f"limits={limit_hits or 'none'} dq=[{delta_text}]",
             )
@@ -1160,7 +1184,7 @@ class JoyConTeleop(Node):
         if now - self.last_ik_ok.get(side, 0.0) >= 1.0:
             self.last_ik_ok[side] = now
             self.get_logger().info(
-                f"[{side}] DLS {float(self.get_parameter('control_rate_hz').value):g} Hz: "
+                f"[{side}] Pink {float(self.get_parameter('control_rate_hz').value):g} Hz: "
                 f"xyz_err={metrics['position_error_m']:.4f}m "
                 f"rot_err={metrics['orientation_error_rad']:.3f}rad "
                 f"sigma_min={metrics['minimum_singular_value']:.4f} "

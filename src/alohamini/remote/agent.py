@@ -27,7 +27,7 @@ class ObservationRequest:
 class PlanBuffer:
     """Accepted physical-time trajectory, anchored only to the Pi observation clock."""
 
-    def __init__(self, session, context, names, fps, max_age_s, plan_kinds):
+    def __init__(self, session, context, names, fps, max_age_s, plan_kinds, tcp_settings=None):
         self.session, self.context = session, context
         self.names, self.fps = tuple(names), fps
         self.max_age_s, self.plan_kinds = max_age_s, tuple(plan_kinds)
@@ -40,6 +40,12 @@ class PlanBuffer:
         self.skipped = self.expired = 0
         self.last_round_trip_s = None
         self.accepted_plan_id = None
+        self.tcp_tracker = None
+        self.tcp_settings = tcp_settings
+        if "tcp" in self.plan_kinds:
+            from alohamini.tcp_execution import TCPTracker
+
+            self.tcp_tracker = TCPTracker(fps=self.fps, settings=tcp_settings)
 
     def remember(self, request_id, tick, sampled_s):
         self.requests[request_id] = ObservationRequest(tick, sampled_s)
@@ -58,9 +64,12 @@ class PlanBuffer:
         if record is None:
             raise ProtocolError("Remote plan response does not match a retained observation")
         if (
-            body.get("session") != self.session or body.get("context") != self.context
-            or type(body.get("tick")) is not int or body["tick"] != record.tick
-            or type(body.get("fps")) not in (int, float) or body["fps"] != self.fps
+            body.get("session") != self.session
+            or body.get("context") != self.context
+            or type(body.get("tick")) is not int
+            or body["tick"] != record.tick
+            or type(body.get("fps")) not in (int, float)
+            or body["fps"] != self.fps
             or body.get("names") != list(self.names)
         ):
             raise ProtocolError("Remote plan response changed the negotiated control contract")
@@ -75,31 +84,46 @@ class PlanBuffer:
         if inference_s < 0:
             raise ProtocolError("Remote inference time must be nonnegative")
         self.last_response_id = request_id
-        self.last_round_trip_s = now-record.sampled_s
+        self.last_round_trip_s = now - record.sampled_s
         for old_id in list(self.requests):
             if old_id <= request_id:
                 del self.requests[old_id]
-        age = now-record.sampled_s
-        if (not 0 <= age < min(self.max_age_s, plan.end_s)
-                or (tick-record.tick)/self.fps >= plan.end_s-1e-9):
+        age = now - record.sampled_s
+        if (
+            not 0 <= age < min(self.max_age_s, plan.end_s)
+            or (tick - record.tick) / self.fps >= plan.end_s - 1e-9
+        ):
             self.expired += 1
-            self.plan = self.accepted_plan_id = self.staged = None
+            if getattr(self.plan, "kind", None) != "tcp":
+                self.plan = self.accepted_plan_id = self.staged = None
+            elif self.tcp_tracker is not None:
+                self.tcp_tracker.needs_replan = True
             return 0
-        self.skipped += max(0, tick-record.tick)
+        self.skipped += max(0, tick - record.tick)
         if age < plan.start_s:
             self.staged = (plan, record.sampled_s, request_id)
         else:
             self.plan, self.sampled_s, self.accepted_plan_id = plan, record.sampled_s, request_id
             self.staged = None
         self.first_tick = tick
-        return math.ceil((plan.end_s-max(age, plan.start_s))*self.fps)
+        return math.ceil((plan.end_s - max(age, plan.start_s)) * self.fps)
 
     def remaining_s(self, now):
         if self.plan is None:
             return 0.0
-        return max(0, min(self.plan.end_s, self.max_age_s)-(now-self.sampled_s))
+        if self.tcp_tracker is not None:
+            governor = self.tcp_tracker.reference_governor
+            if governor is not None and governor.plan is self.plan:
+                return max(
+                    0.0,
+                    min(
+                        self.plan.end_s - governor.elapsed_s,
+                        self.max_age_s - (now - self.sampled_s),
+                    ),
+                )
+        return max(0, min(self.plan.end_s, self.max_age_s) - (now - self.sampled_s))
 
-    def pop(self, tick, now):
+    def pop(self, tick, now, snapshot=None):
         if self.staged is not None:
             plan, sampled_s, request_id = self.staged
             if now >= sampled_s + plan.start_s:
@@ -107,15 +131,31 @@ class PlanBuffer:
                 self.staged = None
         if tick < self.first_tick or tick <= self.last_pop_tick or self.plan is None:
             return None
-        elapsed = now-self.sampled_s
-        if self.remaining_s(now) <= 0:
+        elapsed = now - self.sampled_s
+        tcp = getattr(self.plan, "kind", None) == "tcp"
+        if self.remaining_s(now) <= 0 and not tcp:
             self.plan = None
             self.accepted_plan_id = None
             return None
         if now < self.sampled_s + self.plan.start_s:
             return None
         self.last_pop_tick = tick
-        values = self.plan.action_at(max(self.plan.start_s, elapsed))
+        if tcp:
+            from alohamini.tcp_execution import TCPTracker
+
+            if snapshot is None:
+                raise ValueError("TCP execution requires fresh measured joint feedback")
+            if self.tcp_tracker is None:
+                self.tcp_tracker = TCPTracker(fps=self.fps, settings=self.tcp_settings)
+            values = self.tcp_tracker.step(
+                self.plan,
+                snapshot,
+                elapsed,
+                now,
+                expired=elapsed >= self.max_age_s,
+            )
+        else:
+            values = self.plan.action_at(max(self.plan.start_s, elapsed))
         return dict(zip(self.names, values, strict=True))
 
 
@@ -149,7 +189,8 @@ def _check_ready(body, session, request_id, context, fps, robot_model, images, f
         or len(cameras) != len(set(cameras))
         or not set(cameras) <= set(images)
         or not isinstance(plan_kinds, list)
-        or not plan_kinds or not set(plan_kinds) <= {"dense", "bspline"}
+        or not plan_kinds
+        or not set(plan_kinds) <= {"dense", "bspline", "tcp"}
         or body.get("fixed_current", []) != fixed_names
     ):
         raise ProtocolError("Remote server returned an incompatible policy contract")
@@ -249,7 +290,15 @@ def run_session(
         except (TypeError, KeyError, ValueError) as exc:
             raise ProtocolError(f"Invalid trajectory execution settings: {exc}") from exc
         max_prediction_age_s = min(max_prediction_age_s, execution.max_prediction_age_s)
-        buffer = PlanBuffer(session, context, names, fps, max_prediction_age_s, plan_kinds)
+        buffer = PlanBuffer(
+            session,
+            context,
+            names,
+            fps,
+            max_prediction_age_s,
+            plan_kinds,
+            tcp_settings=execution.tcp_tracking,
+        )
         pending = False
         last_request_tick = -1
         origin = clock()
@@ -292,31 +341,41 @@ def run_session(
             if not set(cameras) <= set(snapshot.images):
                 raise RuntimeError("Host is missing a policy camera")
             source_tick = max(0, math.floor((snapshot.request_started_s - origin) * fps))
-            age = now-buffer.sampled_s if buffer.plan is not None else 0
+            age = now - buffer.sampled_s if buffer.plan is not None else 0
             delay_s, lead = prediction_timing(
-                execution, buffer.plan, fps=fps, latency_s=buffer.last_round_trip_s or 0,
-                observation_age_s=now-snapshot.request_started_s,
+                execution,
+                buffer.plan,
+                fps=fps,
+                latency_s=buffer.last_round_trip_s or 0,
+                observation_age_s=now - snapshot.request_started_s,
             )
             due = buffer.plan is None or buffer.remaining_s(now) <= lead
+            due = due or (buffer.tcp_tracker is not None and buffer.tcp_tracker.needs_replan)
             if execution.replan_interval_s is not None:
-                due = due or age >= execution.replan_interval_s-lead
+                due = due or age >= execution.replan_interval_s - lead
             if not pending and buffer.staged is None and due and source_tick > last_request_tick:
                 request_id += 1
                 body = dict(
-                    session=session, id=request_id, tick=source_tick, fps=fps,
-                    client_id=client.client_id, context=context, snapshot=snapshot_body(snapshot),
+                    session=session,
+                    id=request_id,
+                    tick=source_tick,
+                    fps=fps,
+                    client_id=client.client_id,
+                    context=context,
+                    snapshot=snapshot_body(snapshot),
                     plan_id=buffer.accepted_plan_id if execution.continuity != "none" else None,
                     inference_delay_s=delay_s,
                 )
                 pending = True
                 last_request_tick = source_tick
                 buffer.remember(request_id, source_tick, snapshot.request_started_s)
-                link.submit("observation", body,
-                            {camera: snapshot.images[camera] for camera in cameras})
+                link.submit(
+                    "observation", body, {camera: snapshot.images[camera] for camera in cameras}
+                )
                 stats["observations"] += 1
             if tick <= last_tick:
                 continue
-            targets = buffer.pop(tick, now)
+            targets = buffer.pop(tick, now, snapshot)
             if targets is None:
                 if stats["sent"] or now >= first_action_deadline:
                     raise RuntimeError(

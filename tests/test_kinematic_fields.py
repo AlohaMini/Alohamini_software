@@ -258,7 +258,8 @@ def test_ros_tracker_keeps_its_tracking_policy_and_shared_geometry():
     target[0, 3] += 0.005
     candidate, metrics = tracker.step(q, target, 1 / 30, max_joint_step=0.01)
     assert np.max(np.abs(candidate - q)) <= 0.01 + 1e-12
-    assert metrics["position_error_m"] == pytest.approx(0.005)
+    assert 0 <= metrics["position_error_m"] < 0.005
+    assert metrics["backend"] == "pink"
 
 
 def planar_spec():

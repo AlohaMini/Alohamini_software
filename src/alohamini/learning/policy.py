@@ -475,9 +475,18 @@ class NativePolicy:
         return self.processor(self.fixed_input(batch))
 
     @property
+    def tcp_reference_actions(self):
+        return (
+            isinstance(self.processor, FieldProcessor)
+            and self.processor.field_transform.action in ("tcp_absolute", "tcp_delta")
+        )
+
+    @property
     def plan_capabilities(self):
         from alohamini.trajectory_execution import PlanCapabilities
 
+        if self.tcp_reference_actions:
+            return PlanCapabilities(kinds=("tcp",), default_replan_interval_s=0.25)
         validate = getattr(self.algorithm, "validate_plan", None)
         if validate is not None:
             validate(self.config)
@@ -491,13 +500,44 @@ class NativePolicy:
         guided = continuity in self.plan_capabilities.gradient_methods
         with torch.inference_mode(not guided), torch.no_grad():
             batch = self._observation_batch(snapshot)
-            return self._plan_from_batch(batch, prefix=prefix, continuity=continuity)
+            return self._plan_from_batch(
+                batch, prefix=prefix, continuity=continuity, tcp_reference=True
+            )
 
-    def _plan_from_batch(self, batch, *, prefix=None, continuity="none"):
+    def _plan_from_batch(
+        self, batch, *, prefix=None, continuity="none", tcp_reference=False
+    ):
         from alohamini.trajectory import DenseActionPlan
 
         special = getattr(self.algorithm, "predict_plan", None)
         with self.inference_context():
+            if tcp_reference and self.tcp_reference_actions:
+                from alohamini.tcp_trajectory import TCPActionPlan
+
+                self._require_fixed_current()
+                if continuity != "none" or prefix is not None:
+                    raise ValueError(
+                        "TCP tracking currently supports async without RTC prefixes"
+                    )
+                if (getattr(self.config, "inference_action_scale_dims", ())
+                        and getattr(self.config, "inference_action_scale", 1.0) != 1.0):
+                    raise ValueError(
+                        "TCP reference tracking cannot apply Host joint action scaling"
+                    )
+                actions = self.model.predict_action_chunk(batch)
+                if (not isinstance(actions, torch.Tensor) or actions.ndim != 3
+                        or actions.shape[0] != 1 or actions.shape[1] < 1
+                        or not torch.isfinite(actions).all()):
+                    raise ValueError("Policy returned invalid TCP action references")
+                references = self.processor.tcp_action(
+                    actions, context=batch.get("_action_context")
+                )
+                offset = getattr(self.algorithm, "action_offset", lambda config: 0)(self.config)
+                return TCPActionPlan(
+                    tuple(self.names), references[0, offset:].tolist(), 1 / self.fps,
+                    self.processor.field_transform.geometry.descriptor,
+                    fixed_targets=(self.fixed_dimensions or {}).get("targets", {}),
+                )
             if special is not None:
                 return special(self, batch, prefix=prefix, continuity=continuity)
             prepare = getattr(self.algorithm, "prediction_arguments", None)
@@ -548,7 +588,12 @@ class NativePolicy:
             current = getattr(self, "_synchronous_plan", None)
             if current is None or now-current[0] >= current[1].end_s:
                 origin = getattr(snapshot, "request_started_s", now)
-                current = (origin, self.predict_plan(snapshot))
+                if self.tcp_reference_actions:
+                    with torch.inference_mode():
+                        plan = self._plan_from_batch(self._observation_batch(snapshot))
+                else:
+                    plan = self.predict_plan(snapshot)
+                current = (origin, plan)
                 self._synchronous_plan = current
             elapsed = time.monotonic()-current[0]
             if elapsed < current[1].start_s:
