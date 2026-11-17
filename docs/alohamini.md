@@ -41,14 +41,14 @@ Home 摆位：
 
 轻靠接触面，不挤压打印件。标定期间不使能扭矩、不自动运动；任一侧失败时恢复原标定。
 
-### 主臂标定（PC）
+### 主臂标定与序列号记录（PC）
 
 ```bash
 conda activate alohamini
 alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
 ```
 
-首次按提示绑定 USB：拔下左右主臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码。已有正确设备名时自动复用。
+首次按提示记录左右主臂 USB 控制板序列号并绑定设备名：拔下左右主臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码。已有正确设备名时自动复用。
 
 首次或重做时，将双主臂一起摆到 Home，保持静止，按一次 Enter 完成。更换配对机器人无需重标主臂。
 
