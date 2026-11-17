@@ -592,23 +592,6 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 表示右臂用原有固定目标或训练动作均值、升降保持启动时高度。同一字段不能同时出现在两组选项中。
 仅省略 `--fixed-dataset` 不会改变 `--fixed-dimensions` 原有的均值语义。
 
-### 标定兼容
-
-| `--calibration-mode` | 用途 |
-| --- | --- |
-| `strict`（默认） | 要求训练标定与 Host 一致 |
-| `normalized` | 同型号机器间按归一化关节比例迁移，须有训练标定 |
-| `legacy_normalized` | 原始 LeRobot v3 模型缺少标定时，显式声明动作单位并绑定当前 Host |
-
-`legacy_normalized` 仅适用于普通关节 `[-100,100]`、夹爪 `[0,100]`、
-底盘平移 m/s、旋转 deg/s、升降 mm 的数据，动作名称与顺序须匹配型号。
-使用 state 时，原 state 也须为相同名称与顺序的 Host 位置、底盘速度和升降高度。
-迁移不会恢复旧机器的物理姿态或升降零点；升降零点不明确时，
-可加 `--fixed-current lift_axis` 保持启动高度。
-
-使用 `--fixed-current` 前，先遥操摆好位置，再退出遥操并保持同一 Host 进程。
-绑定标定与固定目标报告保存在工作区 `logs/evaluation/`；运行中标定变化会结束评估。
-
 ### 云端推理
 
 树莓派发送图像和 state 到云端 GPU，接收轨迹计划并在本地执行；PC 用于登录管理。
