@@ -83,23 +83,21 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("push_to_hub", args)
 
     def test_local_calibration_entry_selects_explicit_device_and_model(self):
-        for target in ("leader", "robot", "arms"):
+        for target in ("leader", "robot"):
             with patch("alohamini.calibration.procedure.calibrate") as calibrate:
                 self.assertEqual(
-                    main(["calibrate", target, "--robot_model", "alohamini2pro", "--id", "test"]),
-                    0,
+                    main(["calibrate", target, "--robot_model", "alohamini2pro", "--id", "test"]), 0
                 )
                 self.assertEqual(calibrate.call_args.args, (target, "alohamini2pro"))
                 self.assertEqual(calibrate.call_args.kwargs["device_id"], "test")
-                self.assertFalse(calibrate.call_args.kwargs["rehome"])
+                self.assertNotIn("rehome", calibrate.call_args.kwargs)
 
-    def test_arms_rehome_requires_explicit_flag(self):
-        with patch("alohamini.calibration.procedure.calibrate") as calibrate:
-            self.assertEqual(
-                main(["calibrate", "arms", "--robot_model", "alohamini2pro", "--rehome"]), 0
-            )
-            self.assertEqual(calibrate.call_args.args[0], "arms")
-            self.assertTrue(calibrate.call_args.kwargs["rehome"])
+    def test_range_sweep_entries_are_removed(self):
+        for args in (["arms"], ["robot", "--rehome"]):
+            with patch("alohamini.calibration.procedure.calibrate") as calibrate:
+                with self.assertRaises(SystemExit):
+                    main(["calibrate", *args, "--robot_model", "alohamini2pro"])
+                calibrate.assert_not_called()
 
     def test_teleoperation_accepts_existing_cli_names_with_optional_profile(self):
         for profile in ([], ["--teleop.arm_profile", "am-leader-6dof"]):

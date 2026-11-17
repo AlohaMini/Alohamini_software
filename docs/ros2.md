@@ -210,24 +210,21 @@ ros2 launch alohamini_camera camera.launch.py host:=<PI_IP> \
 
 外参须有 `accepted_` 开头的状态、`T_mount_link_from_camera_optical.xyz_m`，以及明确的 `quaternion_xyzw` 或 `quaternion_wxyz`。默认拒绝候选结果，不覆盖标定文件中的坐标系。
 
-## 双臂舵机范围标定
+## 关节与升降映射
 
-在连接从臂串口的树莓派执行。先支撑双臂和升降，停止 Host 及其他串口程序：
+双臂先按 [单姿态标定](alohamini.md#2-主从臂标定) 执行 `alohamini calibrate robot --robot_model alohamini2pro`，自动生成 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml`，无需再次摆位采样。
+
+ROS 运行在 PC 时，将树莓派生成的映射复制到 PC 的工作区；重做从臂标定后同步更新：
 
 ```bash
-conda activate alohamini_host
-alohamini calibrate arms --robot_model alohamini2pro
+mkdir -p ~/Alohamini_workspace/calibration/hardware
+scp '<用户>@<PI_IP>:Alohamini_workspace/calibration/hardware/hardware_joint_map_*.yaml' \
+  ~/Alohamini_workspace/calibration/hardware/
 ```
 
-按提示确认并手动遍历双臂安全行程。默认保留舵机当前零偏，只重测范围；不使能扭矩、不自动运动、不访问底盘或升降电机。重新设置双臂零偏时才追加 `--rehome`，按提示手动摆到行程中位。
+两端使用相同型号规格。桥接会核对映射与 Host 的舵机参数；自定义路径用 `arm_mapping_dir:=/绝对路径`。
 
-须已有完整的 `~/Alohamini_workspace/calibration/robots/AlohaMiniRobot.json`。成功后自动备份并更新该文件，保留软件方向与底盘、升降参数；`--id`、`--calibration_dir` 可指定已有文件。中断或失败时尝试恢复原 EEPROM 标定；若报告恢复失败，先检查硬件与备份，不要启动运动。
-
-范围改变会影响归一化位置与策略动作含义。重新检查遥操对应关系、策略使用的标定和下述 ROS 关节映射后再运行。
-
-## 关节与升降映射采样
-
-导入旧仓库的标定资产（不覆盖现有文件、不写入舵机）：
+导入已有相机、升降等资产（不覆盖现有文件、不写舵机）：
 
 ```bash
 ros2 run alohamini_calibration import_calibration \
@@ -235,18 +232,9 @@ ros2 run alohamini_calibration import_calibration \
   --output ~/Alohamini_workspace/calibration/imports/previous_robot
 ```
 
-输出保留原始测量与候选状态；舵机 JSON 放在 `robots/`，ROS 映射在 `hardware/`，相机结果在 `cameras/`。`import_manifest.json` 记录来源、校验值及读取格式问题。导入不自动启用：核对同一台机器的当前标定后，才用 `arm_mapping_dir:=<导入目录>/hardware` 指定映射；候选内外参仍须单独验证。
+输出保留测量与候选状态；舵机 JSON 放在 `robots/`，ROS 映射在 `hardware/`，相机结果在 `cameras/`。`import_manifest.json` 记录来源、校验值和读取问题。导入不自动启用，须核对当前设备；候选内外参仍须单独验证。
 
-适用 `alohamini2pro`。工具只读取状态，不使能、回零或写 EEPROM。候选结果保存在 `~/Alohamini_workspace/calibration/hardware/`，须检查后手动安装。
-
-双臂：将运行中 Host 对应的 `AlohaMiniRobot.json` 放到本机，使用已有控制方式将双臂摆到模型 Home 姿态、合拢夹爪，结束遥操并保持静止：
-
-```bash
-ros2 run alohamini_calibration sync_arm_mapping \
-  --host <PI_IP> --calibration-json <AlohaMiniRobot.json路径>
-```
-
-确认终端提示后采样。也可使用 `--ssh-target <用户>@<PI_IP>` 从树莓派工作区读取 JSON，须已配置 SSH 密钥；自定义远端路径用 `--remote-json`。工具核对零偏与范围、采集真实编码器值，分别生成左右臂候选映射。默认关节方向适用原装机构，修改舵机安装方向后须重新核验。
+升降机构需要实测映射时使用以下只读工具，适用 `alohamini2pro`，不使能、回零或写 EEPROM。
 
 升降：确认 Host 已建立有效高度参考、机构处于真实 Home，再启动：
 
@@ -256,7 +244,7 @@ ros2 run alohamini_calibration calibrate_lift_axis --host <PI_IP>
 
 按提示用已有控制方式移动升降，停止后实测相对 Home 的高度并输入毫米值；至少采集两个不同高度。无需撞击上限取点。空行结束，输出拟合报告和候选映射；同名 `.samples.yaml` 保存已完成采样，中断不会丢失这些点。工具不更改 Host 导程、方向或软限位，候选映射的上界仅取实际采样的最大高度。
 
-核对方向、RViz 姿态和已测行程后，再将对应文件安装为前述 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml`、`lift_axis.yaml`，保留原文件备份。舵机 EEPROM 标定与此处的 ROS 坐标映射不是同一步操作。
+核对方向、RViz 姿态和已测升降行程后，将升降候选文件安装为 `lift_axis.yaml`，保留原文件备份。双臂映射由单姿态标定生成，不需要此采样过程。
 
 ## 相机标定
 

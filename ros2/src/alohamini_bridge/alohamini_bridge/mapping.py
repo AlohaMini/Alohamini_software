@@ -97,7 +97,23 @@ class JointMapper:
             }
         ).from_tick(tick)
 
+    def validate_host(self, metadata):
+        """Reject a captured mapping after the Host's calibration was replaced."""
+        for side in ("left", "right"):
+            for joint, entry in self.joints_by_side[side].items():
+                captured = entry.get("motor_calibration")
+                if captured is None:
+                    continue
+                name = f"arm_{side}_{joint}"
+                motor = metadata["motors"][name]
+                if any(entry[key] != motor[key] for key in ("id", "model")) or any(
+                    captured[key] != motor[key]
+                    for key in ("homing_offset", "drive_mode", "range_min", "range_max")
+                ):
+                    raise ValueError(f"Arm mapping differs from installed Host calibration: {name}")
+
     def urdf_to_host(self, name: str, position: float, metadata: dict) -> tuple[str, float]:
+        self.validate_host(metadata)
         side, _, suffix = name.partition("_")
         joint = "wrist_yaw" if suffix == "wrist_yaw_joint" else suffix
         entry = self._entry(side, joint)
@@ -120,6 +136,7 @@ class JointMapper:
     def observation_to_joint_positions(
         self, observation: dict[str, Any], metadata: dict[str, Any]
     ) -> dict[str, float]:
+        self.validate_host(metadata)
         ticks = {}
         for side in ("left", "right"):
             for joint in ARM_JOINTS:

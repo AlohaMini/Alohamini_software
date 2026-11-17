@@ -152,6 +152,32 @@ class StandardJointSpace:
             )
         )
 
+    @classmethod
+    def from_specification(cls, robot_model="alohamini2pro"):
+        """Select the versioned common model ranges for new data and checkpoints.
+
+        Existing descriptors and from_model() retain their recorded endpoints.
+        A command buffer never changes this coordinate scale.
+        """
+        from alohamini.model.joint_spec import ModelJointSpecification
+
+        spec = ModelJointSpecification.from_model(robot_model)
+        descriptor = cls.from_model(spec.geometry_model.model_id).descriptor
+        descriptor["robot_model"] = robot_model
+        for row in descriptor["joints"]:
+            joint = spec.joints[row["name"]]
+            if not row["name"].endswith("_gripper"):
+                row.update(position_at_min=joint.lower, position_at_max=joint.upper)
+        descriptor["joint_specification"] = dict(
+            version=spec.descriptor["specification_version"], sha256=spec.signature,
+        )
+        descriptor["boundary_policy"] = dict(
+            max_projection_rad=math.radians(spec.descriptor["boundary_policy"]["max_projection_deg"]),
+            command_inset_rad={name: row.command_inset for name, row in spec.joints.items()},
+            feedback_tolerance={name: row.feedback_tolerance for name, row in spec.joints.items()},
+        )
+        return cls(descriptor)
+
     @property
     def descriptor(self):
         return deepcopy(self._descriptor)
@@ -184,6 +210,36 @@ _MOTOR_FIELDS = (
     "range_max",
     "homing_offset",
 )
+
+
+@dataclass(frozen=True)
+class TargetProjection:
+    """Requested and executable physical positions, suitable for recording together."""
+
+    requested: dict[str, float]
+    positions: dict[str, float]
+
+    def __post_init__(self):
+        if self.requested.keys() != self.positions.keys():
+            raise ValueError("Projected targets must retain every requested joint")
+        for mapping in (self.requested, self.positions):
+            for name, value in mapping.items():
+                finite_number(value, name)
+        object.__setattr__(self, "requested", MappingProxyType(dict(self.requested)))
+        object.__setattr__(self, "positions", MappingProxyType(dict(self.positions)))
+
+    @property
+    def adjustments(self):
+        return {
+            name: dict(requested=value, applied=self.positions[name])
+            for name, value in self.requested.items() if value != self.positions[name]
+        }
+
+    def to_dict(self):
+        return dict(
+            requested=dict(self.requested), applied=dict(self.positions),
+            adjustments=self.adjustments,
+        )
 
 
 class DeviceJointSpace:
@@ -316,6 +372,79 @@ class DeviceJointSpace:
             observation["lift_axis.height_mm"] / 1000
         )
         return result
+
+    def project_positions(self, positions, *, robot_metadata, tolerance_rad=None):
+        """Project small endpoint discrepancies inward without changing coordinates.
+
+        The explicit result retains requested/applied values. Feedback, encoder
+        zeros, firmware limits and checkpoint statistics are never modified.
+        No mechanical endpoint is inferred from stalls or contact currents.
+        """
+        self.validate_host(robot_metadata)
+        policy = self.standard.descriptor.get("boundary_policy", {})
+        tolerance = (
+            policy.get("max_projection_rad", 0.0) if tolerance_rad is None else tolerance_rad
+        )
+        finite_number(tolerance, "tolerance_rad")
+        if not 0 <= tolerance <= math.radians(2) + 1e-12:
+            raise ValueError("Endpoint projection tolerance must lie in [0, 2] degrees")
+        unknown = set(positions) - self.standard.joints.keys()
+        if not positions or unknown:
+            raise ValueError(f"Provide nonempty known model joint targets: {sorted(unknown)}")
+        applied = {}
+        for name, position in positions.items():
+            finite_number(position, name)
+            row = self.standard.joints[name]
+            lower, upper = row.position_limits
+            inset = policy.get("command_inset_rad", {}).get(name, 0.0)
+            finite_number(inset, "command inset")
+            if not 0 <= inset < (upper - lower) / 2:
+                raise ValueError(f"{name}: invalid inward command buffer")
+            lower, upper = lower + inset, upper - inset
+            if name == "vertical_move":
+                lower, upper = (
+                    max(lower, self.lift.position_min_m), min(upper, self.lift.position_max_m)
+                )
+                if not lower <= position <= upper:
+                    raise ValueError("Angular tolerance cannot expand the lift interval")
+                applied[name] = position
+                continue
+            encoder, units = self.encoders[name], self.units[name]
+            lower = max(lower, encoder.position_min_rad)
+            upper = min(upper, encoder.position_max_rad)
+            if lower > upper:
+                raise ValueError(f"{name}: no executable interval remains")
+            if upper - lower > encoder.joint_period_rad + 1e-10:
+                raise ValueError(f"{name}: projection requires an unambiguous encoder branch")
+            scale = encoder.direction * encoder.joint_period_rad / encoder.ticks_per_revolution
+            raw = [
+                encoder.reference_tick + (q - encoder.reference_position_rad) / scale
+                for q in (lower, upper)
+            ]
+            period = encoder.ticks_per_revolution
+            first = math.ceil((min(raw) - units.range_max) / period - 1e-12)
+            last = math.floor((max(raw) - units.range_min) / period + 1e-12)
+            candidates = []
+            for turn in range(first, last + 1):
+                ends = [
+                    encoder.reference_position_rad
+                    + (tick + turn * period - encoder.reference_tick) * scale
+                    for tick in (units.range_min, units.range_max)
+                ]
+                start, end = max(lower, min(ends)), min(upper, max(ends))
+                if start > end:
+                    continue
+                candidate = max(start, min(end, position))
+                tick = encoder.position_to_tick(candidate)
+                if units.range_min <= tick <= units.range_max:
+                    candidates.append(candidate)
+            if not candidates:
+                raise ValueError(f"{name}: no target is representable within installed Host limits")
+            selected = min(candidates, key=lambda q: abs(q - position))
+            if abs(selected - position) > tolerance + 1e-12:
+                raise ValueError(f"{name}: target exceeds endpoint projection tolerance")
+            applied[name] = selected
+        return TargetProjection(dict(positions), applied)
 
     def host_targets_from_positions(self, positions, *, robot_metadata):
         self.validate_host(robot_metadata)

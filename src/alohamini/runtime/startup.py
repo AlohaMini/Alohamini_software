@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from alohamini.calibration.procedure import ensure_calibration
+from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.hardware.camera import CameraConfig, OpenCVCamera
 from alohamini.hardware.feetech_device import (
@@ -174,6 +175,7 @@ def _open_host(
         state_port=state_port,
         camera_port=camera_port,
         motor_calibrations=calibrations,
+        reference_calibration=load_reference_profile(path, robot_model),
     )
     logger.info("Connecting AlohaMini")
     try:

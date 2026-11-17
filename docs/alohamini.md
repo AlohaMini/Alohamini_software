@@ -1,6 +1,6 @@
 # AlohaMini 使用手册
 
-先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文以 `alohamini2pro`、树莓派 IP `<树莓派_IP>` 为例。
+先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文将 `<型号>` 替换为实际型号，`<树莓派_IP>` 替换为树莓派地址。
 
 ## 1. 型号与接线
 
@@ -21,81 +21,47 @@ AM-ARM 主臂使用 5 V、从臂使用 12 V。
 | 右从臂 | 树莓派 USB | `/dev/am_arm_follower_right` |
 | 前视、右腕相机 | 树莓派 USB | `/dev/am_camera_forward`、`/dev/am_camera_wrist_right` |
 
-## 2. 串口与相机
+## 2. 主从臂标定
 
-Ubuntu / Raspberry Pi OS 的设备权限设置，重新登录后生效：
+AM-ARM（`alohamini2`、`alohamini2pro`）按以下 Home 流程标定。每套双主臂、双从臂各标定一次；更换配对机器人无需重标主臂。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。
+
+首次使用需设置设备权限，重新登录后生效：
 
 ```bash
 sudo usermod -aG dialout,video "$USER"
 ```
-已有正确的默认设备名时无需重新配置。
 
-### PC：检查主臂 Leader
+PC 标定双主臂：
 
 ```bash
 conda activate alohamini
-ls /dev/ttyACM*
-alohamini find-port
+alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
 ```
 
-按提示只拔下左主臂的 USB，按 Enter，记录输出的端口并接回 USB。再次运行 `alohamini find-port`，用同样方法确认右主臂。一次只拔一侧；没有端口变化或同时消失多个端口时，重新检查。
-
-接回后确认端口号。以下假设左臂为 `ttyACM0`、右臂为 `ttyACM1`，若不同则替换命令中的端口：
+树莓派标定双从臂：
 
 ```bash
-udevadm info --attribute-walk --name=/dev/ttyACM0 | awk -F'"' '/ATTRS\{serial\}/{print $2; exit}'
-udevadm info --attribute-walk --name=/dev/ttyACM1 | awk -F'"' '/ATTRS\{serial\}/{print $2; exit}'
+conda activate alohamini_host
+alohamini calibrate robot --robot_model <型号>
 ```
 
-确认左右序列号非空且不同，创建 PC 端规则：
+首次运行按提示绑定 USB：拔下该组左右 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码后继续标定。已有正确设备名时自动复用。
 
-```bash
-sudo nano /etc/udev/rules.d/90-alohamini-leader.rules
-```
+将双臂一起摆到 Home：
 
-写入实际序列号：
+| 舵机 | 摆位 |
+| --- | --- |
+| 1：肩部转向、5：腕部偏转、6：腕部旋转 | 对齐中位 |
+| 2：肩部抬升、3：肘部弯曲、4：腕部弯曲 | 蜷缩，轻靠对应的连杆或外壳接触面 |
+| 夹爪 | 合拢 |
 
-```udev
-SUBSYSTEM=="tty", ATTRS{serial}=="<左Leader序列号>", SYMLINK+="am_arm_leader_left"
-SUBSYSTEM=="tty", ATTRS{serial}=="<右Leader序列号>", SYMLINK+="am_arm_leader_right"
-```
+不要挤压打印件。双臂稳固、保持静止后按一次 Enter；程序写入并核对两侧零偏与编码器限位，再保存文件。任一侧失败时恢复原标定。过程不使能扭矩、不自动运动、不执行整机升降回零。
 
-**应用**并检查两个别名是否指向对应主臂：
+已有标定时按 Enter 复用，输入 `c` 重做。标定掉电保留，正常开机无需重新置零。
 
-```bash
-sudo udevadm control --reload-rules
-sudo udevadm trigger --subsystem-match=tty
-sudo udevadm settle
-ls -l /dev/am_arm_leader_left /dev/am_arm_leader_right
-```
+识别失败用 `alohamini find-port` 排查；自定义串口须同时传入 `--left_port`、`--right_port`。更换控制板时，备份并移走 `calibration/devices/` 下对应的 `leader.json` 或 `follower.json`，再运行标定；序列号缺失或重复的控制板无法自动绑定。
 
-<details>
-<summary>树莓派：设置从臂 Follower 别名</summary>
-
-在 `alohamini_host` 环境中用 `alohamini find-port` 分别确认两块控制板，再查询各自的序列号：
-
-```bash
-udevadm info --attribute-walk --name=/dev/ttyACM0
-```
-
-将命令中的端口换成实际设备，在 `/etc/udev/rules.d/90-alohamini-follower.rules` 写入实际序列号：
-
-```udev
-SUBSYSTEM=="tty", ATTRS{serial}=="<左从臂控制板序列号>", SYMLINK+="am_arm_follower_left"
-SUBSYSTEM=="tty", ATTRS{serial}=="<右从臂控制板序列号>", SYMLINK+="am_arm_follower_right"
-```
-
-重新加载规则并重新插入控制板：
-
-```bash
-sudo udevadm control --reload-rules
-```
-
-确认 `/dev/am_arm_follower_left`、`/dev/am_arm_follower_right` 对应正确后，再启动 Host。
-
-</details>
-
-### 相机
+## 3. 相机
 
 在树莓派查找相机，先停止占用相机的 Host：
 
@@ -106,33 +72,13 @@ alohamini find-cameras opencv
 
 相机名称可选 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。默认开启前视和右腕；仅选择已连接、已配置设备名的相机。用 `--record-time-s 0` 只列出设备，不保存预览。
 
-## 3. 标定
-
-PC 标定左右主臂：
-
-```bash
-conda activate alohamini
-alohamini calibrate leader --robot_model alohamini2pro --teleop.id am_leader_bi
-```
-
-树莓派标定从臂：
-
-```bash
-conda activate alohamini_host
-alohamini calibrate robot --robot_model alohamini2pro
-```
-
-按终端提示将关节放到中位，再手动移动至完整活动范围。`alohamini2pro` 的中位姿态为大臂向上平行 z 轴、小臂和夹爪沿 x 轴前伸且平行地面、夹爪开合平面水平，1 号肩部转向与 5 号腕部偏转处于中位。依次完成左右臂；`wrist_roll`、底盘和升降无需手动采集范围。已有标定时按 Enter 复用，输入 `c` 重做。
-
-标定保存在 `~/Alohamini_workspace/calibration/`。可复用同一台机器的完整标定，不能套用另一台机器的数据。自定义标定目录用 `--calibration_dir`；Host 的整机 JSON 用 `--calibration` 指定。重做会保留 `*.backup.json` 备份；标定失败或恢复失败时先排查，不要直接启动运动。
-
 ## 4. 启动树莓派 Host
 
 > 启动会使能舵机并执行升降触底回零。
 
 ```bash
 conda activate alohamini_host
-alohamini host --robot_model alohamini2pro
+alohamini host --robot_model <型号>
 ```
 Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
 
@@ -152,7 +98,7 @@ ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
 
 ```bash
 conda activate alohamini
-alohamini inspect --host <树莓派_IP> --model alohamini2pro
+alohamini inspect --host <树莓派_IP> --model <型号>
 ```
 
 只读取一次状态，不发送运动命令。连接失败时先确认 Host、IP、两端型号；字段单位与 Python 调用见[客户端接口](host-protocol.md)。
@@ -165,7 +111,7 @@ alohamini inspect --host <树莓派_IP> --model alohamini2pro
 conda activate alohamini
 alohamini teleoperate \
   --host <树莓派_IP> \
-  --robot_model alohamini2pro \
+  --robot_model <型号> \
   --teleop.id am_leader_bi
 ```
 
@@ -192,7 +138,7 @@ PC 终端显示遥操状态和跟踪信息，树莓派终端显示 Host 的 Hz�
 conda activate alohamini
 alohamini record \
   --host <树莓派_IP> \
-  --robot_model alohamini2pro \
+  --robot_model <型号> \
   --teleop.id am_leader_bi \
   --dataset pickup_01 \
   --task "pick up the object" \
@@ -295,7 +241,7 @@ alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
 
 ```bash
 alohamini replay --dataset pickup_01 \
-  --host <PI_IP> --robot_model alohamini2pro --episode 0
+  --host <PI_IP> --robot_model <型号> --episode 0
 ```
 
 支持 AlohaMini 数据集及其 LeRobot v3 导出；自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。

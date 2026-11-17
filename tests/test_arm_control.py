@@ -490,6 +490,36 @@ class ArmControllerTests(unittest.TestCase):
         self.host.cycle()
         self.assertFalse(self.writes)
 
+    def test_inward_buffer_keeps_requested_target_feedback_and_calibration_distinct(self):
+        inset = math.radians(2)
+        self.controller = ArmController(
+            self.devices, self.specs,
+            command_insets_rad={"left_joint": inset, "right_joint": inset},
+        )
+        self.host = HostSupervisor(
+            self.devices, [spec.actuator for spec in self.specs], control=self.controller
+        )
+        self.host.start()
+        original = [spec.calibration for spec in self.specs]
+        for device in self.devices.values():
+            device.current = 0
+            device.position = 2048 + round((1 + math.radians(1)) * 4096 / math.tau)
+        result = self.host.cycle(self.command({"left_joint": 1, "right_joint": -1}))
+        self.assertTrue(result.command_applied)
+        self.assertEqual(self.controller.requested_targets, {"left_joint": 1, "right_joint": -1})
+        self.assertEqual(
+            self.controller.sent_targets, {"left_joint": 1 - inset, "right_joint": -1 + inset}
+        )
+        self.assertGreater(self.controller.measured_positions["left_joint"], 1)
+        self.assertEqual([spec.calibration for spec in self.specs], original)
+        self.assertFalse(self.controller.contact_holds)
+
+    def test_invalid_inward_buffer_is_rejected_without_device_writes(self):
+        for insets in ({"unknown": 0.01}, {"left_joint": -0.1}, {"left_joint": 1}):
+            with self.assertRaises(ValueError):
+                ArmController(self.devices, self.specs, command_insets_rad=insets)
+        self.assertFalse(self.writes)
+
     def test_wrist_wrap_keeps_feedback_and_targets_on_the_same_single_turn_branch(self):
         calibration = EncoderCalibration(4096, 2048, 0, 1, 1, -math.pi, math.pi - math.tau / 4096)
         spec = replace(joint_spec("wrist"), calibration=calibration)

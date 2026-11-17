@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
 
-from alohamini._validation import identifier
+from alohamini._validation import finite_number, identifier
 from alohamini.calibration import EncoderCalibration
 from alohamini.hardware.feedback import FeedbackBatch
 from alohamini.model import ActuatorSpec
@@ -36,7 +36,13 @@ class ArmController:
     A controller is bound to exactly one Host session.
     """
 
-    def __init__(self, devices: Mapping[str, ArmDevice], joints: Sequence[ArmJointSpec]) -> None:
+    def __init__(
+        self,
+        devices: Mapping[str, ArmDevice],
+        joints: Sequence[ArmJointSpec],
+        *,
+        command_insets_rad: Mapping[str, float] | None = None,
+    ) -> None:
         joints = tuple(joints)
         if not all(isinstance(spec, ArmJointSpec) for spec in joints):
             raise TypeError("Expected ArmJointSpec values")
@@ -53,6 +59,18 @@ class ArmController:
                 raise ValueError(f"Arm calibration does not match device: {name}")
             self._groups.setdefault(source, {})[name] = spec
         self._guard = ArmContactGuard(self._joints)
+        insets = dict(command_insets_rad or {})
+        if not insets.keys() <= self._joints.keys():
+            raise ValueError("Command inset names must match installed arm joints")
+        self._command_bounds = {}
+        for name, inset in insets.items():
+            finite_number(inset, "command inset")
+            calibration = self._joints[name].calibration
+            lower, upper = calibration.position_min_rad, calibration.position_max_rad
+            if lower is None or not 0 <= inset < (upper - lower) / 2:
+                raise ValueError("Command inset must leave an executable calibrated interval")
+            if inset:
+                self._command_bounds[name] = lower + inset, upper - inset
         self._sequences: dict[str, int] = {}
         self._received: dict[str, float] = {}
         self._session: str | None = None
@@ -200,8 +218,12 @@ class ArmController:
         if not self._fresh:
             raise RuntimeError("Arm supervision requires a new feedback batch")
         self._fresh = False
+        goals = dict(self._targets)
+        for name, (lower, upper) in self._command_bounds.items():
+            if name in goals:
+                goals[name] = max(lower, min(upper, goals[name]))
         limited = self._guard.limit(
-            self._targets,
+            goals,
             self._positions,
             self._currents,
             now=time.monotonic(),

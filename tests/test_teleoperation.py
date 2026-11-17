@@ -307,10 +307,11 @@ class LeaderTests(unittest.TestCase):
         self.assertFalse(any(p[4] == 3 for p in self.serials["right"].requests))
 
     def test_cli_reports_leader_side_and_timeout_cause_without_starting_preview(self):
-        from scservo_sdk.protocol_packet_handler import protocol_packet_handler
         from scservo_sdk.scservo_def import COMM_RX_TIMEOUT
 
-        receive = protocol_packet_handler.rxPacket
+        from alohamini.hardware.feetech import _PacketPort
+
+        receive = _PacketPort.read_packet
         for side, label in (("left", "Left leader"), ("right", "Right leader")):
             with self.subTest(side=side):
                 self.prepare_model("alohamini2pro")
@@ -318,17 +319,17 @@ class LeaderTests(unittest.TestCase):
                 self.serials[side].drop.add((1, 2, 3))
                 failed = self.serials[side]
 
-                def receive_or_timeout(handler, port, failed_serial=failed):
+                def receive_or_timeout(port, failed_serial=failed):
                     if port.serial is failed_serial and failed_serial.requests[-1][4:6] == bytes(
                         [2, 3]
                     ):
                         return [], COMM_RX_TIMEOUT
-                    return receive(handler, port)
+                    return receive(port)
 
                 with (
                     patch.object(
-                        protocol_packet_handler,
-                        "rxPacket",
+                        _PacketPort,
+                        "read_packet",
                         autospec=True,
                         side_effect=receive_or_timeout,
                     ),
@@ -399,39 +400,23 @@ class LeaderTests(unittest.TestCase):
                     self.assertFalse(any(p[4] == 3 and p[5] in (42, 46) for p in serial.requests))
         self.assertEqual({p: p.read_bytes() for p in originals}, originals)
 
-    def test_leader_c_recalibrates_only_selected_arm_and_reloads_ranges(self):
+    def test_leader_rezero_request_cancels_without_implicit_recalibration(self):
         for serial in self.serials.values():
             serial.set(1, 31, 2, 999)
-        right_path = self.directory / "am_leader_bi_right.json"
-        before = right_path.read_bytes()
-        self.factory.side_effect = list(self.serials.values()) * 2
+        before = {p: p.read_bytes() for p in self.directory.glob("*.json")}
         with (
             patch("sys.stdin.isatty", return_value=True),
-            patch("builtins.input", side_effect=["c", "", ""]) as prompt,
-            patch(
-                "alohamini.calibration.procedure.record_ranges_of_motion",
-                side_effect=lambda bus, names: (
-                    dict.fromkeys(names, 800),
-                    dict.fromkeys(names, 3200),
-                ),
-            ) as ranges,
+            patch("builtins.input", return_value="c"),
         ):
-            with self.leader() as leader:
-                self.assertEqual(prompt.call_count, 3)
-                ranges.assert_called_once()
-                self.assertEqual(leader.calibrations["left"]["shoulder_pan"].range_min, 800)
-                for side, device in leader.devices.items():
-                    for name, encoder in device.position_calibrations.items():
-                        self.assertEqual(
-                            encoder, leader.calibrations[side][name].encoder_calibration()
-                        )
-                values = leader.read(ready_units(snapshot(), "alohamini2pro", "client"))
-                self.assertAlmostEqual(values["arm_left_shoulder_pan.pos"], (1500 - 800) / 12 - 100)
-        self.assertEqual(right_path.read_bytes(), before)
+            with self.assertRaises(InterruptedError):
+                with self.leader():
+                    pass
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
         for serial in self.serials.values():
             self.assertFalse(serial.is_open)
             self.assertTrue(all(serial.get(i, 40, 1) == 0 for i in serial.registers))
             self.assertFalse(any(p[4] == 3 and p[5] in (42, 46) for p in serial.requests))
+
 
     def test_leader_cancel_second_file_does_not_restore_first_bus(self):
         for serial in self.serials.values():
