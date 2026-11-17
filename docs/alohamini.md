@@ -84,7 +84,7 @@ alohamini calibrate robot --robot_model alohamini2pro
 
 接触后不挤压打印件。当前臂保持静止，按 Enter 采样；左臂完成后可放下，再准备右臂。两侧均完成后自动保存零偏、型号范围及映射，任一侧取消或失败时恢复两侧原标定。无需遍历行程；过程不使能扭矩、不发送运动目标、不触发整机升降回零。
 
-保存后支撑双臂和升降，断开再恢复**舵机电源**，然后启动 Host 或遥操。部分 STS 固件可能在零偏写入后保留内部圈数，电机断电可清除；仅重启程序不能代替电机断电，见 [实测问题记录](https://github.com/huggingface/lerobot/issues/5324)。
+零偏和范围写入 EEPROM，断电后保留，无需为保存标定额外断电。若静止状态下仍持续出现写入后位置回读异常，保持扭矩关闭，支撑双臂和升降，断开再恢复舵机电源后重试；STS3215 固件 3.10 有相关 [问题记录](https://github.com/huggingface/lerobot/issues/5324)。
 
 表中角度用于统一型号映射，接触面公差会形成零位误差，2° 执行缓冲不补偿该误差。需要更高绝对精度时，须实测接触角或使用统一定位块。标定姿态与模型坐标参考分别保存，现有模型零点、关节方向及归一化端点保持不变。
 
@@ -102,6 +102,8 @@ alohamini calibrate robot --robot_model alohamini2pro
 | `hardware/hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` | ROS 使用的从臂映射，无需再次摆位采样 |
 
 同一型号共享 [joint_spec.json](../models/alohamini2pro/config/kinematics/joint_spec.json) 中的坐标、方向和名义范围，每台设备只保存自己的零偏。不能互拷不同设备的零偏文件。备份或迁移时同时保留 JSON 与 `*.reference.json`；自定义目录用 `--calibration_dir`，Host 的整机文件用 `--calibration` 指定。重做前自动备份原文件；失败时尝试恢复 EEPROM 与文件，恢复失败须先排查。
+
+型号角度范围为：1 号 ±125°、2 号 −199°～0°、3 号 0°～186°、4 号 −95°～87°、5 号 ±82°、6 号 ±180°。1、5、6 号实际写入范围以设备中位计数为中心对称向内取整；6 号两侧各 2047 格，约 ±179.912°。舵机 EEPROM 保存整数零偏与计数上下限；`*.reference.json` 和 ROS 映射保存计数与模型角度的对应关系。
 
 新标定的 Host 对六个旋转关节的命令保留 2° 内侧缓冲，以容纳轻微装配行程差异；夹爪沿用接触保护。真实编码器反馈保留原值，运行中不自动漂移零点或扩大限位。型号名义范围与训练归一化不会随缓冲或某台设备的卡滞改变。已有数据和 checkpoint 仍按保存的标定与坐标描述解释；换用固定型号坐标须显式转换。
 

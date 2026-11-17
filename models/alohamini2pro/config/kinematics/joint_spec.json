@@ -45,7 +45,7 @@
     "shoulder_lift": {"limits_deg": [-199, 0], "reference_deg": -90, "direction": -1},
     "elbow_flex": {"limits_deg": [0, 186], "reference_deg": 90, "direction": -1},
     "wrist_flex": {"limits_deg": [-95, 87], "reference_deg": 0, "direction": 1},
-    "wrist_yaw": {"limits_deg": [-82, 84], "reference_deg": 0, "direction": 1},
+    "wrist_yaw": {"limits_deg": [-82, 82], "reference_deg": 0, "direction": 1},
     "wrist_roll": {"limits_deg": [-180, 180], "reference_deg": 0, "direction": -1}
   },
   "gripper": {

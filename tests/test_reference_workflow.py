@@ -102,6 +102,11 @@ def test_folded_capture_keeps_the_full_model_travel_on_one_encoder_branch(raw):
             assert entry["safe_q_max_rad"] == pytest.approx(
                 spec.joints[name].upper, abs=quantum + 1e-10
             )
+            if suffix in ("shoulder_pan", "wrist_yaw", "wrist_roll"):
+                assert calibration.range_min + calibration.range_max == 2 * entry["reference_tick"]
+                assert entry["safe_q_min_rad"] == pytest.approx(-entry["safe_q_max_rad"], abs=1e-12)
+            if suffix == "wrist_roll":
+                assert calibration.range_max - calibration.range_min == 4094
 
 
 @pytest.mark.parametrize("raw", [0, 600, 4095])

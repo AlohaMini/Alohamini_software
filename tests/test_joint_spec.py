@@ -55,7 +55,7 @@ def test_fixed_common_intervals_and_reference_pose_are_source_validated(specific
         "shoulder_lift": (-199, 0),
         "elbow_flex": (0, 186),
         "wrist_flex": (-95, 87),
-        "wrist_yaw_joint": (-82, 84),
+        "wrist_yaw_joint": (-82, 82),
         "wrist_roll": (-180, 180),
     }
     for suffix, degrees in expected.items():

@@ -41,6 +41,9 @@ def side_calibration(spec, side, actuators, positions, *, leader):
             endpoints = [reference + (q - row.reference) / scale for q in (row.lower, row.upper)]
             lower = max(0, math.ceil(min(endpoints) - 1e-7))
             upper = min(4095, math.floor(max(endpoints) + 1e-7))
+            if math.isclose(row.reference - row.lower, row.upper - row.reference, abs_tol=1e-10):
+                radius = min(reference - lower, upper - reference)
+                lower, upper = reference - radius, reference + radius
             capture_tick = max(
                 lower, min(upper, round(reference + (capture_q - row.reference) / scale))
             )

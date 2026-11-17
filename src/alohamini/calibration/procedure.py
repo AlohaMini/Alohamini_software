@@ -228,8 +228,8 @@ def calibrate(
                     if error_deg > spec.descriptor["reference_capture"]["max_span_deg"]:
                         raise CalibrationMismatchError(
                             f"{name}: reference position readback differs after offset write "
-                            f"(expected={expected}, actual={actual}); support the arm, "
-                            "power-cycle servo power and retry"
+                            f"(expected={expected}, actual={actual}); hold the supported arm "
+                            "still and retry; if this persists, power-cycle servo power"
                         )
                 print(f"{side.title()} reference captured; torque remains off.")
             if leader:
@@ -275,8 +275,4 @@ def calibrate(
             for path in motor_payloads:
                 print(f"Calibration and reference profile saved: {path}")
             print("Both arms remain torque-off; no lift homing or movement command was sent.")
-            # Some STS firmware retains an internal turn count across offset writes:
-            # https://github.com/huggingface/lerobot/issues/5324
-            print(
-                "Support the arms and lift; power-cycle SERVO power before Host or teleoperation."
-            )
+            print("Saved calibration persists after power-off.")
