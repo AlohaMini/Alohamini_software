@@ -73,50 +73,42 @@ alohamini calibrate robot --robot_model alohamini2pro
 
 按提示先摆左臂、再摆右臂，每侧确认一次。使用蜷缩姿态 `folded_endpoints`，关节位置为：
 
-| 舵机 | 摆位 | 型号名义角度 |
-| --- | --- | --- |
-| 1：肩部转向 | 对齐中位 | 0° |
-| 2：肩部抬升 `shoulder_lift` | 收拢方向轻靠上限接触面 | 0° |
-| 3：肘部弯曲 | 收拢方向轻靠下限接触面 | 0° |
-| 4：腕部弯曲 | 收拢方向轻靠上限接触面 | 87° |
-| 5：腕部偏转、6：腕部旋转 | 对齐中位 | 0° |
-| 夹爪 | 合拢 | closed |
+| 舵机 | 摆位 |
+| --- | --- |
+| 1：肩部转向、5：腕部偏转、6：腕部旋转 | 对齐中位 |
+| 2：肩部抬升、3：肘部弯曲、4：腕部弯曲 | 蜷缩方向轻靠对应的连杆或外壳接触面 |
+| 夹爪 | 合拢 |
 
-接触后不挤压打印件。当前臂保持静止，按 Enter 采样；左臂完成后可放下，再准备右臂。两侧均完成后自动保存零偏、型号范围及映射，任一侧取消或失败时恢复两侧原标定。无需遍历行程；过程不使能扭矩、不发送运动目标、不触发整机升降回零。
+轻靠接触面，不挤压打印件。当前臂保持静止，按 Enter；左臂完成后可放下，再准备右臂。两侧完成后保存；任一侧取消或失败时恢复原标定。过程不使能扭矩、不自动运动、不执行整机升降回零。
 
-零偏和范围写入 EEPROM，断电后保留，无需为保存标定额外断电。若静止状态下仍持续出现写入后位置回读异常，保持扭矩关闭，支撑双臂和升降，断开再恢复舵机电源后重试；STS3215 固件 3.10 有相关 [问题记录](https://github.com/huggingface/lerobot/issues/5324)。
+已有标定时，Enter 复用，输入 `c` 重做。更新型号规格后校验不匹配时，输入 `c` 重新标定。运行时 EEPROM 不匹配只能恢复已保存文件；重新置零先退出控制程序。
 
-表中角度用于统一型号映射，接触面公差会形成零位误差，2° 执行缓冲不补偿该误差。需要更高绝对精度时，须实测接触角或使用统一定位块。标定姿态与模型坐标参考分别保存，现有模型零点、关节方向及归一化端点保持不变。
-
-已有文件时，Enter 复用，输入 `c` 重新摆位标定。运行时发现 EEPROM 与文件不一致，只能确认恢复已保存文件；重新置零须先退出控制程序，再执行上述命令。
-
-从直立参考姿态生成的旧实验文件升级时输入 `c`，按蜷缩姿态重新采样；保存前自动备份旧文件。
+标定掉电保存。静止状态下回读仍持续异常时，先保持扭矩关闭，支撑双臂和升降，断电重启舵机后重试。
 
 标定保存在 `~/Alohamini_workspace/calibration/`：
 
 | 文件 | 用途 |
 | --- | --- |
-| `teleoperators/am_leader_bi_left.json`、`am_leader_bi_right.json` | PC 主臂舵机零偏和固定范围 |
-| `robots/AlohaMiniRobot.json` | 从臂及整机舵机参数，保留底盘和升降原参数 |
-| 与上述 JSON 同名的 `*.reference.json` | 设备参考读数、型号规格哈希及自动生成的关节映射 |
-| `hardware/hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` | ROS 使用的从臂映射，无需再次摆位采样 |
+| `teleoperators/am_leader_bi_left.json`、`am_leader_bi_right.json` | 左右主臂标定 |
+| `robots/AlohaMiniRobot.json` | 从臂及整机标定 |
+| 与上述 JSON 同名的 `*.reference.json` | 设备关节映射 |
+| `hardware/hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` | ROS 从臂映射，无需再次采样 |
 
-同一型号共享 [joint_spec.json](../models/alohamini2pro/config/kinematics/joint_spec.json) 中的坐标、方向和名义范围，每台设备只保存自己的零偏。不能互拷不同设备的零偏文件。备份或迁移时同时保留 JSON 与 `*.reference.json`；自定义目录用 `--calibration_dir`，Host 的整机文件用 `--calibration` 指定。重做前自动备份原文件；失败时尝试恢复 EEPROM 与文件，恢复失败须先排查。
+备份和迁移时同时保留 JSON 与 `*.reference.json`，不互用其他设备的标定。自定义目录用 `--calibration_dir`；Host 整机文件用 `--calibration`。重做前自动备份原文件；恢复失败时先排查，再启动运动。
 
-型号角度范围为：1 号 ±125°、2 号 −199°～0°、3 号 0°～186°、4 号 −95°～87°、5 号 ±82°、6 号 ±180°。1、5、6 号实际写入范围以设备中位计数为中心对称向内取整；6 号两侧各 2047 格，约 ±179.912°。舵机 EEPROM 保存整数零偏与计数上下限；`*.reference.json` 和 ROS 映射保存计数与模型角度的对应关系。
+型号范围见 [joint_spec.json](../models/alohamini2pro/config/kinematics/joint_spec.json)。1、5、6 号按中位对称取整；旋转关节执行时保留 2° 内侧缓冲，夹爪使用接触保护。接触面公差会影响零位精度；实机行程与全工作空间碰撞验收尚未完成。
 
-新标定的 Host 对六个旋转关节的命令保留 2° 内侧缓冲，以容纳轻微装配行程差异；夹爪沿用接触保护。真实编码器反馈保留原值，运行中不自动漂移零点或扩大限位。型号名义范围与训练归一化不会随缓冲或某台设备的卡滞改变。已有数据和 checkpoint 仍按保存的标定与坐标描述解释；换用固定型号坐标须显式转换。
+重标后复核遥操对应关系。已有数据和 checkpoint 使用保存的坐标描述。
 
-规格可离线检查：
+离线检查，在 PC 的 `alohamini` 环境中执行：
 
 ```bash
-python scripts/check_joint_spec.py
-python scripts/check_joint_spec.py --mujoco --output /绝对路径/新报告.json
+bash scripts/joint_spec.sh
+# 可选：同时核对 MuJoCo 限位并输出新报告
+bash scripts/joint_spec.sh --mujoco --output /绝对路径/新报告.json
 ```
 
-检查源模型、参考姿态、方向与范围一致性；`--mujoco` 还核对编译后的关节限位。当前规格尚未完成出厂实机行程与全工作空间碰撞验收，不能把单关节范围组合直接视为无碰撞工作空间。
-
-在独立工作树中轻量验证时，激活 `alohamini` 后执行 `bash scripts/joint_spec.sh`；它隔离加载该工作树的源码和模型，使用模拟串口，不修改主目录环境。连接设备试用该工作树时执行 `bash scripts/joint_spec.sh calibrate leader --robot_model alohamini2pro`，从臂将 `leader` 换为 `robot`；不要重装主目录的 editable 包。
+独立工作树连接设备时，用 `bash scripts/joint_spec.sh calibrate leader --robot_model alohamini2pro`；从臂将 `leader` 换为 `robot`。
 
 ## 4. 启动树莓派 Host
 
