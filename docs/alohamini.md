@@ -30,70 +30,17 @@ sudo usermod -aG dialout,video "$USER"
 ```
 已有正确的默认设备名时无需重新配置。
 
-### PC：检查主臂 Leader
+### 主从臂 USB
 
-```bash
-conda activate alohamini
-ls /dev/ttyACM*
-alohamini find-port
-```
+首次连接时直接执行第 3 节的标定命令。缺少固定设备名时，程序自动进入 USB 绑定：
 
-按提示只拔下左主臂的 USB，按 Enter，记录输出的端口并接回 USB。再次运行 `alohamini find-port`，用同样方法确认右主臂。一次只拔一侧；没有端口变化或同时消失多个端口时，重新检查。
+1. 支撑双臂及升降，停止占用串口的程序，按提示拔下该组左右 USB，按 Enter。
+2. 先插左臂 USB，识别完成后再插右臂；无需输入串口号或序列号。
+3. 程序自动生成并安装 udev 规则，按系统提示输入 `sudo` 密码，随后继续单姿态标定。
 
-接回后确认端口号。以下假设左臂为 `ttyACM0`、右臂为 `ttyACM1`，若不同则替换命令中的端口：
+主臂在 PC 绑定，从臂在树莓派绑定。规则为 `/etc/udev/rules.d/90-alohamini-leader.rules` 或 `90-alohamini-follower.rules`；USB 身份与生成的规则保存在 `~/Alohamini_workspace/calibration/devices/`。后续插入自动得到固定设备名，串口编号变化无需重设。已有正确固定设备名时跳过绑定。
 
-```bash
-udevadm info --attribute-walk --name=/dev/ttyACM0 | awk -F'"' '/ATTRS\{serial\}/{print $2; exit}'
-udevadm info --attribute-walk --name=/dev/ttyACM1 | awk -F'"' '/ATTRS\{serial\}/{print $2; exit}'
-```
-
-确认左右序列号非空且不同，创建 PC 端规则：
-
-```bash
-sudo nano /etc/udev/rules.d/90-alohamini-leader.rules
-```
-
-写入实际序列号：
-
-```udev
-SUBSYSTEM=="tty", ATTRS{serial}=="<左Leader序列号>", SYMLINK+="am_arm_leader_left"
-SUBSYSTEM=="tty", ATTRS{serial}=="<右Leader序列号>", SYMLINK+="am_arm_leader_right"
-```
-
-**应用**并检查两个别名是否指向对应主臂：
-
-```bash
-sudo udevadm control --reload-rules
-sudo udevadm trigger --subsystem-match=tty
-sudo udevadm settle
-ls -l /dev/am_arm_leader_left /dev/am_arm_leader_right
-```
-
-<details>
-<summary>树莓派：设置从臂 Follower 别名</summary>
-
-在 `alohamini_host` 环境中用 `alohamini find-port` 分别确认两块控制板，再查询各自的序列号：
-
-```bash
-udevadm info --attribute-walk --name=/dev/ttyACM0
-```
-
-将命令中的端口换成实际设备，在 `/etc/udev/rules.d/90-alohamini-follower.rules` 写入实际序列号：
-
-```udev
-SUBSYSTEM=="tty", ATTRS{serial}=="<左从臂控制板序列号>", SYMLINK+="am_arm_follower_left"
-SUBSYSTEM=="tty", ATTRS{serial}=="<右从臂控制板序列号>", SYMLINK+="am_arm_follower_right"
-```
-
-重新加载规则并重新插入控制板：
-
-```bash
-sudo udevadm control --reload-rules
-```
-
-确认 `/dev/am_arm_follower_left`、`/dev/am_arm_follower_right` 对应正确后，再启动 Host。
-
-</details>
+序列号缺失、重复或一次出现多个新串口时停止，不按 `ttyACM0/1` 猜测左右。更换控制板时，备份并移走对应 `devices/leader.json` 或 `follower.json` 及旧系统规则，再重新执行标定。自定义端口可同时传入 `--left_port`、`--right_port`，跳过自动绑定；排查单个端口可用 `alohamini find-port`。
 
 ### 相机
 
@@ -106,7 +53,9 @@ alohamini find-cameras opencv
 
 相机名称可选 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。默认开启前视和右腕；仅选择已连接、已配置设备名的相机。用 `--record-time-s 0` 只列出设备，不保存预览。
 
-## 3. 标定
+## 3. 单姿态标定
+
+适用 `alohamini2pro` 原装六自由度主从臂。每套双主臂、双从臂各执行一次；更换配对机器人无需重标主臂。先停止 Host 和占用串口的程序，支撑双臂及升降。
 
 PC 标定左右主臂：
 
@@ -122,9 +71,33 @@ conda activate alohamini_host
 alohamini calibrate robot --robot_model alohamini2pro
 ```
 
-按终端提示将关节放到中位，再手动移动至完整活动范围。`alohamini2pro` 的中位姿态为大臂向上平行 z 轴、小臂和夹爪沿 x 轴前伸且平行地面、夹爪开合平面水平，1 号肩部转向与 5 号腕部偏转处于中位。依次完成左右臂；`wrist_roll`、底盘和升降无需手动采集范围。已有标定时按 Enter 复用，输入 `c` 重做。
+按提示将左右臂同时摆成 `upright_forward`：大臂向上平行 z 轴，小臂和夹爪沿 x 轴前伸且平行地面，夹爪开合平面水平，肩部转向与腕部偏转处于中位，夹爪合拢。保持静止，按一次 Enter，自动完成双臂零偏、型号范围与坐标映射写入。无需遍历行程；过程不使能扭矩、不发送运动目标、不触发升降回零。
 
-标定保存在 `~/Alohamini_workspace/calibration/`。可复用同一台机器的完整标定，不能套用另一台机器的数据。自定义标定目录用 `--calibration_dir`；Host 的整机 JSON 用 `--calibration` 指定。重做会保留 `*.backup.json` 备份；标定失败或恢复失败时先排查，不要直接启动运动。
+已有文件时，Enter 复用，输入 `c` 重新摆位标定。运行时发现 EEPROM 与文件不一致，只能确认恢复已保存文件；重新置零须先退出控制程序，再执行上述命令。
+
+标定保存在 `~/Alohamini_workspace/calibration/`：
+
+| 文件 | 用途 |
+| --- | --- |
+| `teleoperators/am_leader_bi_left.json`、`am_leader_bi_right.json` | PC 主臂舵机零偏和固定范围 |
+| `robots/AlohaMiniRobot.json` | 从臂及整机舵机参数，保留底盘和升降原参数 |
+| 与上述 JSON 同名的 `*.reference.json` | 设备参考读数、型号规格哈希及自动生成的关节映射 |
+| `hardware/hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` | ROS 使用的从臂映射，无需再次摆位采样 |
+
+同一型号共享 [joint_spec.json](../models/alohamini2pro/config/kinematics/joint_spec.json) 中的坐标、方向和名义范围，每台设备只保存自己的零偏。不能互拷不同设备的零偏文件。备份或迁移时同时保留 JSON 与 `*.reference.json`；自定义目录用 `--calibration_dir`，Host 的整机文件用 `--calibration` 指定。重做前自动备份原文件；失败时尝试恢复 EEPROM 与文件，恢复失败须先排查。
+
+新标定的 Host 对六个旋转关节的命令保留 2° 内侧缓冲，以容纳轻微装配行程差异；夹爪沿用接触保护。真实编码器反馈保留原值，运行中不自动漂移零点或扩大限位。型号名义范围与训练归一化不会随缓冲或某台设备的卡滞改变。已有数据和 checkpoint 仍按保存的标定与坐标描述解释；换用固定型号坐标须显式转换。
+
+规格可离线检查：
+
+```bash
+python scripts/check_joint_spec.py
+python scripts/check_joint_spec.py --mujoco --output /绝对路径/新报告.json
+```
+
+检查源模型、参考姿态、方向与范围一致性；`--mujoco` 还核对编译后的关节限位。当前规格尚未完成出厂实机行程与全工作空间碰撞验收，不能把单关节范围组合直接视为无碰撞工作空间。
+
+在独立工作树中轻量验证时，激活 `alohamini` 后执行 `bash scripts/joint_spec.sh`；它隔离加载该工作树的源码和模型，使用模拟串口，不修改主目录环境。连接设备试用该工作树时执行 `bash scripts/joint_spec.sh calibrate leader --robot_model alohamini2pro`，从臂将 `leader` 换为 `robot`；不要重装主目录的 editable 包。
 
 ## 4. 启动树莓派 Host
 

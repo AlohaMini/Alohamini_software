@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from alohamini.calibration.procedure import ensure_calibration
+from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.hardware.feetech_device import FeetechBusDevice
 from alohamini.model import ActuatorSpec, get_robot_model
@@ -44,7 +45,8 @@ class BimanualLeader:
             "so101_leader_bi" if robot_model == "alohamini1" else "am_leader_bi"
         )
         paths = WorkspacePaths()
-        self.calibrations, self.devices = {}, {}
+        self.calibrations, self.devices, self.reference_profiles = {}, {}, {}
+        self.robot_model = robot_model
         self._calibration_paths = {}
         self._ports = {"left": left_port, "right": right_port}
         self._resources = ExitStack()
@@ -66,6 +68,9 @@ class BimanualLeader:
 
     def _load_device(self, side, port, actuators):
         calibration = load_motor_calibration(self._calibration_paths[side], actuators)
+        self.reference_profiles[side] = load_reference_profile(
+            self._calibration_paths[side], self.robot_model
+        )
         self.calibrations[side] = calibration
         self.devices[side] = FeetechBusDevice(
             port,

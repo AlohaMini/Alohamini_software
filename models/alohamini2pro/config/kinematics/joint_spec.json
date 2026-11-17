@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "specification_version": 1,
+  "robot_model": "alohamini2pro",
+  "reference_pose": "upright_forward",
+  "ticks_per_revolution": 4096,
+  "reference_capture": {"samples": 3, "max_span_deg": 0.5},
+  "derivation": "left_right_source_range_intersection_rounded_inward_to_whole_degrees",
+  "sources": [
+    "urdf/alohamini2pro.urdf",
+    "srdf/alohamini2pro.srdf",
+    "config/kinematics/upright_forward.json",
+    "config/kinematics/encoder_conventions.yaml",
+    "config/kinematics/joint_limits.yaml",
+    "config/kinematics/left_chain.json",
+    "config/kinematics/right_chain.json"
+  ],
+  "validation": {
+    "hardware_qualified": false,
+    "collision_free_workspace_verified": false
+  },
+  "boundary_policy": {
+    "command_inset_deg": 2.0,
+    "max_projection_deg": 2.0,
+    "feedback_tolerance_deg": 2.0,
+    "automatic_zero_update": false,
+    "automatic_limit_expansion": false
+  },
+  "arm_joints": {
+    "shoulder_pan": {"limits_deg": [-125, 125], "reference_deg": 0, "direction": 1},
+    "shoulder_lift": {"limits_deg": [-199, 0], "reference_deg": -90, "direction": -1},
+    "elbow_flex": {"limits_deg": [0, 186], "reference_deg": 90, "direction": -1},
+    "wrist_flex": {"limits_deg": [-95, 87], "reference_deg": 0, "direction": 1},
+    "wrist_yaw": {"limits_deg": [-82, 84], "reference_deg": 0, "direction": 1},
+    "wrist_roll": {"limits_deg": [-180, 180], "reference_deg": 0, "direction": -1}
+  },
+  "gripper": {
+    "closed_rad": 0.32,
+    "open_rad": -1.8030294104,
+    "direction": -1,
+    "joint_per_encoder_ratio": 1.0
+  },
+  "lift": {"limits_m": [-0.3, 0.3]}
+}

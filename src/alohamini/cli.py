@@ -305,15 +305,10 @@ def _main(argv: list[str] | None = None) -> int:
         "--display_data", "--display-data", type=parse_bool, nargs="?", const=True, default=False
     )
     calibration = commands.add_parser(
-        "calibrate", help="本机手动标定主臂、整机或仅双臂，不使能或自动回零"
+        "calibrate", help="自动绑定 USB、一次姿态置零并生成设备配置；不使能或自动运动"
     )
-    calibration.add_argument("target", choices=("leader", "robot", "arms"))
-    calibration.add_argument(
-        "--rehome", action="store_true", help="仅 arms：重新设置双臂零偏；默认保留"
-    )
-    calibration.add_argument(
-        "--robot_model", required=True, choices=("alohamini1", "alohamini2", "alohamini2pro")
-    )
+    calibration.add_argument("target", choices=("leader", "robot"))
+    calibration.add_argument("--robot_model", required=True, choices=("alohamini2pro",))
     calibration.add_argument(
         "--id", "--teleop.id", dest="device_id", help="与遥操或 Host 一致的标定 ID"
     )
@@ -324,7 +319,7 @@ def _main(argv: list[str] | None = None) -> int:
         "--teleop.arm_profile",
         "--arm_profile",
         dest="arm_profile",
-        choices=("so-arm-5dof", "am-leader-6dof"),
+        choices=("am-leader-6dof",),
         help="主臂型号，默认按整机选择",
     )
     host = commands.add_parser(
@@ -557,7 +552,6 @@ def _main(argv: list[str] | None = None) -> int:
                 left_port=args.left_port,
                 right_port=args.right_port,
                 arm_profile=args.arm_profile,
-                rehome=args.rehome,
             )
             return 0
         if args.command == "paths":

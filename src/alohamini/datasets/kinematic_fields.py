@@ -412,6 +412,30 @@ def descriptor_from_reference_pose(info, name, *, model=None):
                 raise ValueError(f"Recording lacks the homing offset for {motor}")
             units = HostPositionUnits(**{key: captured[key] for key in HOST_UNIT_KEYS})
             encoder = coordinate["encoder"]
+            profile = metadata.get("reference_calibration")
+            if profile is not None:
+                if (
+                    profile.get("protocol") != "alohamini-reference-v1"
+                    or profile.get("robot_model") != model.model_id
+                    or profile.get("reference_pose") != name
+                ):
+                    raise ValueError(
+                        "Recorded reference calibration differs from the pose protocol"
+                    )
+                side, joint = motor.removeprefix("arm_").split("_", 1)
+                binding = profile["arms"][side]["joints"][joint]
+                expected = binding["motor_calibration"]
+                if (
+                    binding["id"] != captured["id"]
+                    or binding["model"] != captured["model"]
+                    or binding["sign"] != encoder["direction"]
+                    or any(
+                        expected[key] != captured[key]
+                        for key in MOTOR_COORDINATE_KEYS if key in expected
+                    )
+                ):
+                    raise ValueError(f"Reference calibration differs from recorded motor: {motor}")
+                encoder["reference_tick"] = profile["reference_ticks"][motor]
             reference_tick = encoder["reference_tick"]
             if not units.range_min <= reference_tick <= units.range_max:
                 raise ValueError(f"Reference-pose tick is outside recorded motor range: {motor}")
