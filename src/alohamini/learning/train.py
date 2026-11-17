@@ -21,6 +21,13 @@ from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
 
+if __name__ == "__main__":
+    from alohamini.environment import runtime_environment
+
+    # Report drift before importing the optional learning frameworks.
+    with runtime_environment(["train", *sys.argv[1:]]):
+        pass
+
 import numpy as np
 import torch
 from accelerate import __version__ as accelerate_version
@@ -958,15 +965,17 @@ def _train(settings, execution):
 
 
 def main():
+    from alohamini.environment import runtime_environment
     from alohamini.learning.train_config import parse_training_args
 
-    cfg, background = parse_training_args()
-    if background:
-        job = launch_training(cfg)
-        print(json.dumps(job, ensure_ascii=False, indent=2))
-        print("tail -f", shlex.quote(job["log"]))
-    else:
-        train(cfg)
+    with runtime_environment(["train", *sys.argv[1:]]):
+        cfg, background = parse_training_args()
+        if background:
+            job = launch_training(cfg)
+            print(json.dumps(job, ensure_ascii=False, indent=2))
+            print("tail -f", shlex.quote(job["log"]))
+        else:
+            train(cfg)
 
 
 if __name__ == "__main__":
