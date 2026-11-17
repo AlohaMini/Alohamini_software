@@ -200,7 +200,7 @@ def sync_setup(repository, monkeypatch, tmp_path):
     return repository, calls, distributions
 
 
-def test_sync_checks_plan_installs_hashed_lock_and_verifies(sync_setup, tmp_path):
+def test_sync_checks_plan_installs_hashed_lock_and_verifies(sync_setup, tmp_path, capsys):
     root, calls, _ = sync_setup
     env.sync_environment(root, "pc")
     install = [c for c in calls if "install" in c]
@@ -208,8 +208,30 @@ def test_sync_checks_plan_installs_hashed_lock_and_verifies(sync_setup, tmp_path
     assert "--no-deps" in install[2] and str(root) + "[pc]" in install[2]
     assert all(c[0] == sys.executable for c in calls)
     assert calls[-1][-2:] == ["pip", "check"]
-    reports = list((tmp_path / "workspace/logs/environment").glob("*/after.json"))
-    assert len(reports) == 1 and json.loads(reports[0].read_text())["matched"]
+    assert env.inspect_environment(root, "pc")["matched"]
+    assert not (tmp_path / "workspace").exists()
+    output = capsys.readouterr()
+    assert output.out == f"环境已同步：{sys.prefix}\n"
+    assert not output.err
+
+
+def test_already_matching_environment_leaves_no_record(sync_setup, monkeypatch, tmp_path):
+    root, _, distributions = sync_setup
+    distributions[:] = [
+        distribution("torch", "2.15.0+cu132"),
+        distribution("transformers", "5.22.1"),
+    ]
+    original = env.subprocess.run
+
+    def run(command, **kwargs):
+        result = original(command, **kwargs)
+        if "--report" in command:
+            Path(command[command.index("--report") + 1]).write_text('{"install": []}')
+        return result
+
+    monkeypatch.setattr(env.subprocess, "run", run)
+    env.sync_environment(root, "pc")
+    assert not (tmp_path / "workspace").exists()
 
 
 def test_dry_run_does_not_install_or_create_success_record(sync_setup, tmp_path):
@@ -253,24 +275,45 @@ def test_checkout_change_during_resolution_prevents_install(sync_setup, monkeypa
     assert not (tmp_path / "workspace").exists()
 
 
-def test_failed_install_preserves_snapshot_without_success_record(
+@pytest.mark.parametrize("failure", ["install", "check", "versions", "interrupt"])
+def test_failed_sync_preserves_diagnostics(
     sync_setup,
     monkeypatch,
     tmp_path,
+    capsys,
+    failure,
 ):
-    root, calls, _ = sync_setup
+    root, _, distributions = sync_setup
     original = env.subprocess.run
 
     def fail(command, **kwargs):
-        if "install" in command and "--dry-run" not in command:
+        if (
+            failure in {"install", "interrupt"}
+            and "install" in command
+            and "--dry-run" not in command
+        ):
+            if failure == "interrupt":
+                raise KeyboardInterrupt
             raise subprocess.CalledProcessError(1, command)
-        return original(command, **kwargs)
+        if failure == "check" and command[-2:] == ["pip", "check"]:
+            raise subprocess.CalledProcessError(1, command)
+        result = original(command, **kwargs)
+        if failure == "versions" and command[-2:] == ["pip", "check"]:
+            distributions[:] = []
+        return result
 
     monkeypatch.setattr(env.subprocess, "run", fail)
-    with pytest.raises(subprocess.CalledProcessError):
+    error = {"versions": RuntimeError, "interrupt": KeyboardInterrupt}.get(
+        failure, subprocess.CalledProcessError
+    )
+    with pytest.raises(error):
         env.sync_environment(root, "pc")
     snapshots = list((tmp_path / "workspace/logs/environment").glob("*/before.txt"))
     assert len(snapshots) == 1
+    assert snapshots[0].read_text() == "torch==2.11.0\n"
+    assert json.loads(snapshots[0].with_name("plan.json").read_text())["install"]
+    assert error.__name__ in snapshots[0].with_name("error.txt").read_text()
+    assert str(snapshots[0].parent) in capsys.readouterr().err
     assert not snapshots[0].with_name("after.json").exists()
 
 

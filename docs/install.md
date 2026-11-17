@@ -201,4 +201,4 @@ alohamini env sync
 
 启动命令会检查相关依赖并提示版本差异，不自动安装。`sync` 按当前代码的锁文件同步，支持 `--dry-run` 预检；Host 环境可显式指定 `--role host`。尚未安装命令时，使用 `python env/manage.py check` 或 `python env/manage.py sync`。
 
-同步前先结束该环境中的训练、推理、Host 和 Notebook。额外包存在版本冲突时会在安装前退出；原版本清单与同步记录保存在工作目录的 `logs/environment/`。Python 大小版本变化时按前述步骤重新创建环境。
+同步前先结束该环境中的训练、推理、Host 和 Notebook。额外包存在版本冲突时会在安装前退出；成功后不保留记录，安装失败或中断时将诊断信息保存在工作目录的 `logs/environment/`。Python 大小版本变化时按前述步骤重新创建环境。

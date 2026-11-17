@@ -317,18 +317,10 @@ def sync_environment(root, role, *, dry_run=False):
                     )
                 )
                 return
-            # Save the previous state; pip installations are not transactional.
-            directory = Path(
-                tempfile.mkdtemp(
-                    prefix="sync-",
-                    dir=_logs_directory(WorkspacePaths()),
-                )
-            )
+            # Keep diagnostics only if installation fails or is interrupted.
             before = subprocess.run(
                 [*pip, "freeze", "--all"], check=True, text=True, capture_output=True
             ).stdout
-            (directory / "before.txt").write_text(before)
-            (directory / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")
             try:
                 subprocess.run(install, check=True)
                 ensure_snapshot(sources)
@@ -341,11 +333,16 @@ def sync_environment(root, role, *, dry_run=False):
                 report = inspect_environment(root, role)
                 if not report["matched"]:
                     raise RuntimeError("安装后的版本仍与锁文件不一致；请运行 alohamini env check。")
-                (directory / "after.json").write_text(json.dumps(report, indent=2) + "\n")
-                print(f"环境已同步：{sys.prefix}\n记录：{directory}")
-            except Exception:
+            except (Exception, KeyboardInterrupt) as exc:
+                directory = Path(
+                    tempfile.mkdtemp(prefix="sync-", dir=_logs_directory(WorkspacePaths()))
+                )
+                (directory / "before.txt").write_text(before)
+                (directory / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")
+                (directory / "error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
                 print(f"同步未完成；原环境版本和安装计划保存在 {directory}", file=sys.stderr)
                 raise
+            print(f"环境已同步：{sys.prefix}")
 
 
 def _logs_directory(paths):
