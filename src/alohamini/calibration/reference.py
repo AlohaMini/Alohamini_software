@@ -102,6 +102,69 @@ def side_calibration(spec, side, actuators, positions, *, leader):
     )
 
 
+def reference_coordinates(metadata):
+    """Validate the recorded model binding before comparing device-independent units."""
+    profile = metadata.get("reference_calibration")
+    if not isinstance(profile, dict):
+        raise ValueError("Model-coordinate binding requires both reference profiles")
+    spec = ModelJointSpecification.from_model(metadata["robot_model"])
+    if (
+        type(metadata.get("schema_version")) is not int
+        or metadata["schema_version"] != 1
+        or type(profile.get("schema_version")) is not int
+        or profile["schema_version"] != 1
+        or profile.get("role") != "robot"
+        or profile.get("protocol") != PROTOCOL
+        or profile.get("robot_model") != spec.model.model_id
+        or profile.get("specification_sha256") != spec.signature
+        or profile.get("reference_pose") != spec.descriptor["reference_pose"]
+        or profile.get("capture_pose") != spec.descriptor["calibration_pose"]["name"]
+        or profile.get("boundary_policy") != spec.descriptor["boundary_policy"]
+    ):
+        raise ValueError("Reference profile differs from the model coordinate specification")
+    coordinates, references, captures = {}, {}, {}
+    try:
+        for side in ("left", "right"):
+            motors = tuple(
+                m for m in spec.model.actuators if m.bus == side and m.name.startswith("arm_")
+            )
+            values, positions = {}, {}
+            for motor in motors:
+                item = metadata["motors"][motor.name]
+                if item["model"] != motor.motor_model:
+                    raise ValueError(f"Reference motor identity differs: {motor.name}")
+                values[motor.name] = MotorCalibration(
+                    **{
+                        key: item[key]
+                        for key in ("id", "drive_mode", "homing_offset", "range_min", "range_max")
+                    }
+                )
+                positions[motor.name] = (
+                    profile["capture_ticks"][motor.name] + item["homing_offset"]
+                ) % 4096
+            expected, ticks, mapping = side_calibration(spec, side, motors, positions, leader=False)
+            if values != expected or profile["arms"][side] != mapping:
+                raise ValueError(
+                    f"Recorded {side} motor parameters differ from their reference map"
+                )
+            references.update(ticks)
+            for suffix, entry in mapping["joints"].items():
+                name = f"arm_{side}_{suffix}"
+                unit = values[name].position_units(metadata["motors"][name]["normalization"])
+                captures[name] = entry["capture_tick"]
+                coordinates[name] = (
+                    unit.normalization,
+                    entry["sign"],
+                    entry["safe_q_min_rad"],
+                    entry["safe_q_max_rad"],
+                )
+        if references != profile["reference_ticks"] or captures != profile["capture_ticks"]:
+            raise ValueError("Reference encoder ticks differ from the generated model binding")
+    except (KeyError, TypeError) as error:
+        raise ValueError("Incomplete model reference metadata") from error
+    return spec.signature, coordinates
+
+
 def json_bytes(value):
     return (json.dumps(value, indent=4, allow_nan=False) + "\n").encode()
 

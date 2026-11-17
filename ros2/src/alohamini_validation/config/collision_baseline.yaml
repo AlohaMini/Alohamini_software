@@ -1,16 +1,16 @@
 schema_version: 2
 model: alohamini2pro_moveit
 source_description_sha256:
-  urdf/alohamini2pro.urdf: c5f2f2c2c17e0979730044a41e5db3e1db1b19550ee223de3ed64c1cfcafed0f
+  urdf/alohamini2pro.urdf: cc7958dad549429632810a90b4c3aab3c1ad7f6e3404fac56c47b53daac071cc
   srdf/alohamini2pro.srdf: eb2ca182c095d3ce7ab47dbd8272888c5ae310c88793946d2b1aadfc6a42c945
 geometry_counts:
   links: 29
   joints: 28
   visuals: 26
-  collisions: 1115
-  collision_boxes: 21
-  collision_cylinders: 6
-  collision_meshes: 1088
+  collisions: 164
+  collision_boxes: 17
+  collision_cylinders: 5
+  collision_meshes: 142
   srdf_disabled_pairs: 35
 state_validity:
   reference_clear:

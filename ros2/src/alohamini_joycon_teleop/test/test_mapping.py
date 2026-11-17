@@ -53,6 +53,17 @@ def teleop_factory():
     return create
 
 
+def test_hardware_ik_uses_shared_ranges_and_the_host_execution_margin(teleop_factory):
+    with teleop_factory(True) as node:
+        assert node.model_joint_margin > math.radians(2)
+        for side in ("left", "right"):
+            geometry = node.kinematics[side]
+            assert geometry.joint_limits[0] == pytest.approx(
+                (-math.radians(125), math.radians(125))
+            )
+            assert geometry.joint_limits[4] == pytest.approx((-math.radians(82), math.radians(82)))
+
+
 @pytest.mark.parametrize("hardware_mode", [False, True], ids=["preview", "hardware"])
 def test_fk_and_ik_requests_use_only_the_selected_model_joints(teleop_factory, hardware_mode):
     from alohamini_joycon_teleop.teleop_node import ROOT_JOINTS
@@ -71,9 +82,7 @@ def test_fk_and_ik_requests_use_only_the_selected_model_joints(teleop_factory, h
         if hardware_mode:
             assert not set(ROOT_JOINTS) & node.positions.keys()
         else:
-            node.update_base(
-                None, {"buttons": _buttons(), "stick": [2000.0, 4095.0]}, False, 0.1
-            )
+            node.update_base(None, {"buttons": _buttons(), "stick": [2000.0, 4095.0]}, False, 0.1)
             assert node.preview_base[0] > 0.0
             assert [node.positions[name] for name in ROOT_JOINTS] == node.preview_base
         node.fk_client = Mock()

@@ -287,12 +287,25 @@ class NativePolicy:
         """Bind once before execution; later changes always require strict matching."""
         if getattr(self, "offline", False):
             raise ValueError("Offline policy cannot bind to a robot")
-        if self.calibration_mode == "strict" or self._robot_bound:
+        if self._robot_bound:
             self._check_calibration(snapshot)
             return None
-        from alohamini.learning.calibration import legacy_normalized_binding, normalized_transfer
+        from alohamini.learning.calibration import (
+            legacy_normalized_binding,
+            normalized_transfer,
+            reference_binding,
+        )
 
-        if self.calibration_mode == "legacy_normalized":
+        shared_reference = self.calibration_mode == "strict" and (
+            self.source.get("robot_metadata", {}).get("reference_calibration") is not None
+        )
+        if self.calibration_mode == "strict" and not shared_reference:
+            self._check_calibration(snapshot)
+            self._robot_bound = True
+            return None
+        if shared_reference:
+            metadata, report = reference_binding(self.source["robot_metadata"], snapshot)
+        elif self.calibration_mode == "legacy_normalized":
             if self.selection and self.selection.source_names != state_names(snapshot.robot_model):
                 raise ValueError("Legacy state names/order differ from the declared Host model")
             metadata, report = legacy_normalized_binding(
@@ -300,13 +313,15 @@ class NativePolicy:
             )
         else:
             metadata, report = normalized_transfer(self.source["robot_metadata"], snapshot)
+        validation_metadata = self.source["robot_metadata"] if shared_reference else metadata
         if getattr(self, "field_transform", None) is not None:
             self.field_transform.validate_source(
-                {**self.source, "robot_metadata": metadata}, self.manifest["state_feature"]
+                {**self.source, "robot_metadata": validation_metadata},
+                self.manifest["state_feature"],
             )
         validate_binding = getattr(getattr(self, "algorithm", None), "validate_robot_binding", None)
         if validate_binding is not None:
-            validate_binding(self.config, self.source, metadata)
+            validate_binding(self.config, self.source, validation_metadata)
         if self.selection and self.calibration_mode != "legacy_normalized":
             live_source = {**self.source, "robot_metadata": metadata}
             self.selection = StateSelection(
@@ -333,6 +348,13 @@ class NativePolicy:
             raise ValueError(
                 "Legacy policy must bind to validated Host calibration before execution"
             )
+        if (
+            getattr(self, "calibration_mode", "strict") == "strict"
+            and not getattr(self, "_robot_bound", False)
+            and getattr(self, "source", {}).get("robot_metadata", {}).get("reference_calibration")
+            is not None
+        ):
+            self.bind_robot(snapshot)
         # Compare owned copies: in-place changes must invalidate the static check.
         context = (
             snapshot.robot_model,
@@ -343,6 +365,10 @@ class NativePolicy:
         )
         if context != getattr(self, "_calibration_context", None):
             check_calibration(self.robot_metadata, snapshot)
+            if getattr(self, "_robot_bound", False) and self.robot_metadata.get(
+                "reference_calibration"
+            ) != snapshot.payload["_robot_metadata"].get("reference_calibration"):
+                raise ValueError("Host reference calibration changed after binding")
             self._calibration_context = deepcopy(context)
 
     def bind_fixed_current(self, snapshot, client_id):

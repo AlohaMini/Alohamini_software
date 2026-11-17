@@ -1,6 +1,7 @@
 """Expand the real launch graph without starting ROS, HID, or Host processes."""
 
 import importlib.util
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -85,7 +86,9 @@ def test_hardware_mode_matrix(cameras, moveit, joycon, rviz):
     assert packages.count("moveit_ros_move_group") == int(moveit == "true")
     assert packages.count("alohamini_joycon_teleop") == int(joycon == "true")
     assert packages.count("rviz2") == int(rviz == "true" and "true" in (joycon, moveit))
-    assert not processes
+    assert len(processes) == int(joycon == "true")
+    if processes:
+        assert processes[0][-4:-2] == ["-m", "alohamini.kinematics.worker"]
     if joycon == "true":
         params = next(p for package, _, p in nodes if package == "alohamini_joycon_teleop")
         assert params["hardware_mode"] is True
@@ -108,7 +111,7 @@ def test_hardware_defaults_match_original_modes():
 def test_hardware_forwards_bridge_camera_and_extrinsics_parameters():
     nodes, _ = hardware_graph(
         host="192.0.2.10",
-        arm_mapping_dir="/tmp/robot-profile",
+        robot_model="alohamini2",
         observation_port="6556",
         command_port="6555",
         state_timestamp_mode="host_wall",
@@ -122,11 +125,11 @@ def test_hardware_forwards_bridge_camera_and_extrinsics_parameters():
     )
     by_executable = {executable: params for _, executable, params in nodes}
     bridge = by_executable["bridge_node"]
+    assert bridge["expected_robot_model"] == "alohamini2"
     assert {
         name: bridge[name]
         for name in (
             "host",
-            "arm_mapping_dir",
             "observation_port",
             "command_port",
             "state_timestamp_mode",
@@ -134,7 +137,6 @@ def test_hardware_forwards_bridge_camera_and_extrinsics_parameters():
         )
     } == dict(
         host="192.0.2.10",
-        arm_mapping_dir="/tmp/robot-profile",
         observation_port=6556,
         command_port=6555,
         state_timestamp_mode="host_wall",
@@ -180,8 +182,9 @@ def test_bridge_runtime_restores_description_bridge_and_optional_cameras(cameras
 @pytest.mark.parametrize("python", ["", "/opt/robot env/bin/python"])
 def test_reader_default_environment_and_explicit_python(python):
     _, processes = hardware_graph(enable_joycon="true", native_python=python)
-    assert len(processes) == 1
-    command = processes[0]
+    assert len(processes) == 2
+    worker, command = processes
+    assert worker[-4:-2] == ["-m", "alohamini.kinematics.worker"]
     if python:
         assert command[0] == python
         assert len(command) == 4
@@ -264,6 +267,24 @@ def test_moveit_launch_uses_the_matching_physical_or_planning_tree(filename, roo
     assert {joint.attrib["name"] for joint in semantic.findall("group_state/joint")} <= joints
 
 
+def test_hardware_planning_goals_respect_factory_travel_and_execution_margin():
+    nodes, _ = launch_graph("alohamini_moveit_config", "move_group.launch.py", use_rviz="false")
+    params = next(params for package, _, params in nodes if package == "moveit_ros_move_group")
+    for side in ("left", "right"):
+        for suffix, endpoints in (
+            ("shoulder_pan", (-123, 123)),
+            ("shoulder_lift", (-197, -2)),
+            ("elbow_flex", (2, 184)),
+            ("wrist_flex", (-93, 85)),
+            ("wrist_yaw_joint", (-80, 80)),
+            ("wrist_roll", (-178, 178)),
+        ):
+            key = f"robot_description_planning.joint_limits.{side}_{suffix}"
+            assert params[f"{key}.has_position_limits"] is True
+            assert params[f"{key}.min_position"] == pytest.approx(math.radians(endpoints[0]))
+            assert params[f"{key}.max_position"] == pytest.approx(math.radians(endpoints[1]))
+
+
 @pytest.mark.parametrize(
     "package,filename,frame",
     [
@@ -293,31 +314,14 @@ def test_joycon_preview_has_moveit_without_a_second_state_publisher():
             "alohamini_joycon_teleop",
         ]
     )
-    assert len(processes) == 1
-    assert processes[0][0] == "/opt/robot env/bin/python"
-    assert processes[0][-1] == "tcp://127.0.0.1:5568"
+    assert len(processes) == 2
+    worker, reader = processes
+    assert worker[-4:-2] == ["-m", "alohamini.kinematics.worker"]
+    assert reader[0] == "/opt/robot env/bin/python"
+    assert reader[-1] == "tcp://127.0.0.1:5568"
     teleop = next(params for package, _, params in nodes if package == "alohamini_joycon_teleop")
     assert teleop["hardware_mode"] is False
-    assert teleop["input_endpoint"] == processes[0][-1]
-
-
-@pytest.mark.parametrize("joycon", [False, True])
-def test_old_hardware_aliases_remain_components_only(joycon):
-    package = "alohamini_joycon_teleop" if joycon else "alohamini_moveit_config"
-    filename = "hardware.launch.py" if joycon else "hardware_execution.launch.py"
-    nodes, processes = launch_graph(
-        package,
-        filename,
-        host="192.0.2.10",
-        arm_mapping_dir="/unused",
-        use_rviz="false",
-        joycon_rviz="false",
-        start_native_reader="false",
-    )
-    assert not processes
-    assert [p for p, _, _ in nodes] == [
-        "alohamini_joycon_teleop" if joycon else "moveit_ros_move_group"
-    ]
+    assert teleop["input_endpoint"] == reader[-1]
 
 
 def test_joycon_preview_rviz_uses_only_offline_topics():

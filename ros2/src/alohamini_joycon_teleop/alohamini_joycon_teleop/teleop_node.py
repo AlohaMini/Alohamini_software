@@ -27,6 +27,7 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from visualization_msgs.msg import Marker, MarkerArray
 
 from alohamini.model import get_robot_model
+from alohamini.model.joint_spec import ModelJointSpecification
 
 from .kinematics import (
     AlohaMiniArmKinematics,
@@ -250,6 +251,16 @@ class JoyConTeleop(Node):
         self.kinematics = {
             side: AlohaMiniArmKinematics.from_description(side) for side in ("left", "right")
         }
+        self.model_joint_margin = 0.0
+        if self.hardware_mode:
+            specification = ModelJointSpecification.from_model("alohamini2pro")
+            for geometry in self.kinematics.values():
+                joints = [specification.joints[name] for name in geometry.joint_names]
+                geometry.joint_limits = tuple((joint.lower, joint.upper) for joint in joints)
+                self.model_joint_margin = max(
+                    self.model_joint_margin,
+                    max(joint.command_inset for joint in joints) + math.tau / 4096,
+                )
         self.ik_worker = None
         if self.get_parameter("ik_endpoint").value:
             from alohamini.kinematics.worker import PinkWorkerClient
@@ -1124,7 +1135,10 @@ class JoyConTeleop(Node):
                 damping=float(self.get_parameter("dls_damping").value),
                 max_joint_velocity=float(self.get_parameter("dls_max_joint_velocity_rad_s").value),
                 max_joint_step=float(self.get_parameter("dls_max_joint_step_rad").value),
-                joint_limit_margin=float(self.get_parameter("dls_joint_limit_margin_rad").value),
+                joint_limit_margin=max(
+                    float(self.get_parameter("dls_joint_limit_margin_rad").value),
+                    getattr(self, "model_joint_margin", 0.0),
+                ),
                 qp_solver=str(self.get_parameter("ik_qp_solver").value),
                 max_joint_acceleration=float(
                     self.get_parameter("ik_max_joint_acceleration_rad_s2").value

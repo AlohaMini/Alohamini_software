@@ -258,14 +258,6 @@ def calibrate(
             payloads = dict(motor_payloads)
             for path in motor_payloads:
                 payloads[path.with_name(f"{path.stem}.reference.json")] = json_bytes(profile)
-            if not leader:
-                hardware = (
-                    directory / "hardware"
-                    if calibration_dir is not None
-                    else workspace.calibration / "hardware"
-                )
-                for side, mapping in mappings.items():
-                    payloads[hardware / f"hardware_joint_map_{side}.yaml"] = json_bytes(mapping)
             save_bundle(payloads, motor_files)
             for path in motor_payloads:
                 print(f"标定已保存：{path}")

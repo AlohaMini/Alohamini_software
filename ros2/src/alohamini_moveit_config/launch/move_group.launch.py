@@ -11,6 +11,7 @@ from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 
 from alohamini.model import get_robot_model
+from alohamini.model.joint_spec import ModelJointSpecification
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -38,6 +39,15 @@ def generate_launch_description() -> LaunchDescription:
         .to_moveit_configs()
     )
     moveit_config.robot_description = {"robot_description": model.description_xml("collision")}
+    specification = ModelJointSpecification.from_model(model)
+    limits = moveit_config.joint_limits["robot_description_planning"]["joint_limits"]
+    for name, joint in specification.joints.items():
+        limits[name] = dict(
+            limits.get(name, {}),
+            has_position_limits=True,
+            min_position=joint.lower + joint.command_inset,
+            max_position=joint.upper - joint.command_inset,
+        )
     move_group_parameters = [
         moveit_config.to_dict(),
         {

@@ -16,13 +16,19 @@ from alohamini.paths import WorkspacePaths
 
 def review_profile(directory):
     """Check consumer schemas only; never claim identity with connected hardware."""
-    from alohamini_bridge.bridge_node import load_mapper
     from alohamini_camera.camera_info import load_camera_info_document
     from alohamini_camera.extrinsics_node import load_extrinsic
 
     issues = []
     model = get_robot_model("alohamini2pro")
-    checks = [("hardware", lambda: load_mapper(directory / "hardware", model))]
+    checks = []
+    if (directory / "hardware").exists():
+        issues.append(
+            {
+                "path": "hardware",
+                "reason": "Archived mappings are not used by ROS; calibrate Home on the Host",
+            }
+        )
     motor = directory / "robots/AlohaMiniRobot.json"
     if motor.exists():
         checks.append(

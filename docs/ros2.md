@@ -26,16 +26,16 @@ source ros2/env.bash
 
 ## 整机状态与 TF
 
-适用 `alohamini2pro`。将左右臂 URDF 映射 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml` 及 `lift_axis.yaml` 放在 `~/Alohamini_workspace/calibration/hardware/`。这些文件与舵机标定 JSON 分开。
+适用 `alohamini2`、`alohamini2pro`。先按[主从臂标定](alohamini.md#2-主从臂标定)完成从臂 Home 标定，再启动 Host。ROS 自动读取 Host 的标定，无需复制映射文件；更换同型号机器人时使用新机器的 Host 地址。
 
 真机与离线规划共享同一份关节、碰撞几何、惯量和 SRDF。真机以 `base_link` 为根；离线 `plan_only` 自动附加 X／Y／偏航虚拟关节，以 `root` 为根。
 
 ```bash
 export ROS_LOG_DIR="${ALOHAMINI_WORKSPACE:-$HOME/Alohamini_workspace}/logs/ros2"
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP>
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号>
 ```
 
-默认同时订阅 Host 已开启的相机；只查看状态时追加 `enable_cameras:=false`。自定义关节标定目录用 `arm_mapping_dir:=/绝对路径`，也支持 `ALOHAMINI_WORKSPACE`。启动时命令通道关闭，不发送运动命令。
+默认同时订阅 Host 已开启的相机；只查看状态时追加 `enable_cameras:=false`。启动时命令通道关闭，不发送运动命令。
 
 - `/joint_states`、`/tf`、`/tf_static`：模型关节与坐标树，关节位置使用 rad 或 m。
 - `/alohamini_lerobot_bridge/measured_joint_states`：双臂位置与升降编码器推算位置。没有高度传感器，不提供关节力矩。
@@ -89,13 +89,11 @@ ros2 service call /alohamini_lerobot_bridge/command_enable std_srvs/srv/SetBool 
 连接 Host、发布真实状态并启动 MoveIt：
 
 ```bash
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> \
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号> \
   enable_moveit:=true use_rviz:=true
 ```
 
 检查模型姿态与实物一致，再通过 `command_enable` 服务启用执行。MoveIt 使用双臂、夹爪和升降的上述 action；启动 MoveIt 本身不会启用运动。
-
-旧入口 `alohamini_moveit_config hardware_execution.launch.py` 仅启动 MoveIt；`alohamini_joycon_teleop hardware.launch.py` 仅启动 Joy-Con 组件。两者都不启动 Bridge；整机使用上面的 Bringup 命令。
 
 不连接机器人，仅离线规划：
 
@@ -120,7 +118,7 @@ ros2 run alohamini_validation validate_tf
 
 ## Joy-Con 遥操
 
-适用 `alohamini2pro`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
+适用 `alohamini2`、`alohamini2pro`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
 
 ```bash
 conda deactivate
@@ -135,7 +133,7 @@ ros2 launch alohamini_joycon_teleop preview.launch.py
 真机整机启动（不要重复启动 Bringup 或读取器）：
 
 ```bash
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> \
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号> \
   enable_joycon:=true use_rviz:=true
 ```
 
@@ -210,19 +208,9 @@ ros2 launch alohamini_camera camera.launch.py host:=<PI_IP> \
 
 外参须有 `accepted_` 开头的状态、`T_mount_link_from_camera_optical.xyz_m`，以及明确的 `quaternion_xyzw` 或 `quaternion_wxyz`。默认拒绝候选结果，不覆盖标定文件中的坐标系。
 
-## 关节与升降映射
+## 升降测量与资产导入
 
-双臂先按 [单姿态标定](alohamini.md#2-主从臂标定) 执行 `alohamini calibrate robot --robot_model alohamini2pro`，自动生成 `hardware_joint_map_left.yaml`、`hardware_joint_map_right.yaml`，无需再次摆位采样。
-
-ROS 运行在 PC 时，将树莓派生成的映射复制到 PC 的工作区；重做从臂标定后同步更新：
-
-```bash
-mkdir -p ~/Alohamini_workspace/calibration/hardware
-scp '<用户>@<PI_IP>:Alohamini_workspace/calibration/hardware/hardware_joint_map_*.yaml' \
-  ~/Alohamini_workspace/calibration/hardware/
-```
-
-两端使用相同型号规格。桥接会核对映射与 Host 的舵机参数；自定义路径用 `arm_mapping_dir:=/绝对路径`。
+双臂使用 Host 的 Home 标定；升降使用 Host 的高度参考和毫米单位，自动转换为模型的米制关节坐标。重新标定后重启 Host 与 ROS Bringup。
 
 导入已有相机、升降等资产（不覆盖现有文件、不写舵机）：
 
@@ -232,9 +220,9 @@ ros2 run alohamini_calibration import_calibration \
   --output ~/Alohamini_workspace/calibration/imports/previous_robot
 ```
 
-输出保留测量与候选状态；舵机 JSON 放在 `robots/`，ROS 映射在 `hardware/`，相机结果在 `cameras/`。`import_manifest.json` 记录来源、校验值和读取问题。导入不自动启用，须核对当前设备；候选内外参仍须单独验证。
+导入不自动应用；`import_manifest.json` 记录来源和校验结果。先核对当前设备，候选内外参须单独验证。
 
-升降机构需要实测映射时使用以下只读工具，适用 `alohamini2pro`，不使能、回零或写 EEPROM。
+检查升降机构的导程与方向时使用以下只读工具，适用 `alohamini2pro`，不使能、回零或写 EEPROM。
 
 升降：确认 Host 已建立有效高度参考、机构处于真实 Home，再启动：
 
@@ -242,9 +230,7 @@ ros2 run alohamini_calibration import_calibration \
 ros2 run alohamini_calibration calibrate_lift_axis --host <PI_IP>
 ```
 
-按提示用已有控制方式移动升降，停止后实测相对 Home 的高度并输入毫米值；至少采集两个不同高度。无需撞击上限取点。空行结束，输出拟合报告和候选映射；同名 `.samples.yaml` 保存已完成采样，中断不会丢失这些点。工具不更改 Host 导程、方向或软限位，候选映射的上界仅取实际采样的最大高度。
-
-核对方向、RViz 姿态和已测升降行程后，将升降候选文件安装为 `lift_axis.yaml`，保留原文件备份。双臂映射由单姿态标定生成，不需要此采样过程。
+按提示用已有控制方式移动升降，停止后实测相对 Home 的高度并输入毫米值；至少采集两个不同高度。空行结束，输出拟合报告和候选映射；同名 `.samples.yaml` 保存已完成采样。结果不自动应用，不更改 Host 导程、方向或软限位。
 
 ## 相机标定
 
@@ -274,7 +260,7 @@ Host 须开启对应相机；改变标定板距离、角度和画面位置。默
 手眼标定前，确认双臂 URDF 映射正确，并同步 PC 与树莓派系统时钟。整机状态和相机均使用 Host 时间：
 
 ```bash
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> \
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号> \
   state_timestamp_mode:=host_wall camera_timestamp_mode:=host_wall
 ```
 

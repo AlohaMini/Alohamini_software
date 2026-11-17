@@ -120,7 +120,11 @@ class EvaluationGuard:
 
 
 def _bind_calibration(policy, snapshot):
-    if getattr(policy, "calibration_mode", None) not in ("normalized", "legacy_normalized"):
+    if getattr(policy, "calibration_mode", None) not in (
+        "strict",
+        "normalized",
+        "legacy_normalized",
+    ):
         return
     report = policy.bind_robot(snapshot)
     if report is None:
@@ -129,7 +133,9 @@ def _bind_calibration(policy, snapshot):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"calibration-transfer-{time.time_ns()}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
-    if report.get("mode") == "legacy_normalized":
+    if report.get("mode") == "model_coordinates":
+        logging.info("已核对相同型号坐标，绑定当前设备标定：%s", path)
+    elif report.get("mode") == "legacy_normalized":
         logging.warning(
             "旧数据归一化部署：按声明的动作单位使用当前 Host 标定；原始标定仍未知。部署记录：%s",
             path,

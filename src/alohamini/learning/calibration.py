@@ -1,11 +1,48 @@
-"""Explicit transfer of normalized arm coordinates between calibrated robots."""
+"""Validate model coordinates and explicitly bind older normalized coordinates."""
 
+import math
 from copy import deepcopy
 
 from alohamini.apps.replay import check_calibration
 from alohamini.calibration.encoder import HostPositionUnits
+from alohamini.calibration.reference import reference_coordinates
 from alohamini.datasets.record import state_names
 from alohamini.model import get_robot_model
+
+
+def reference_binding(trained, snapshot):
+    """Bind equivalent model coordinates; no observation, action or statistic is changed."""
+    live = snapshot.payload["_robot_metadata"]
+    source_signature, source = reference_coordinates(trained)
+    target_signature, target = reference_coordinates(live)
+    if source_signature != target_signature or source.keys() != target.keys():
+        raise ValueError("Training and Host use different model coordinate specifications")
+    for name, old in source.items():
+        new = target[name]
+        if old[:2] != new[:2] or not all(
+            math.isclose(a, b, rel_tol=0, abs_tol=1e-10)
+            for a, b in zip(old[2:], new[2:], strict=True)
+        ):
+            raise ValueError(f"Training and Host position coordinates differ: {name}")
+    candidate, differences = deepcopy(trained), {}
+    fields = ("homing_offset", "range_min", "range_max")
+    for name in source:
+        old, new = candidate["motors"][name], live["motors"][name]
+        changes = {
+            key: {"trained": old[key], "Host": new[key]} for key in fields if old[key] != new[key]
+        }
+        if changes:
+            differences[name] = changes
+        old.update({key: new[key] for key in fields})
+    check_calibration(candidate, snapshot)
+    return deepcopy(live), dict(
+        mode="model_coordinates",
+        meaning="Verified identical model coordinates; device encoder offsets may differ",
+        specification_sha256=source_signature,
+        differences=differences,
+        trained_metadata=deepcopy(trained),
+        host_metadata=deepcopy(live),
+    )
 
 
 def legacy_normalized_binding(source, robot_model, snapshot):

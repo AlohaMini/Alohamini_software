@@ -9,8 +9,6 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 
-from alohamini.paths import WorkspacePaths
-
 
 def _launch(package: str, filename: str) -> PythonLaunchDescriptionSource:
     share = Path(get_package_share_directory(package))
@@ -43,7 +41,9 @@ def generate_launch_description() -> LaunchDescription:
         [
             DeclareLaunchArgument("host", default_value="127.0.0.1"),
             DeclareLaunchArgument(
-                "arm_mapping_dir", default_value=str(WorkspacePaths().calibration / "hardware")
+                "robot_model",
+                default_value="alohamini2pro",
+                choices=["alohamini2", "alohamini2pro"],
             ),
             DeclareLaunchArgument("observation_port", default_value="5556"),
             DeclareLaunchArgument("command_port", default_value="5555"),
@@ -77,9 +77,9 @@ def generate_launch_description() -> LaunchDescription:
                 _launch("alohamini_bridge", "bridge.launch.py"),
                 launch_arguments={
                     "host": LaunchConfiguration("host"),
+                    "robot_model": LaunchConfiguration("robot_model"),
                     "observation_port": LaunchConfiguration("observation_port"),
                     "command_port": LaunchConfiguration("command_port"),
-                    "arm_mapping_dir": LaunchConfiguration("arm_mapping_dir"),
                     "state_timestamp_mode": LaunchConfiguration("state_timestamp_mode"),
                     "max_state_response_age_sec": LaunchConfiguration("max_state_response_age_sec"),
                 }.items(),

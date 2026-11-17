@@ -300,7 +300,7 @@ class CalibrationProcedureTests(unittest.TestCase):
         )
         self.assert_passive_and_closed()
 
-    def test_robot_one_pose_preserves_velocity_axes_and_generates_ros_bindings(self):
+    def test_robot_one_pose_preserves_velocity_axes_and_saves_shared_bindings(self):
         self.configure("robot")
         self.run_calibration()
         path = self.root / "AlohaMiniRobot.json"
@@ -317,10 +317,14 @@ class CalibrationProcedureTests(unittest.TestCase):
                                 serial.registers[motor.motor_id][address],
                                 self.original[side][motor.motor_id][address],
                             )
-            generated = json.loads(
-                (self.root / "hardware" / f"hardware_joint_map_{side}.yaml").read_text()
+            self.assertEqual(
+                set(profile["arms"][side]["joints"]),
+                {
+                    motor.name.removeprefix(f"arm_{side}_")
+                    for motor in motors
+                    if motor.name.startswith("arm_")
+                },
             )
-            self.assertEqual(generated, profile["arms"][side])
         self.assert_passive_and_closed()
 
     def test_counter_endpoints_can_be_zeroed_without_an_offset_overflow(self):
@@ -379,7 +383,7 @@ class CalibrationProcedureTests(unittest.TestCase):
         def fail_once(source, target):
             nonlocal count
             count += 1
-            if count == 4:
+            if count == 2:
                 raise OSError("injected file replacement failure")
             return actual_replace(source, target)
 
