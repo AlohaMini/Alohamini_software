@@ -163,10 +163,10 @@ def calibrate(
         if reuse:
             for path in set(paths.values()):
                 load_reference_profile(path, robot_model)
-    if left_port is None and right_port is None:
+    if leader and left_port is None and right_port is None:
         from alohamini.hardware.usb_setup import ensure_arm_ports
 
-        ports = ensure_arm_ports("leader" if leader else "follower", workspace=workspace)
+        ports = ensure_arm_ports("leader", workspace=workspace)
     with ExitStack() as cleanup:
         buses = {}
         for side, port in zip(("left", "right"), ports, strict=True):

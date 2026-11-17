@@ -12,8 +12,6 @@
 
 AM-ARM 主臂使用 5 V、从臂使用 12 V。
 
-更新包内型号定义或模型资源后，请重启 Host 和 PC 控制程序，使新资源生效。
-
 | 设备 | 连接位置 | 默认设备名 |
 | --- | --- | --- |
 | 左、右主臂 | PC USB | `/dev/am_arm_leader_left`、`/dev/am_arm_leader_right` |
@@ -23,7 +21,9 @@ AM-ARM 主臂使用 5 V、从臂使用 12 V。
 
 ## 2. 主从臂标定
 
-AM-ARM（`alohamini2`、`alohamini2pro`）按以下 Home 流程标定。每套双主臂、双从臂各标定一次；更换配对机器人无需重标主臂。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。
+AM-ARM（`alohamini2`、`alohamini2pro`）按以下 Home 流程标定。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。
+
+已有标定时按 Enter 复用，输入 `c` 重做。标定掉电保留，正常开机无需重新置零。
 
 首次使用需设置设备权限，重新登录后生效：
 
@@ -31,23 +31,7 @@ AM-ARM（`alohamini2`、`alohamini2pro`）按以下 Home 流程标定。每套�
 sudo usermod -aG dialout,video "$USER"
 ```
 
-PC 标定双主臂：
-
-```bash
-conda activate alohamini
-alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
-```
-
-树莓派标定双从臂：
-
-```bash
-conda activate alohamini_host
-alohamini calibrate robot --robot_model <型号>
-```
-
-首次运行按提示绑定 USB：拔下该组左右 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码后继续标定。已有正确设备名时自动复用。
-
-将双臂一起摆到 Home：
+Home 摆位：
 
 | 舵机 | 摆位 |
 | --- | --- |
@@ -55,11 +39,29 @@ alohamini calibrate robot --robot_model <型号>
 | 2：肩部抬升、3：肘部弯曲、4：腕部弯曲 | 蜷缩，轻靠对应的连杆或外壳接触面 |
 | 夹爪 | 合拢 |
 
-不要挤压打印件。双臂稳固、保持静止后按一次 Enter；程序写入并核对两侧零偏与编码器限位，再保存文件。任一侧失败时恢复原标定。过程不使能扭矩、不自动运动、不执行整机升降回零。
+轻靠接触面，不挤压打印件。标定期间不使能扭矩、不自动运动；任一侧失败时恢复原标定。
 
-已有标定时按 Enter 复用，输入 `c` 重做。标定掉电保留，正常开机无需重新置零。
+### 主臂标定（PC）
 
-识别失败用 `alohamini find-port` 排查；自定义串口须同时传入 `--left_port`、`--right_port`。更换控制板时，备份并移走 `calibration/devices/` 下对应的 `leader.json` 或 `follower.json`，再运行标定；序列号缺失或重复的控制板无法自动绑定。
+```bash
+conda activate alohamini
+alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
+```
+
+首次按提示绑定 USB：拔下左右主臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码。已有正确设备名时自动复用。
+
+首次或重做时，将双主臂一起摆到 Home，保持静止，按一次 Enter 完成。更换配对机器人无需重标主臂。
+
+### 从臂标定（树莓派）
+
+```bash
+conda activate alohamini_host
+alohamini calibrate robot --robot_model <型号>
+```
+
+使用已有的从臂设备名。首次或重做时，将双从臂一起摆到 Home，保持静止，按一次 Enter 完成。
+
+串口查询用 `alohamini find-port`；自定义串口须同时传入 `--left_port`、`--right_port`。
 
 ## 3. 相机
 
@@ -70,7 +72,7 @@ conda activate alohamini_host
 alohamini find-cameras opencv
 ```
 
-相机名称可选 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。默认开启前视和右腕；仅选择已连接、已配置设备名的相机。用 `--record-time-s 0` 只列出设备，不保存预览。
+加 `--record-time-s 0` 只列出设备，不保存预览。
 
 ## 4. 启动树莓派 Host
 
@@ -81,6 +83,8 @@ conda activate alohamini_host
 alohamini host --robot_model <型号>
 ```
 Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
+
+相机名称可选 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。默认开启前视和右腕；用 `--cameras` 指定已连接、已配置设备名的相机，多个名称用空格分隔。
 
 ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
 
@@ -134,6 +138,17 @@ PC 终端显示遥操状态和跟踪信息，树莓派终端显示 Host 的 Hz�
 
 ## 7. PC 本地数采
 
+先在树莓派选择本次要录制的相机并启动 Host，数采期间保持 Host 运行：
+
+```bash
+conda activate alohamini_host
+alohamini host --robot_model <型号> --cameras <相机列表>
+```
+
+`<相机列表>` 用空格分隔，例如 `forward wrist_right`；可选名称见 [Host 配置](#4-启动树莓派-host)。数采记录 Host 开启的全部相机。
+
+然后在 PC 启动数采：
+
 ```bash
 conda activate alohamini
 alohamini record \
@@ -147,7 +162,7 @@ alohamini record \
   --reset_time 3
 ```
 
-默认 30 Hz 数采，记录 Host 开启的全部相机。`--display_data` 开启预览。
+默认 30 Hz 数采，`--display_data` 开启预览。
 `--profile_timing` 开启采集、保存分段和各相机视频处理计时；默认关闭，不采集详细视频计时。
 
 | 参数 | 用途 |

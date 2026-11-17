@@ -283,6 +283,23 @@ class CalibrationProcedureTests(unittest.TestCase):
         self.assertFalse(any(serial.requests for serial in self.serials.values()))
         self.assertFalse(list(self.root.rglob("*.json")))
 
+    def test_follower_uses_existing_ports_without_usb_binding(self):
+        self.configure("robot")
+        for side in ("left", "right"):
+            self.serials[f"/dev/am_arm_follower_{side}"] = self.serials[f"/dev/test-{side}"]
+        with (
+            patch("alohamini.hardware.usb_setup.ensure_arm_ports") as setup,
+            patch("builtins.input", return_value="") as prompt,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            calibrate("robot", self.model_name, calibration_dir=self.root)
+        setup.assert_not_called()
+        self.assertEqual(prompt.call_count, 1)
+        self.assertIsNotNone(
+            load_reference_profile(self.root / "AlohaMiniRobot.json", self.model_name)
+        )
+        self.assert_passive_and_closed()
+
     def test_robot_one_pose_preserves_velocity_axes_and_generates_ros_bindings(self):
         self.configure("robot")
         self.run_calibration()
