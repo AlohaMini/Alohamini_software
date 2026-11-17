@@ -28,19 +28,18 @@ Ubuntu / Raspberry Pi OS 的设备权限设置，重新登录后生效：
 ```bash
 sudo usermod -aG dialout,video "$USER"
 ```
-已有正确的默认设备名时无需重新配置。
 
 ### 主从臂 USB
 
-首次连接时直接执行第 3 节的标定命令。缺少固定设备名时，程序自动进入 USB 绑定：
+主臂在 PC、从臂在树莓派执行[标定命令](#3-单姿态标定)。首次绑定按提示操作：
 
-1. 支撑双臂及升降，停止占用串口的程序，按提示拔下该组左右 USB，按 Enter。
-2. 先插左臂 USB，识别完成后再插右臂；无需输入串口号或序列号。
-3. 程序自动生成并安装 udev 规则，按系统提示输入 `sudo` 密码，随后继续单姿态标定。
+1. 停止 Host、遥操等串口程序，支撑双臂和升降；拔下该组左右 USB，按 Enter。
+2. 先插左臂，识别后保持连接，再插右臂。
+3. 按系统提示输入 `sudo` 密码，完成设备名绑定后继续标定。
 
-主臂在 PC 绑定，从臂在树莓派绑定。规则为 `/etc/udev/rules.d/90-alohamini-leader.rules` 或 `90-alohamini-follower.rules`；USB 身份与生成的规则保存在 `~/Alohamini_workspace/calibration/devices/`。后续插入自动得到固定设备名，串口编号变化无需重设。已有正确固定设备名时跳过绑定。
+已有正确设备名时自动复用，后续插拔无需重配。识别失败时用 `alohamini find-port` 排查；序列号缺失或重复的控制板无法自动绑定。
 
-序列号缺失、重复或一次出现多个新串口时停止，不按 `ttyACM0/1` 猜测左右。更换控制板时，备份并移走对应 `devices/leader.json` 或 `follower.json` 及旧系统规则，再重新执行标定。自定义端口可同时传入 `--left_port`、`--right_port`，跳过自动绑定；排查单个端口可用 `alohamini find-port`。
+自定义串口同时传入 `--left_port`、`--right_port`。更换控制板时，若已有 USB 绑定文件，先备份并移走 `~/Alohamini_workspace/calibration/devices/` 下主臂的 `leader.json` 或从臂的 `follower.json`，再运行标定。
 
 ### 相机
 
