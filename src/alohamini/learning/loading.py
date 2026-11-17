@@ -4,7 +4,27 @@ import importlib.util
 import multiprocessing
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, default_collate
+
+
+def collate_samples(samples):
+    """Keep each sample's variable-length annotations intact; collate tensors normally."""
+    if (
+        not samples
+        or not isinstance(samples[0], dict)
+        or not any("_annotations" in sample for sample in samples)
+    ):
+        return default_collate(samples)
+    if not all("_annotations" in sample for sample in samples):
+        raise ValueError("A batch cannot mix annotated and unannotated sample contracts")
+    result = default_collate(
+        [
+            {key: value for key, value in sample.items() if key != "_annotations"}
+            for sample in samples
+        ]
+    )
+    result["_annotations"] = [sample["_annotations"] for sample in samples]
+    return result
 
 
 def resolve_data_pipeline(cfg):
@@ -71,4 +91,5 @@ def make_loader(
         multiprocessing_context=multiprocessing_context if num_workers else None,
         pin_memory=torch.device(device).type == "cuda",
         generator=generator,
+        collate_fn=collate_samples,
     )

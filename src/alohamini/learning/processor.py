@@ -12,6 +12,31 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
+def source_image_size(settings):
+    """Preserve recorded pixels until an algorithm's own image processor runs.
+
+    The current dataset interface has one common H/W. Heterogeneous source
+    camera sizes require an explicit shared resize rather than a silent stretch.
+    """
+    from alohamini.datasets.tools import dataset_info
+
+    info = dataset_info(settings["dataset"])
+    selected = settings.get("cameras")
+    shapes = set()
+    for key, feature in info["features"].items():
+        if not key.startswith("observation.images."):
+            continue
+        if selected is not None and key.removeprefix("observation.images.") not in selected:
+            continue
+        shape = feature["shape"]
+        shapes.add(tuple(shape[-2:] if shape[0] == 3 else shape[:2]))
+    if len(shapes) != 1:
+        raise ValueError(
+            "Selected cameras have different source sizes; set --image_size explicitly"
+        )
+    return list(shapes.pop())
+
+
 def validate_statistics(stats, expected, names, *, manifest=None):
     if set(stats) != {*expected, "action"}:
         raise ValueError("Checkpoint is missing normalization statistics")
@@ -21,6 +46,13 @@ def validate_statistics(stats, expected, names, *, manifest=None):
             if key.startswith("observation.images.")
             else ((len(names),) if key == "action" else expected[key][1])
         )
+        windows = (manifest or {}).get("config", {}).get("normalization_windows", {})
+        if key in windows:
+            if values.get("offsets") != windows[key]:
+                raise ValueError(f"Checkpoint temporal normalization offsets mismatch: {key}")
+            shape = (len(windows[key]), *shape)
+        elif "offsets" in values:
+            raise ValueError(f"Unexpected temporal normalization statistics: {key}")
         if any(np.asarray(values[k]).shape != shape for k in ("mean", "std")):
             raise ValueError(f"Checkpoint normalization shape mismatch: {key}")
 
@@ -88,7 +120,10 @@ class Processor:
     validation nor inference fits new statistics.
     """
 
-    def __init__(self, stats, device="cpu", *, modes=None):
+    def __init__(
+        self, stats, device="cpu", *, modes=None, clip=None, quantile_options=None,
+        normalization_windows=None,
+    ):
         self.device = torch.device(device)
         self._image_divisor = (
             torch.tensor(255.0, dtype=torch.float32, device=self.device)
@@ -101,11 +136,60 @@ class Processor:
                 modes if modes is not None else dict.fromkeys(stats, "MEAN_STD")
             ).items()
         }
+        if quantile_options is not None and not isinstance(quantile_options, dict):
+            raise ValueError("quantile_options must map field names to options")
+        self.quantile_options = dict(quantile_options or {})
+        for key, options in self.quantile_options.items():
+            if (
+                self.modes.get(key) != NormalizationMode.QUANTILES
+                or not isinstance(options, dict)
+                or options.keys() - {"epsilon", "clip_to_bounds", "zero_if_zero_bounds"}
+            ):
+                raise ValueError(f"{key}: invalid quantile options")
+            epsilon = options.get("epsilon", 0.0)
+            if (
+                isinstance(epsilon, bool)
+                or not isinstance(epsilon, (int, float))
+                or not np.isfinite(epsilon)
+                or epsilon < 0
+                or any(
+                    type(options[name]) is not bool
+                    for name in ("clip_to_bounds", "zero_if_zero_bounds")
+                    if name in options
+                )
+            ):
+                raise ValueError(f"{key}: invalid quantile epsilon or bounds policy")
+            self.quantile_options[key] = dict(options)
+        # Clipping is a policy decision, not implied by a normalization mode.
+        self.clip = dict(clip or {})
+        for key, bounds in self.clip.items():
+            if (
+                key not in self.modes
+                or not isinstance(bounds, (list, tuple))
+                or len(bounds) != 2
+                or not np.isfinite(bounds).all()
+                or bounds[0] >= bounds[1]
+            ):
+                raise ValueError(f"{key}: clip requires finite increasing [low, high] bounds")
         self.stats = {}
+        self.normalization_windows = dict(normalization_windows or {})
+        for key, offsets in self.normalization_windows.items():
+            if (
+                key not in self.modes or self.modes[key] == NormalizationMode.IDENTITY
+                or not isinstance(offsets, (list, tuple)) or not offsets
+                or any(type(n) is not int for n in offsets) or len(set(offsets)) != len(offsets)
+                or stats.get(key, {}).get("offsets") != list(offsets)
+            ):
+                raise ValueError(f"{key}: temporal normalization needs matching declared offsets")
+        self.decode_before_queue = "action" in self.normalization_windows
         for key, mode in self.modes.items():
             if mode == NormalizationMode.IDENTITY:
                 continue
-            fields = ("min", "max") if mode == NormalizationMode.MIN_MAX else ("mean", "std")
+            fields = {
+                NormalizationMode.MIN_MAX: ("min", "max"),
+                NormalizationMode.QUANTILES: ("q01", "q99"),
+                NormalizationMode.MEAN_STD: ("mean", "std"),
+            }[mode]
             if key not in stats or not set(fields) <= stats[key].keys():
                 raise ValueError(f"{key}: {mode.value} requires {fields} statistics")
             values = {
@@ -113,14 +197,24 @@ class Processor:
                 for name in fields
             }
             low, high = (values[name] for name in fields)
+            if key in self.normalization_windows and (
+                low.ndim != 2 or low.shape[0] != len(self.normalization_windows[key])
+            ):
+                raise ValueError(f"{key}: temporal statistics require [time, coordinate] arrays")
             if (
                 low.shape != high.shape
                 or not torch.isfinite(low).all()
                 or not torch.isfinite(high).all()
-                or (high < (low if mode == NormalizationMode.MIN_MAX else 0)).any()
+                or (high < (0 if mode == NormalizationMode.MEAN_STD else low)).any()
             ):
                 raise ValueError(f"{key}: Invalid normalization statistics")
             self.stats[key] = values
+        self.quantile_spans = {}
+        for key, mode in self.modes.items():
+            if mode == NormalizationMode.QUANTILES:
+                span = self.stats[key]["q99"] - self.stats[key]["q01"]
+                span = span + self.quantile_options.get(key, {}).get("epsilon", 0.0)
+                self.quantile_spans[key] = torch.where(span == 0, torch.full_like(span, 1e-8), span)
 
     @classmethod
     def from_config(cls, config, stats, device="cpu"):
@@ -129,11 +223,23 @@ class Processor:
             key: config.normalization_mapping.get(feature.type, "IDENTITY")
             for key, feature in features.items()
         }
-        return cls(stats, device, modes=modes)
+        return cls(
+            stats,
+            device,
+            modes=modes,
+            clip=getattr(config, "normalization_clip", None),
+            quantile_options=getattr(config, "quantile_options", None),
+            normalization_windows=getattr(config, "normalization_windows", None),
+        )
 
     def __call__(self, batch):
         result = {}
         for key, value in batch.items():
+            if not isinstance(value, torch.Tensor):
+                if key in self.modes or key.startswith("observation.images."):
+                    raise TypeError(f"{key}: policy numeric/image fields require tensors")
+                result[key] = value
+                continue
             if key.startswith("observation.images.") and value.dtype == torch.uint8:
                 if value.device.type == "cpu" and self.device.type == "cuda":
                     # Transfer one byte per pixel. A device divisor avoids CUDA's
@@ -142,6 +248,11 @@ class Processor:
                 else:
                     value = value.float() / 255
             value = value.to(self.device)
+            if key in self.normalization_windows and (
+                value.ndim != 3 or value.shape[1] != len(self.normalization_windows[key])
+                or value.shape[2] != next(iter(self.stats[key].values())).shape[1]
+            ):
+                raise ValueError(f"{key}: temporal normalization needs a complete [B,T,D] window")
             if not key.endswith("_is_pad") and key in self.stats:
                 stats = self.stats[key]
                 if self.modes[key] == NormalizationMode.MIN_MAX:
@@ -152,8 +263,18 @@ class Processor:
                     # The author's limits normalizer maps constant dimensions to zero.
                     span = torch.where(span < 1e-4, torch.full_like(span, 2.0), span)
                     value = (value - center) * (2 / span)
+                elif self.modes[key] == NormalizationMode.QUANTILES:
+                    options = self.quantile_options.get(key, {})
+                    if options.get("clip_to_bounds", False):
+                        value = value.clamp(min=stats["q01"], max=stats["q99"])
+                    value = 2 * (value - stats["q01"]) / self.quantile_spans[key] - 1
+                    if options.get("zero_if_zero_bounds", False):
+                        zero = (stats["q01"] == 0) & (stats["q99"] == 0)
+                        value = value.masked_fill(zero, 0)
                 else:
                     value = (value - stats["mean"]) / (stats["std"] + 1e-8)
+            if not key.endswith("_is_pad") and key in self.clip:
+                value = value.clamp(*self.clip[key])
             result[key] = value
         return result
 
@@ -164,6 +285,19 @@ class Processor:
         if self.modes[key] == NormalizationMode.IDENTITY:
             return tensor
         stats = self.stats[key]
+        if key in self.normalization_windows:
+            if tensor.ndim != 3 or not 1 <= tensor.shape[1] <= len(self.normalization_windows[key]):
+                raise ValueError("Decode temporal normalization on a batched chunk before queuing")
+            stats = {name: value[:tensor.shape[1]] for name, value in stats.items()}
+        if self.modes[key] == NormalizationMode.QUANTILES:
+            span = self.quantile_spans[key]
+            if key in self.normalization_windows:
+                span = span[:tensor.shape[1]]
+            result = (tensor + 1) * (span / 2) + stats["q01"]
+            if self.quantile_options.get(key, {}).get("zero_if_zero_bounds", False):
+                zero = (stats["q01"] == 0) & (stats["q99"] == 0)
+                result = result.masked_fill(zero, 0)
+            return result
         if self.modes[key] == NormalizationMode.MIN_MAX:
             span = stats["max"] - stats["min"]
             center = torch.where(span < 1e-4, stats["min"], (stats["max"] + stats["min"]) / 2)
@@ -206,4 +340,31 @@ def limits_statistics(samples):
                 "min": [[[0.0]]] * 3,
                 "max": [[[1.0]]] * 3,
             }
+    return stats
+
+
+def quantile_statistics(samples):
+    """Fit training-only numeric quantiles without decoding images or padded duplicates.
+
+    Field views may already supply statistics in their transformed units; retain
+    those values rather than reading raw joints through a delegated `_value`.
+    """
+    from alohamini.datasets.statistics import ExactQuantileStats
+
+    stats = limits_statistics(samples)
+    for key in samples.sample_keys:
+        if key.startswith("observation.images.") or {"q01", "q99"} <= stats[key].keys():
+            continue
+        tracker = ExactQuantileStats()
+        batch = []
+        for index in ordered_indices(samples._used_rows[key]):
+            batch.append(samples._value(index, key).numpy())
+            if len(batch) == 128:
+                tracker.update(np.asarray(batch))
+                batch.clear()
+        if batch:
+            tracker.update(np.asarray(batch))
+        stats[key].update(
+            {name: value.tolist() for name, value in tracker.get_statistics().items()}
+        )
     return stats

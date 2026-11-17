@@ -481,8 +481,86 @@ replace the upstream framework wrappers. Retained licenses and full source
 metadata are in policies/xiaomi_robotics1/ and policies/lingbot_vla_v2/.
 No pretrained weights are distributed.
 
+Native FAST tokenizer fitting follows physical-intelligence/fast at
+ec4d7aa71691cac0b8bed6942be45684db2110f4. It fits only selected training
+windows, validates held-out reconstruction and complete action lengths, and
+registers the full byte alphabet so unseen coefficient symbols are retained.
+The platform's optional language controller and query API are independent of
+the policy model and preserve checkpoint-owned tokenizers and numeric transforms.
+
 The B-spline Policy episode fitting and parameter codec adapt
 B-spline-policy/bspline-policy at 61ed5f42fced971d50a89b46417493790876ccd1
 (MIT, Copyright 2026 Haoyu Xiong). The retained license and source metadata are
 in policies/bspline/LICENSE.bspline and SOURCE.json. Native training and
 physical-time execution use the platform's named recorded action coordinates.
+
+Long-WAM, VQ-BeT, Pi0, Pi0-FAST, EO-1 and EVO1 native integrations adapt their
+authors' implementations and the LeRobot model ports at
+7910c20a75834ad3fa6a9792df4d44a614d1bba6 (Apache-2.0, Hugging Face and
+individual model authors). Original author repositories, immutable revisions,
+retained licenses and platform protocol adaptations are recorded in each
+policy's SOURCE.json and LICENSE.*. Training, data and checkpoint management
+use native platform interfaces; no LeRobot runtime or pretrained weights
+are distributed.
+
+X-VLA adapts 2toINF/X-VLA at 6c4ecfb8be458ae7c0c96094e4b0add4174f4fe2
+and the pinned LeRobot Florence/action-Transformer port (Apache-2.0).
+Retained license, source revisions and the recorded-coordinate adaptation are
+in policies/xvla/LICENSE.xvla and SOURCE.json.
+
+DM0.5 adapts Dexmal/OpenDM at 03f799120d425ead51d9482bb1da950b6dabade9
+and its pinned LeRobot Gemma3 action-expert port (Apache-2.0).
+Retained license, source versions and numeric-protocol choices are recorded
+in policies/dm05/LICENSE.dm05 and SOURCE.json. No model weights are distributed.
+
+FineART-VLA and the pure-Python dataset recipe/language renderer adapt the
+official Hugging Face/Scale implementation in LeRobot at
+7910c20a75834ad3fa6a9792df4d44a614d1bba6 (Apache-2.0, Copyright 2026
+The HuggingFace Inc. team). The native policy reuses the platform's OpenPI
+backbone, data reader, optimizer execution and safetensors interface.
+Changes include recorded-time annotation matching, independent loss
+denominators, local codec loading and explicit text/action query separation.
+Source metadata and the retained license are in policies/fineart_vla/.
+No pretrained weights are distributed.
+
+WALL-OSS-0.5 adapts X-Square-Robot/wall-x at
+ce2a1ae31d9ee1028b97ca40e3f66034cf8c0e5f and the pinned Hugging Face
+LeRobot model port at 7910c20a75834ad3fa6a9792df4d44a614d1bba6
+(Apache-2.0, Copyright 2026 HuggingFace Inc. team).
+Source revisions, retained license and robot flow adaptation limits are
+recorded in policies/wall_oss_05/. No pretrained weights are distributed.
+
+VLA-JEPA adapts ginwind/VLA-JEPA at
+ec907778b4af46a45742baf5ebfb2e055560346e and the native LeRobot
+port at 7910c20a75834ad3fa6a9792df4d44a614d1bba6 (Apache-2.0,
+Copyright 2026 The HuggingFace Inc. team). Retained Apache-2.0 and
+StarVLA MIT notices, source versions and protocol choices are in
+policies/vla_jepa/. No pretrained weights are distributed.
+
+LingBot-VA adapts Robbyant/lingbot-va at
+7c6ffa9bfc4b83582cafc860fab4c82cc7deeeeb and the Hugging Face LeRobot
+port at 7910c20a75834ad3fa6a9792df4d44a614d1bba6 (Apache-2.0,
+Copyright 2024-2025 The Robbyant Team Authors and 2026 The HuggingFace
+Inc. team). Native changes include explicit per-forward attention masks,
+platform-managed precision, prepared frozen input features and a separate
+initial conditioning frame. Source metadata and retained license are in
+policies/lingbot_va/. No pretrained weights are distributed.
+
+Cosmos3 Nano and Edge model cores adapt the Apache-2.0 Hugging Face LeRobot
+port at 7910c20a75834ad3fa6a9792df4d44a614d1bba6, Copyright 2026
+The HuggingFace Inc. team. Native data/optimizer/precision choices are
+compared with NVIDIA/cosmos-framework at
+0822f1d1f79f0e75a249ddddcb77c929932e881e. Source metadata and the
+retained Apache-2.0 license are in policies/cosmos3/. NVIDIA's native
+implementation and model weights have their separate OpenMDW-1.1 terms.
+No pretrained weights are distributed.
+
+G0.5 adapts OpenGalaxea/GalaxeaVLA at
+89f2322b4ad016e192437adc1a2c253b05bab246 and its Hugging Face LeRobot
+port at 7910c20a75834ad3fa6a9792df4d44a614d1bba6. G0.5 is licensed
+under the G0.5 Community License Agreement (Non-Commercial + Limited
+Patent License), not sold, Copyright © 2026 Galaxea. All rights reserved
+by Galaxea. “Galaxea” and related marks are trademarks of Galaxea or its
+affiliates. The complete license, modification notices and source versions
+are in policies/g05/. This project is not endorsed by Galaxea.
+No pretrained weights are distributed.

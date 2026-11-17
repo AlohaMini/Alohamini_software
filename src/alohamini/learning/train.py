@@ -53,7 +53,7 @@ from alohamini.learning.logging import (
 from alohamini.learning.metrics import MetricAccumulator, format_metrics
 from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optimization
 from alohamini.learning.policy import NativePolicy, make_policy, make_processor
-from alohamini.learning.precision import validate_trainable_dtype
+from alohamini.learning.precision import resolve_tf32, tf32_context, validate_trainable_dtype
 from alohamini.learning.statistics import sample_arguments, training_statistics, write_statistics
 from alohamini.learning.streaming import StreamingBatchSampler
 from alohamini.learning.train_config import resolve_dataset_options
@@ -81,6 +81,7 @@ def launch_training(settings):
     """Launch a detached local trainer with exclusive config/log/PID files."""
     validate_ema_setup(settings)
     validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
+    resolve_tf32(settings)
     paths = WorkspacePaths()
     processes = settings.get("num_processes", 1)
     validate_local_workers(processes, settings.get("device", "cuda"))
@@ -283,9 +284,11 @@ def update_policy(model, batch, optimizer, grad_clip_norm, *, mixed_precision="n
 
 def train(settings):
     settings = resolve_pretrained(settings)
-    validate_trainable_dtype(settings.setdefault("trainable_dtype", "preserve"))
+    validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
     components = algorithm(settings.get("policy", "act"))
     settings = components.apply_preset(settings)
+    validate_trainable_dtype(settings.setdefault("trainable_dtype", "preserve"))
+    settings["tf32"] = resolve_tf32(settings)
     settings = resolve_dataset_options(resolve_data_pipeline(settings))
     validate_ema_setup(settings)
     if settings.get("deterministic_algorithms"):
@@ -297,7 +300,7 @@ def train(settings):
     try:
         if settings.get("num_processes", execution.local_world_size) != execution.local_world_size:
             raise ValueError("Use --background or torchrun to launch the requested num_processes")
-        with training_logging(execution.main, training=True):
+        with training_logging(execution.main, training=True), tf32_context(settings["tf32"]):
             logger.info("%s", pformat(settings))
             logger.info("Logs will be saved locally.")
             return _train(settings, execution)
@@ -332,7 +335,6 @@ def _train(settings, execution):
     deterministic = cfg.get("cudnn_deterministic", False)
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
-    torch.backends.cuda.matmul.allow_tf32 = not deterministic
     torch.use_deterministic_algorithms(cfg.get("deterministic_algorithms", False))
     save_freq = cfg.get("save_freq", 20_000)
     keep = cfg.get("keep_last_checkpoints")
@@ -509,6 +511,18 @@ def _train(settings, execution):
             stats = artifact["stats"]
             if execution.main:
                 write_statistics(output / "statistics.json", artifact)
+            asset_preparation = getattr(components, "prepare_training_assets", None)
+            if asset_preparation is not None:
+                options = execution.main_process_call(
+                    lambda: asset_preparation(
+                        options, samples, stats, validation_samples=validation
+                    ),
+                    label="Preparing policy assets",
+                    timeout_s=preparation_timeout,
+                )
+                # Resolve assets once; keep exact paths, fitting reports and protocol on resume.
+                policy_config = components.config_class(**options)
+                cfg["model"] = asdict(policy_config)
             with log_stage("Creating policy and processors"):
                 model = make_policy(
                     cfg.get("policy", "act"), options, stats, trainable_dtype=trainable_dtype
@@ -592,6 +606,10 @@ def _train(settings, execution):
         if resume_state:
             logger.debug("Resuming at step %d; consumed microbatches=%d", start_step, consumed)
         metric_specs = components.metric_specs(model.config)
+        counter_factory = getattr(components, "make_loss_counter", None)
+        loss_counts = (
+            counter_factory(model.config, stats) if counter_factory else components.loss_counts
+        )
         progress = TrainingProgress(
             execution,
             frames=len(samples),
@@ -636,7 +654,7 @@ def _train(settings, execution):
                 generator=torch.Generator().manual_seed(seed),
             )
             if eval_steps:
-                eval_totals = loss_denominators(validation, components.loss_counts)
+                eval_totals = loss_denominators(validation, loss_counts)
                 logger.debug("Validation loss reduction: algorithm denominators %s", eval_totals)
         with log_stage("Preparing execution backend"):
             wrapped, optimizer = execution.prepare(model, optimizer)
@@ -681,6 +699,7 @@ def _train(settings, execution):
             "distributed_backend": cfg["distributed_backend"],
             "accelerate": accelerate_version,
             "mixed_precision": precision,
+            "tf32": cfg["tf32"],
             "trainable_dtype": trainable_dtype,
             "world_size": execution.world_size,
             "gradient_accumulation_steps": accumulation,
@@ -750,7 +769,7 @@ def _train(settings, execution):
                     optimizer,
                     cfg["optimizer"]["grad_clip_norm"],
                     processor,
-                    reduction=components.loss_counts,
+                    reduction=loss_counts,
                     metric_specs=metric_specs,
                     ema=ema,
                 )
@@ -819,7 +838,7 @@ def _train(settings, execution):
                                 model,
                                 processor,
                                 eval_loader,
-                                components.loss_counts,
+                                loss_counts,
                                 eval_totals,
                                 device=device,
                                 log_freq=eval_log_freq,

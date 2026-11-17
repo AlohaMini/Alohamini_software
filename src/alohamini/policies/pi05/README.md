@@ -27,6 +27,12 @@ state 保留完整 18 维原始位置、底盘速度和升降高度，包括数�
 双臂各 6 个关节预测相对当前 state 的增量，执行前还原为绝对目标；夹爪、底盘速度、升降高度保持原义。
 网络参数用 `--policy.network='{"action_horizon":30}'` 覆盖；checkpoint 自带 tokenizer。
 
+归一化统计只使用训练集，先计算相对动作，再统计 q01/q99（1%/99% 分位数）。
+范围外的数值不裁剪，q01/q99 相同的维度不置零；稀少但有效的动作仍参与训练。
+分母默认采用 `q99-q01+1e-6`。窄范围会放大数值；可用 `--policy.span_floors` 设置跨度下限。
+参数为 JSON 对象，`state`、`actions` 分别接收按保存字段顺序排列的 18 个非负物理跨度。
+默认不设跨度下限；设置随 checkpoint 保存，归一化与还原使用同一跨度。
+
 先选择训练方案，再选择参数更新方式：
 
 - `--policy.training_recipe=flow`（默认）：OpenPI 公开的流匹配微调，保留动作损失到 VLM 的梯度。
@@ -61,7 +67,10 @@ python -m alohamini.learning.train \
 FAST 编码补零前的 18 维归一化动作，沿用 π0.5 的 task/state/Action 提示词；目标超出 `--policy.fast_max_tokens=256` 时须增大上限，不截断动作。
 KI checkpoint 包含完整网络、LoRA、两种 tokenizer 和训练方案；推理不需要原始基座目录。续训不允许更换方案或微调方式。
 
-默认采用公开 OpenPI 的 BF16 主干并保留部分 FP32 模块（平台 `mixed_precision=none`）、完整梯度检查点、30000 步、AdamW `2.5e-5`、betas `(0.9,0.95)`、weight decay `1e-10`、梯度裁剪 `1`、1000 步预热及余弦衰减至 `2.5e-6`；每 100 步日志、1000 步保存。EMA 默认关闭。
+默认模型类型为 BF16，部分模块保留 FP32；平台不额外开启 autocast（`mixed_precision=none`）。
+需要 FP32 可训练参数与 BF16 计算时，追加 `--trainable_dtype=float32 --mixed_precision=bfloat16`；
+其余公共选项见[数值精度](../../../../docs/training.md#数值精度)。
+默认完整梯度检查点、30000 步、AdamW `2.5e-5`、betas `(0.9,0.95)`、weight decay `1e-10`、梯度裁剪 `1`、1000 步预热及余弦衰减至 `2.5e-6`；每 100 步日志、1000 步保存。EMA 默认关闭。
 示例使用 batch=1、累积 32 次，单卡有效 batch=32。可关闭 `--policy.gradient_checkpointing=false`；`network.pytorch_compile_mode` 默认 `max-autotune`，只编译采样，首次推理较慢，设为 `null` 可关闭。
 
 KI 可通过 `--policy.vlm_data_path=/path/to/train.jsonl` 混入图文或规划数据，每个机器人样本配一个独立抽样的 VLM 样本：

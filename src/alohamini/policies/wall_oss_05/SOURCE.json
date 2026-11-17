@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/X-Square-Robot/wall-x",
+  "revision": "ce2a1ae31d9ee1028b97ca40e3f66034cf8c0e5f",
+  "paper": "https://arxiv.org/abs/2605.30877",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/wall_oss_05/modeling_wall_oss_05.py"
+  },
+  "base": {
+    "repository": "https://huggingface.co/lerobot/wall-oss-0.5",
+    "revision": "03ab102b8c258a5333a8313f38b17c52e49eb467",
+    "geometry": "Qwen2.5-VL 36 text layers width2048, 36 action expert layers width1024, Qwen vision32 blocks width1280; fixed26 coordinates",
+    "validation": "All837 safetensors names/shapes match full meta model; lm_head is tied to token embeddings. Full weight contents and full-scale inference not tested."
+  },
+  "adaptations": [
+    "Native platform dataset, trainer, normalization, portable checkpoints and strict shared weight loader; no LeRobot or Wall-X runtime",
+    "Author LIBERO AdamW recipe, not general DMuon template; exact train-only statistics",
+    "Recorded robot preset preserves rare actions; explicit wall recipe selects original clipped quantile bounds",
+    "Named normalized robot coordinates placed into saved26D slots; no guessed anatomical meaning; default fresh robot input/output heads",
+    "Original flow chat prompt, 512 state bins after26D slot placement, long-edge448 PIL resize and local Qwen patch processor",
+    "Velocity output with x-prediction loss; valid coordinate and valid temporal global reduction; 32 future rows, repeated tails excluded",
+    "BF16 backbone with FP32 RMSNorm and action processors; autocast-safe routed writes; platform owns global precision",
+    "Non-reentrant visual and joint-decoder checkpointing; prefix/vision cached once per action chunk",
+    "Flow-only robot adaptation of public base use_language_recipe=false; language CE, DMuon, original FlashMask gradient-bridge pretraining, LoRA and RTC are not integrated"
+  ],
+  "pretrained_weights_included": false
+}

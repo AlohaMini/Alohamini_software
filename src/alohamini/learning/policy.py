@@ -1,7 +1,7 @@
 """Local policy checkpoints and the adapter to the shared protected evaluator."""
 
 from collections import deque
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from hashlib import sha256
@@ -17,7 +17,12 @@ from alohamini.datasets.record import StateSelection, motor_feedback_frame, stat
 from alohamini.learning.auxiliary import auxiliary_features, snapshot_auxiliary
 from alohamini.learning.checkpoint import read_checkpoint, write_checkpoint_metadata
 from alohamini.learning.data_fields import FieldProcessor, active
-from alohamini.learning.precision import apply_trainable_dtype, validate_trainable_dtype
+from alohamini.learning.loading import collate_samples
+from alohamini.learning.precision import (
+    apply_trainable_dtype,
+    tf32_context,
+    validate_trainable_dtype,
+)
 from alohamini.learning.processor import image_tensor, scale_action
 from alohamini.policies.registry import algorithm
 
@@ -72,6 +77,12 @@ def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
     from alohamini.learning.fixed import action_summary
 
     manifest["fixed_state_excluded"] = getattr(samples, "fixed_state_excluded", True)
+    if getattr(samples, "annotation_context", False) or getattr(samples, "annotation_fields", ()):
+        manifest["annotations"] = {
+            "fields": list(samples.annotation_fields),
+            "time_basis": "recorded_timestamp",
+            "identity": ["episode_index", "frame_index"],
+        }
     summary = action_summary(getattr(samples, "source", samples))
     if summary is not None:
         manifest["physical_action_summary"] = summary
@@ -119,6 +130,7 @@ class NativePolicy:
         offline=False,
         goal_images=None,
         time_scale=None,
+        language_replan_interval_s=None,
     ):
         if calibration_mode not in ("strict", "normalized", "legacy_normalized"):
             raise ValueError("calibration_mode must be strict, normalized or legacy_normalized")
@@ -175,6 +187,13 @@ class NativePolicy:
         ):
             raise ValueError("Checkpoint state names/units mismatch")
         self.algorithm = algorithm(manifest["kind"])
+        self._language_controller = None
+        if language_replan_interval_s is not None:
+            from alohamini.learning.language_control import LanguageController
+
+            if "subtask" not in getattr(self.algorithm, "language_query_kinds", ()):
+                raise ValueError("This policy does not declare subtask generation support")
+            self._language_controller = LanguageController(language_replan_interval_s)
         self.field_transform = (
             FieldTransforms(manifest["data_fields"]) if manifest.get("data_fields") else None
         )
@@ -241,6 +260,10 @@ class NativePolicy:
         else:
             configure(self, fixed_dimensions, fixed_dataset, current=fixed_current)
         self.fixed_deployment["calibration_mode"] = calibration_mode
+        if self._language_controller is not None:
+            self.fixed_deployment["language_control"] = {
+                "replan_interval_s": self._language_controller.interval_s,
+            }
         self.reset()
 
         if goal_images is not None:
@@ -337,6 +360,8 @@ class NativePolicy:
         self._observation_history = None
         self._execution_actions = deque()
         self._synchronous_plan = None
+        if getattr(self, "_language_controller", None) is not None:
+            self._language_controller.reset()
 
     def refresh_latent(self):
         """Notify AM-ACT of a task phase boundary before its next observation."""
@@ -389,23 +414,28 @@ class NativePolicy:
             sample["observation.state"] = state
         return sample
 
+    @contextmanager
     def inference_context(self):
-        precision = self.manifest.get("training", {}).get("mixed_precision")
-        if precision in ("bfloat16", "float16"):
-            return torch.autocast(
+        training = self.manifest.get("training", {})
+        precision = training.get("mixed_precision")
+        amp = (
+            torch.autocast(
                 next(self.model.parameters()).device.type, dtype=getattr(torch, precision)
             )
-        return nullcontext()
+            if precision in ("bfloat16", "float16") else nullcontext()
+        )
+        with tf32_context(training["tf32"]) if "tf32" in training else nullcontext(), amp:
+            yield
 
     @torch.no_grad()
     def predict(self, sample):
         """Offline physical action chunk; retain version counters for FSDP2 collectives."""
         batch = self.processor(
-            {
-                k: ([v] if k == "task" else v[None])
+            collate_samples([{
+                k: v
                 for k, v in self.fixed_input(sample).items()
                 if k not in ("action", "action_is_pad")
-            }
+            }])
         )
         if getattr(self.algorithm, "predict_plan", None) is not None:
             plan = self._plan_from_batch(batch)
@@ -421,7 +451,41 @@ class NativePolicy:
                 .cpu()
             )
 
-    def _observation_batch(self, snapshot, *, history=True):
+    @torch.no_grad()
+    def _query_language_batch(self, batch, *, kind, question=None, camera=None):
+        query = getattr(self.algorithm, "query_language", None)
+        if query is None or kind not in getattr(self.algorithm, "language_query_kinds", ()):
+            raise ValueError(f"This policy does not declare language query kind {kind!r}")
+        with self.inference_context():
+            results = query(
+                self.model, self.processor, batch, kind=kind, question=question, camera=camera,
+            )
+        if (
+            not isinstance(results, list) or len(results) != 1
+            or not isinstance(results[0], dict)
+            or not isinstance(results[0].get("text"), str) or not results[0]["text"].strip()
+        ):
+            raise ValueError("Language query must return one nonempty text response")
+        return results[0]
+
+    def query_language(self, observation, *, kind="subtask", question=None, camera=None):
+        """Query language or grounding without advancing action queues or planner state."""
+        if isinstance(observation, dict):
+            batch = collate_samples([{
+                key: value for key, value in self.fixed_input(observation).items()
+                if key not in ("action", "action_is_pad")
+            }])
+            if self.task is not None:
+                batch["task"] = [self.task]
+        else:
+            batch = self._observation_batch(
+                observation, history=False, preprocess=False, language_control=False,
+            )
+        return self._query_language_batch(batch, kind=kind, question=question, camera=camera)
+
+    def _observation_batch(
+        self, snapshot, *, history=True, preprocess=True, language_control=True,
+    ):
         """Prepare one live Host snapshot with the checkpoint's original input contract."""
         self._check_calibration(snapshot)
         observation = {}
@@ -472,7 +536,19 @@ class NativePolicy:
             batch = self._observation_history.append(batch, snapshot.received_s)
         if self.algorithm.include_task:
             batch["task"] = [self.task]
-        return self.processor(self.fixed_input(batch))
+        batch = self.fixed_input(batch)
+        controller = getattr(self, "_language_controller", None)
+        if language_control and controller is not None:
+            subtask, changed = controller.condition(
+                self.task, snapshot.request_started_s,
+                lambda _: self._query_language_batch(batch, kind="subtask")["text"],
+            )
+            if changed:
+                self.model.reset()
+                self._execution_actions.clear()
+                self._synchronous_plan = None
+            batch["task"] = [subtask]
+        return self.processor(batch) if preprocess else batch
 
     @property
     def tcp_reference_actions(self):
@@ -499,7 +575,11 @@ class NativePolicy:
         self.plan_capabilities.validate(ExecutionConfig(continuity=continuity))
         guided = continuity in self.plan_capabilities.gradient_methods
         with torch.inference_mode(not guided), torch.no_grad():
+            controller = getattr(self, "_language_controller", None)
+            generation = controller.generation if controller is not None else None
             batch = self._observation_batch(snapshot)
+            if controller is not None and generation != controller.generation:
+                prefix = None
             return self._plan_from_batch(
                 batch, prefix=prefix, continuity=continuity, tcp_reference=True
             )
@@ -640,6 +720,7 @@ def evaluate_robot(
     fixed_current=None,
     calibration_mode="strict",
     robot_model=None,
+    language_replan_interval_s=None,
     **kwargs,
 ):
     """Explicit real-hardware boundary; importing/loading a model never connects."""
@@ -657,6 +738,7 @@ def evaluate_robot(
         fixed_current=fixed_current,
         calibration_mode=calibration_mode,
         robot_model=robot_model,
+        language_replan_interval_s=language_replan_interval_s,
         task=kwargs.get("task"),
     )
     return evaluate(

@@ -8,6 +8,7 @@ class NormalizationMode(str, Enum):
     IDENTITY = "IDENTITY"
     MEAN_STD = "MEAN_STD"
     MIN_MAX = "MIN_MAX"
+    QUANTILES = "QUANTILES"
 
 
 @dataclass

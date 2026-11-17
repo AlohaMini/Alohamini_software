@@ -16,6 +16,7 @@ def main(argv=None):
     cloud.add_argument("--bind", default="tcp://127.0.0.1:5560", help="Loopback or VPN address")
     cloud.add_argument("--policy.path", dest="checkpoint", required=True)
     cloud.add_argument("--device", default="cuda")
+    cloud.add_argument("--language-replan-interval-s", type=float)
     cloud.add_argument("--chunk-size", type=int)
     cloud.add_argument("--policy.time_scale", dest="time_scale", type=float)
     cloud.add_argument(
@@ -57,6 +58,8 @@ def main(argv=None):
                 overrides["robot_model"] = args.robot_model
             if args.time_scale is not None:
                 overrides["time_scale"] = args.time_scale
+            if args.language_replan_interval_s is not None:
+                overrides["language_replan_interval_s"] = args.language_replan_interval_s
             if "temporal_ensemble_coeff" in vars(args):
                 overrides["temporal_ensemble_coeff"] = args.temporal_ensemble_coeff
             backend = NativePlanPolicy(

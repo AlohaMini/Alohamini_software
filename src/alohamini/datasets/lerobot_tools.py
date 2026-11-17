@@ -602,7 +602,21 @@ class IntegrityChecker:
             record.files.add(path.resolve())
 
         for key, feature in self.info["features"].items():
-            if feature.get("dtype") not in ("video", "image", "string"):
+            if feature.get("dtype") == "language":
+                from alohamini.datasets.language import LANGUAGE_COLUMNS, validate_language_rows
+
+                if key not in LANGUAGE_COLUMNS:
+                    self.error("LANGUAGE_COLUMN_INVALID", f"Unknown language column: {key}")
+                    continue
+                try:
+                    for rows in table[key].to_pylist():
+                        validate_language_rows(
+                            rows, persistent=key == "language_persistent",
+                            cameras=self.info["features"],
+                        )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self.error("LANGUAGE_ROWS_INVALID", f"{key}: {exc}")
+            elif feature.get("dtype") not in ("video", "image", "string"):
                 self._check_finite_feature(path, table, key)
         self._check_images(path, table)
         self._check_motor_feedback(path, table)

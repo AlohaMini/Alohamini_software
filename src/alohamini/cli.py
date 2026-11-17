@@ -169,6 +169,10 @@ def _main(argv: list[str] | None = None) -> int:
     )
     evaluator.add_argument("--device", help="checkpoint 推理设备，默认 cuda")
     evaluator.add_argument(
+        "--language-replan-interval-s", dest="language_replan_interval_s", type=float,
+        default=argparse.SUPPRESS, help="支持语言规划的策略按观测时间周期更新子任务",
+    )
+    evaluator.add_argument(
         "--goal-images", dest="goal_images", type=json.loads, default=argparse.SUPPRESS,
         help='目标图像映射，例如 {"forward":"/path/goal.png"}；仅用于支持视觉目标的策略',
     )
@@ -494,6 +498,7 @@ def _main(argv: list[str] | None = None) -> int:
                     "calibration_mode",
                     "goal_images",
                     "time_scale",
+                    "language_replan_interval_s",
                 )
                 if key in options
             }

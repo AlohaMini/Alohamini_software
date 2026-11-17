@@ -117,6 +117,8 @@ class PI05TrainingConfig(PolicyConfig):
 
 
 class PI05BatchProcessor:
+    transform_class = PI05Processor
+
     def __init__(self, config, stats, device):
         from .tokenizer import PaligemmaTokenizer
 
@@ -124,7 +126,7 @@ class PI05BatchProcessor:
         self.is_training = lambda: False
         self._fast = None
         self._vlm_data = None
-        self.transform = PI05Processor(
+        self.transform = self.transform_class(
             stats,
             PaligemmaTokenizer(
                 config.tokenizer_path,
@@ -137,7 +139,7 @@ class PI05BatchProcessor:
             cameras=config.camera_order,
         )
 
-    def __call__(self, batch):
+    def prepare_observations(self, batch):
         states = batch["observation.state"]
         tasks = batch.get("task")
         if not isinstance(tasks, (list, tuple)) or len(tasks) != len(states):
@@ -181,25 +183,31 @@ class PI05BatchProcessor:
         }
         if targets:
             result["action"] = torch.cat(targets)
-            if self.config.training_recipe == "ki":
-                from .fast_tokenizer import FASTTokenizer
+        return result
 
-                if self._fast is None:
-                    self._fast = FASTTokenizer(
-                        self.config.fast_tokenizer_path,
-                        self.transform.tokenizer._tokenizer,
-                        self.config.fast_max_tokens,
-                    )
-                result["fast_tokens"], result["fast_mask"] = self._fast.targets(
-                    result["action"][..., :18].detach().cpu().numpy(),
-                    device=self.device,
+    def __call__(self, batch):
+        result = self.prepare_observations(batch)
+        if "action" in result and self.config.training_recipe == "ki":
+            from .fast_tokenizer import FASTTokenizer
+
+            if self._fast is None:
+                self._fast = FASTTokenizer(
+                    self.config.fast_tokenizer_path,
+                    self.transform.tokenizer._tokenizer,
+                    self.config.fast_max_tokens,
                 )
-                if self.config.vlm_data_path and self.is_training():
-                    from .vlm_data import VLMCoTrainingData
+            result["fast_tokens"], result["fast_mask"] = self._fast.targets(
+                result["action"][..., :18].detach().cpu().numpy(),
+                device=self.device,
+            )
+            if self.config.vlm_data_path and self.is_training():
+                from .vlm_data import VLMCoTrainingData
 
-                    if self._vlm_data is None:
-                        self._vlm_data = VLMCoTrainingData(self.config, self.transform.tokenizer)
-                    result["vlm_batch"] = self._vlm_data.sample(len(states), device=self.device)
+                if self._vlm_data is None:
+                    self._vlm_data = VLMCoTrainingData(self.config, self.transform.tokenizer)
+                result["vlm_batch"] = self._vlm_data.sample(
+                    len(result["action"]), device=self.device
+                )
         return result
 
     def action(self, tensor, *, context=None):
@@ -215,16 +223,18 @@ class PI05BatchProcessor:
 
 class PI05TrainModel(torch.nn.Module):
     name = "pi05"
+    core_config_class = PI05Config
 
     def __init__(self, config):
         super().__init__()
         from .modeling_pi05 import PI0Pytorch
 
         self.config = config
-        self.network = PI0Pytorch(PI05Config(**config.network))
+        self.network = PI0Pytorch(self.core_config_class(**config.network))
         self.trainable_parameters = configure_finetuning(self.network, config)
         logging.getLogger(__name__).info(
-            "PI0.5 recipe=%s finetuning=%s parameters=%s",
+            "%s recipe=%s finetuning=%s parameters=%s",
+            self.name,
             config.training_recipe,
             config.finetuning_mode,
             self.trainable_parameters,
@@ -295,6 +305,7 @@ class PI05TrainModel(torch.nn.Module):
 
 
 class PI05Algorithm:
+    asset_fields = ("tokenizer_path", "fast_tokenizer_path")
     from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
     from alohamini.policies.continuity import dense_flow_arguments
 
@@ -473,8 +484,7 @@ class PI05Algorithm:
 
     def initialize(self, model, settings):
         path = Path(settings["pretrained_path"]).expanduser()
-        weights = path / "model.safetensors" if path.is_dir() else path
-        load_base_weights(model.network, weights)
+        load_base_weights(model.network, path)
 
     def checkpoint_options(self, path, options, device, n_action_steps, temporal_ensemble_coeff):
         options = deepcopy(options)
@@ -504,12 +514,12 @@ class PI05Algorithm:
         shutil.copyfile(Path(model.config.tokenizer_path).expanduser(), path / "tokenizer.model")
         manifest["config"]["tokenizer_path"] = "tokenizer.model"
         if model.config.fast_tokenizer_path:
-            from .fast_tokenizer import FAST_FILES
+            from .fast_tokenizer import fast_asset_files
 
             (path / "fast_tokenizer").mkdir()
-            for filename in FAST_FILES:
+            for filename, source in fast_asset_files(model.config.fast_tokenizer_path).items():
                 shutil.copyfile(
-                    Path(model.config.fast_tokenizer_path).expanduser() / filename,
+                    source,
                     path / "fast_tokenizer" / filename,
                 )
             manifest["config"]["fast_tokenizer_path"] = "fast_tokenizer"

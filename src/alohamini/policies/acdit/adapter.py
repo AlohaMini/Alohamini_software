@@ -16,6 +16,7 @@ from .processor_acdit import ACDiTProcessor
 
 
 class ACDiTAlgorithm(ChunkAlgorithm):
+    asset_fields = ("assets_path",)
     config_class = ACDiTConfig
     apply_preset = staticmethod(apply_preset)
     supports_field_transforms = True

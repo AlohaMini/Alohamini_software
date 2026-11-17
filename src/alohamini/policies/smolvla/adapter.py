@@ -10,6 +10,7 @@ from .processor_smolvla import SmolVLAProcessor, fit_statistics
 
 
 class SmolVLAAlgorithm:
+    asset_fields = ("vlm_model_name",)
     from alohamini.policies.continuity import DENSE_FLOW_CAPABILITIES as plan_capabilities
     from alohamini.policies.continuity import dense_flow_arguments
 

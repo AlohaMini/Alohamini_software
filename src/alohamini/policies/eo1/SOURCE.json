@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/EO-Robotics/EO1",
+  "revision": "451c363d7dff682700789afae0b9b17c004e8f8c",
+  "paper": "https://arxiv.org/abs/2508.21112",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/eo1"
+  },
+  "adaptations": [
+    "Author robot-only flow fine-tuning; no fabricated language supervision",
+    "Use current native Qwen2.5-VL from Transformers; preserve saved backbone layer count",
+    "Preserve author padded-width loss denominator and mask repeated tail targets",
+    "Flow projections stay FP32; platform defaults to FP32 trainable storage with BF16 compute",
+    "Native dataset/trainer/checkpoint, local-only assets; no LeRobot runtime"
+  ],
+  "pretrained_weights_included": false
+}

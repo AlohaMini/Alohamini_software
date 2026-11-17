@@ -162,11 +162,19 @@ class FieldDataset(torch.utils.data.Dataset):
     def action_metadata(self, index):
         raw = self.source.action_metadata(index)
         row = self.sample_indices[index]
-        state = self.selection.frame(self.rows[row]) if self.selection else None
-        _, actions = self.field_transform.encode(
+        state = raw["observation.state"].numpy() if "observation.state" in raw else (
+            self.selection.frame(self.rows[row]) if self.selection else None
+        )
+        encoded_state, actions = self.field_transform.encode(
             state, raw["action"].numpy(), anchor=self.field_transform.context(self.rows[row])
         )
-        return {**raw, "action": torch.as_tensor(actions, dtype=torch.float32)}
+        result = {**raw, "action": torch.as_tensor(actions, dtype=torch.float32)}
+        if "observation.state" in raw and encoded_state is not None:
+            result["observation.state"] = torch.as_tensor(encoded_state, dtype=torch.float32)
+        return result
+
+    def numeric_sample(self, index, keys=None):
+        return self._convert(self.source.numeric_sample(index, keys), index)
 
     def numeric_statistics(self, *, action_windows=True):
         """Fit transformed values using the algorithm's action sampling population."""
@@ -228,7 +236,9 @@ class FieldProcessor:
 
     def __init__(self, processor, transform, device):
         self.processor, self.field_transform, self.device = processor, transform, device
-        self.decode_before_queue = transform.action != "recorded"
+        self.decode_before_queue = (
+            transform.action != "recorded" or getattr(processor, "decode_before_queue", False)
+        )
 
     def __getattr__(self, name):
         return getattr(self.processor, name)

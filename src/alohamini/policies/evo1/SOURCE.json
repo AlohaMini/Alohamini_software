@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/MINT-SJTU/Evo-1",
+  "revision": "202085382605e47822455c6f12bc88da1b531832",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/evo1"
+  },
+  "adaptations": [
+    "Native HF InternVL3 construction from saved local config and tokenizer",
+    "Explicit decoder truncation validates depth and synchronizes per-layer metadata",
+    "Use platform precision, optimizer, accumulation and checkpoint management",
+    "SDPA/eager replaces optional FlashAttention dependency",
+    "Recorded named state/action coordinates; no implicit benchmark gripper conversion",
+    "Stage changes reset unspecified freeze flags; explicit overrides take precedence"
+  ],
+  "pretrained_weights_included": false
+}

@@ -261,6 +261,7 @@ class AlohaMiniDataset(Dataset):
         image_size=DEFAULT_IMAGE_SIZE,
         image_resize_mode="stretch",
         image_pad_value=0.0,
+        drop_n_first_frames=0,
         drop_n_last_frames=0,
         review_note="",
         include_task=False,
@@ -271,6 +272,8 @@ class AlohaMiniDataset(Dataset):
         inspection=None,
         allow_unannotated=False,
         context_fields=(),
+        annotation_fields=None,
+        loss_metadata_fields=(),
         cache_size_mb=64,
         cache_block_rows=128,
         cache_dir=None,
@@ -337,6 +340,24 @@ class AlohaMiniDataset(Dataset):
 
             self._storage = SimulationSource(self.root)
             self.info = self._storage.info
+        requested_annotations = {} if annotation_fields is None else annotation_fields
+        self.annotation_context = annotation_fields is not None
+        if not isinstance(requested_annotations, Mapping) or any(
+            not isinstance(key, str) or not key or type(required) is not bool
+            for key, required in requested_annotations.items()
+        ):
+            raise ValueError("annotation_fields must map field names to required booleans")
+        missing = {
+            key for key, required in requested_annotations.items()
+            if required and key not in self.info["features"]
+        }
+        if missing:
+            raise ValueError(f"Required annotation fields are absent: {sorted(missing)}")
+        self.annotation_fields = tuple(
+            key for key in requested_annotations if key in self.info["features"]
+        )
+        if self.annotation_context and "timestamp" not in self.info["features"]:
+            raise ValueError("Annotations require a recorded timestamp feature")
         self.episodes = list(episodes)
         if not self.episodes or len(set(self.episodes)) != len(self.episodes):
             raise ValueError("Select unique, nonempty episode indices")
@@ -461,11 +482,27 @@ class AlohaMiniDataset(Dataset):
                 self.input_features[key] = PolicyFeature("ENV", tuple(feature["shape"]))
         if not self.sample_keys:
             raise ValueError("Select at least one recorded field")
+        if not isinstance(loss_metadata_fields, (list, tuple)) or any(
+            not isinstance(key, str) or not key for key in loss_metadata_fields
+        ):
+            raise ValueError("loss_metadata_fields must name selected numeric fields or task")
+        self.loss_metadata_fields = tuple(dict.fromkeys(loss_metadata_fields))
+        if any(
+            (key == "task" and not include_task)
+            or (
+                key != "task"
+                and (key not in self.sample_keys or key.startswith("observation.images."))
+            )
+            for key in self.loss_metadata_fields
+        ):
+            raise ValueError("Loss metadata requires selected numeric fields and an enabled task")
         columns = [k for k in self.sample_keys if k != "observation.state"]
         self.context_fields = tuple(context_fields)
         if any(key not in self.info["features"] for key in self.context_fields):
             raise ValueError("Required context field is absent from the recording")
         columns.extend(self.context_fields)
+        if self.annotation_context:
+            columns.extend((*self.annotation_fields, "timestamp"))
         if include_task:
             columns.append("task")
         if self.selection:
@@ -547,10 +584,18 @@ class AlohaMiniDataset(Dataset):
         self._used_rows = {
             key: IndexSet(len(self.rows), root=cache_root) for key in self.sample_keys
         }
-        if type(drop_n_last_frames) is not int or drop_n_last_frames < 0:
-            raise ValueError("drop_n_last_frames must be a nonnegative integer")
+        for name, value in (("drop_n_first_frames", drop_n_first_frames),
+                            ("drop_n_last_frames", drop_n_last_frames)):
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{name} must be a nonnegative integer")
+        if drop_n_first_frames:
+            self.sample_filter = dict(
+                type="episode_windows_v3", drop_n_first_frames=drop_n_first_frames,
+                drop_n_last_frames=drop_n_last_frames,
+            )
         for i in range(len(self.rows)):
-            if i >= self.segment_ends[i] - drop_n_last_frames:
+            if (i < self.segment_starts[i] + drop_n_first_frames
+                    or i >= self.segment_ends[i] - drop_n_last_frames):
                 continue
             windows, padding = self._get_query_indices(i)
             requested = {key: windows.get(key, [i]) for key in self.sample_keys}
@@ -697,6 +742,8 @@ class AlohaMiniDataset(Dataset):
             if not isinstance(task, str) or not task.strip():
                 raise ValueError("Language-conditioned samples require a nonempty task")
             sample["task"] = task
+        if self.annotation_context:
+            sample["_annotations"] = self._annotations(index)
 
         def field(key):
             if key not in indices:
@@ -724,15 +771,53 @@ class AlohaMiniDataset(Dataset):
             sample.update((key, field(key)) for key in videos)
         return sample
 
-    def action_metadata(self, index):
-        """Numeric action targets/masks for loss counting; never decode images."""
+    def numeric_sample(self, index, keys=None):
+        """Read selected numeric windows and masks, without decoding any image."""
+        if index < 0:
+            index += len(self)
+        if not 0 <= index < len(self):
+            raise IndexError(index)
+        keys = (
+            [k for k in self.sample_keys if not k.startswith("observation.images.")]
+            if keys is None else list(keys)
+        )
+        if not keys or len(set(keys)) != len(keys) or any(
+            k not in self.sample_keys or k.startswith("observation.images.") for k in keys
+        ):
+            raise ValueError("numeric_sample requires selected non-image fields")
         row = self.sample_indices[index]
         indices, padding = self._get_query_indices(row)
-        if "action" not in indices:
-            return {"action": self._value(row, "action")}
+        result = {}
+        for key in keys:
+            result[key] = (
+                torch.stack([self._value(i, key) for i in indices[key]])
+                if key in indices else self._value(row, key)
+            )
+            if key + "_is_pad" in padding:
+                result[key + "_is_pad"] = padding[key + "_is_pad"]
+        return result
+
+    def action_metadata(self, index):
+        """Targets and requested supervision metadata for counting; no image decode."""
+        row = self.sample_indices[index]
+        indices, padding = self._get_query_indices(row)
+        keys = ["action", *(key for key in self.loss_metadata_fields if key != "task")]
+        result = self.numeric_sample(index, list(dict.fromkeys(keys)))
+        # Temporal supervision can count valid video/state targets without decoding them.
+        result.update(padding)
+        if self.annotation_context:
+            result["_annotations"] = self._annotations(row)
+        if "task" in self.loss_metadata_fields:
+            result["task"] = self.rows[row]["task"]
+        return result
+
+    def _annotations(self, index):
+        episode, frame = self.locations[index]
         return {
-            "action": torch.stack([self._value(i, "action") for i in indices["action"]]),
-            "action_is_pad": padding["action_is_pad"],
+            "fields": {key: deepcopy(self.rows[index][key]) for key in self.annotation_fields},
+            "timestamp": float(np.asarray(self.rows[index]["timestamp"]).reshape(())),
+            "episode_index": episode,
+            "frame_index": frame,
         }
 
     def statistics(self, *, keys=None):

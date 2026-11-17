@@ -1,0 +1,38 @@
+{
+  "repository": "https://github.com/NVlabs/LongLive",
+  "revision": "31c70d9071cd7851d82939806dc9fac645fcabe5",
+  "paper": "https://arxiv.org/abs/2610.10528",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/longwam"
+  },
+  "reference_files": [
+    "Long-WAM/configs/model/long_wam.yaml",
+    "Long-WAM/configs/data/libero.yaml",
+    "Long-WAM/configs/train.yaml"
+  ],
+  "license": "MIT AND Apache-2.0",
+  "adaptations": [
+    "Native platform dataset/trainer/checkpoint; no LeRobot runtime",
+    "Dataset-specific named recorded fields instead of LIBERO delta TCP coordinates",
+    "Explicit opt-in to reinitialize differently sized state/action projections",
+    "One layer count for video/action experts from the saved video backbone config",
+    "Offline inference consumes past/current windows only; future images train video loss",
+    "Platform global sample weighting applies before backward",
+    "Frozen VAE and UMT5 weights saved with each native checkpoint"
+  ],
+  "upstream_comparison": {
+    "layers": 30,
+    "action_hidden_dim": 1024,
+    "action_ffn_dim": 4096,
+    "history": 48,
+    "future": 32,
+    "video_stride": 4,
+    "source_dtype": "bfloat16",
+    "parameter_storage": "preserve source bfloat16 by default; trainable_dtype=float32 opts into FP32 updates",
+    "optimizer": "author lr 1e-4, weight_decay 0; native AdamW; constant schedule unless explicitly selected",
+    "image_processing": "author training Resize(H,W), released online PIL resize/crop; camera order explicit",
+    "normalization": "training-only limits for recorded adaptation; no guessed gripper sign toggle"
+  }
+}

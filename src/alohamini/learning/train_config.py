@@ -10,7 +10,7 @@ from alohamini._validation import finite_number
 from alohamini.learning.checkpoint import resolve_pretrained
 from alohamini.learning.ema import EMAConfig, validate_ema_setup
 from alohamini.learning.loading import resolve_data_pipeline
-from alohamini.learning.precision import TRAINABLE_DTYPES, validate_trainable_dtype
+from alohamini.learning.precision import TRAINABLE_DTYPES, resolve_tf32, validate_trainable_dtype
 from alohamini.policies.registry import ALGORITHMS, algorithm
 
 
@@ -127,10 +127,11 @@ def parse_training_args(argv=None):
     )
     parser.add_argument("--normalization", choices=("dataset", "checkpoint"))
     parser.add_argument("--mixed_precision", choices=("none", "bfloat16", "float16"))
+    parser.add_argument("--tf32", type=boolean, help="TF32 for FP32 CUDA matmul and convolution")
     parser.add_argument(
         "--trainable_dtype",
         choices=TRAINABLE_DTYPES,
-        help="Trainable weight storage, independent of mixed_precision (default: preserve)",
+        help="Trainable storage, independent of mixed_precision (default: policy preset)",
     )
     parser.add_argument("--distributed_backend", choices=("ddp", "fsdp2"))
     parser.add_argument("--drop_last", type=boolean)
@@ -177,7 +178,7 @@ def parse_training_args(argv=None):
         "nesterov",
     ):
         parser.add_argument(f"--optimizer.{name}", type=value, default=argparse.SUPPRESS)
-    for name in ("type", "warmup_steps", "decay_steps", "decay_lr"):
+    for name in ("type", "warmup_steps", "decay_steps", "decay_lr", "start_step", "before_start"):
         parser.add_argument(f"--scheduler.{name}", type=value, default=argparse.SUPPRESS)
     for field in fields(EMAConfig):
         parser.add_argument(f"--ema.{field.name}", type=value, default=argparse.SUPPRESS)
@@ -237,8 +238,10 @@ def parse_training_args(argv=None):
             cfg[name] = setting
     cfg["model"] = model
     cfg = resolve_pretrained(cfg)
-    validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
+    validate_trainable_dtype(cfg.get("trainable_dtype", "preserve"))
     cfg = algorithm(cfg.get("policy", "act")).apply_preset(cfg)
+    validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
+    cfg["tf32"] = resolve_tf32(cfg)
     validate_ema_setup(cfg)
     defaults = dict(
         policy="act",

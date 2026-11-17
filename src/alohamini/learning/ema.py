@@ -17,8 +17,11 @@ class EMAConfig:
     min_decay: float = 0.0
     max_decay: float = 0.9999
     use_for_eval: bool = True
+    schedule: str = "inverse_power"
 
     def __post_init__(self):
+        if self.schedule not in ("inverse_power", "power_law"):
+            raise ValueError("ema.schedule must be inverse_power or power_law")
         for name in ("enable", "use_for_eval"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"ema.{name} must be a boolean")
@@ -38,6 +41,8 @@ class EMAConfig:
             raise ValueError("Expected 0 <= ema.decay < 1")
         if self.decay is not None and (self.min_decay != 0 or self.max_decay != 0.9999):
             raise ValueError("Use ema.decay or ema.min_decay/max_decay, not both")
+        if self.decay is not None and self.schedule != "inverse_power":
+            raise ValueError("Fixed ema.decay and ema.schedule=power_law are mutually exclusive")
 
     @classmethod
     def from_dict(cls, settings=None):
@@ -54,6 +59,21 @@ class EMAConfig:
 def validate_ema_setup(settings):
     config = EMAConfig.from_dict(settings.get("ema"))
     return config
+
+
+def ema_settings(preset, overrides):
+    """Apply field overrides; an explicit curve choice replaces inherited curve parameters."""
+    if overrides is None:
+        return {"enable": False}
+    if not isinstance(overrides, dict):
+        raise ValueError("ema must be a configuration object")
+    result = dict(preset)
+    if overrides.get("decay") is not None or (
+        "schedule" in overrides and overrides["schedule"] != result.get("schedule", "inverse_power")
+    ):
+        for key in ("schedule", "decay", "power", "inv_gamma", "min_decay", "max_decay"):
+            result.pop(key, None)
+    return {**result, **overrides}
 
 
 def _tensors(model):
@@ -103,6 +123,9 @@ class EMAManager:
             return 0.0
         if cfg.decay is not None:
             return cfg.decay
+        if cfg.schedule == "power_law":
+            step = updates - cfg.update_after_step
+            return min(cfg.max_decay, max(cfg.min_decay, (1 - 1 / step) ** cfg.power))
         step = updates - cfg.update_after_step - 1
         if step <= 0:
             return 0.0
@@ -180,7 +203,7 @@ class EMAManager:
             raise RuntimeError("Cannot load EMA while its weights are applied")
         if state.get("version") != 1 or state.get("buffer_policy") != "copy":
             raise ValueError("Unsupported EMA state format")
-        if state.get("config") != asdict(self.config):
+        if asdict(EMAConfig.from_dict(state.get("config"))) != asdict(self.config):
             raise ValueError("EMA configuration changed since checkpoint")
         updates = state.get("num_updates")
         if type(updates) is not int or updates < 0:

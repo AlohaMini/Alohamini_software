@@ -1,0 +1,1024 @@
+# Copyright 2024-2025 The Robbyant Team Authors. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Native LingBot-VA with independent offline chunks and streaming observation feedback.
+
+The trainable shared Wan transformer uses platform safetensors checkpoints. Frozen
+VAE assets remain local and external; prepared UMT5 features are bundled. Streaming
+execution keeps per-tick observations and a KV cache for one environment. The first
+chunk carries the initial conditioning frame separately from its future action horizon.
+"""
+
+from collections import deque
+
+import torch
+import torch.nn.functional as F  # noqa: N812
+from einops import rearrange
+from torch import Tensor
+
+from alohamini.policies.chunk import ChunkPolicy
+
+from .configuration_lingbot_va import LingBotVAConfig
+from .core import (
+    FlowMatchScheduler,
+    WanTransformer3DModel,
+    WanVAEStreamingWrapper,
+    _sample_timestep_id,
+    data_seq_to_patch,
+    denormalize_latents,
+    get_mesh_id,
+    load_text_encoder,
+    load_tokenizer,
+    load_vae,
+)
+
+ACTION, PREDICTION = "action", "prediction"
+
+
+class LingBotVAPolicy(ChunkPolicy):
+    """Platform policy for the LingBot-VA video-action world model."""
+
+    config_class = LingBotVAConfig
+    name = "lingbot_va"
+
+    def __init__(self, config: LingBotVAConfig, **kwargs):
+        super().__init__()
+        self.config = config
+
+        # Construct trainable weights directly in the requested storage dtype.
+        from transformers.modeling_utils import local_torch_dtype
+
+        with local_torch_dtype(getattr(torch, config.dtype)):
+            self.transformer = WanTransformer3DModel(
+                patch_size=tuple(config.patch_size),
+                num_attention_heads=config.num_attention_heads,
+                attention_head_dim=config.attention_head_dim,
+                in_channels=config.in_channels,
+                out_channels=config.out_channels,
+                action_dim=config.action_dim,
+                text_dim=config.text_dim,
+                freq_dim=config.freq_dim,
+                ffn_dim=config.ffn_dim,
+                num_layers=config.num_layers,
+                cross_attn_norm=config.cross_attn_norm,
+                eps=config.eps,
+                rope_max_seq_len=config.rope_max_seq_len,
+                attn_mode=config.attn_mode,
+            )
+        self.transformer.gradient_checkpointing = config.gradient_checkpointing
+        self.transformer.condition_embedder_action.text_embedder.requires_grad_(False)
+
+        # Frozen modules are stored OUTSIDE the nn.Module registry (plain dict) so they are
+        # neither saved into model.safetensors nor moved by ``.to()``. They are lazily loaded
+        # from ``config.wan_pretrained_path`` the first time inference runs.
+        self._frozen: dict = {}
+        from alohamini.learning.frozen_features import FrozenFeatureCache
+
+        self._text_features = FrozenFeatureCache(
+            config.text_feature_store_path or None, max_bytes=config.text_feature_cache_bytes
+        )
+
+        self.last_predicted_frames: Tensor | None = None
+        self.last_predicted_latents: Tensor | None = None
+        self.reset()
+
+    # Frozen-module lazy loading (VAE + UMT5 + tokenizer)
+    def _ensure_frozen_modules(self):
+        if self._frozen:
+            return
+        path = self.config.wan_pretrained_path
+        device = self.device
+
+        # Frozen assets use the released vae/, text_encoder/ and tokenizer/ directories.
+        vae = load_vae(
+            path,
+            torch_dtype=getattr(torch, self.config.dtype),
+            torch_device=device,
+            subfolder="vae",
+        )
+        if vae.config.z_dim != self.config.in_channels:
+            raise ValueError("LingBot-VA VAE latent channels differ from the transformer")
+        # The UMT5-XXL text encoder (~11 GB) runs once per episode; keep it on its own
+        # (CPU by default) device so the 5B transformer + VAE fit on a single GPU.
+        tokenizer = load_tokenizer(path, subfolder="tokenizer")
+        self._frozen = {
+            "vae": vae.eval().requires_grad_(False),
+            "streaming_vae": WanVAEStreamingWrapper(vae),
+            "text_encoder": None,
+            "tokenizer": tokenizer,
+        }
+        # RoboTwin's T-shape layout encodes the half-resolution wrist cameras through a second
+        # streaming VAE (separate causal cache) alongside the full-res head camera.
+        if self.config.camera_layout == "robotwin_tshape":
+            vae_half = load_vae(
+                path,
+                torch_dtype=getattr(torch, self.config.dtype),
+                torch_device=device,
+                subfolder="vae",
+            )
+            self._frozen["streaming_vae_half"] = WanVAEStreamingWrapper(
+                vae_half.eval().requires_grad_(False)
+            )
+
+    @property
+    def _vae(self):
+        return self._frozen["vae"]
+
+    @property
+    def _streaming_vae(self):
+        return self._frozen["streaming_vae"]
+
+    # Optimizer parameters
+    def get_optim_params(self) -> list[torch.nn.Parameter]:
+        # Frozen external assets never enter optimizer groups or model.safetensors.
+        return [p for p in self.transformer.parameters() if p.requires_grad]
+
+    def reset(self):
+        """Reset all per-episode streaming state (KV cache, queues, frame counter)."""
+        cfg = self.config
+        self._action_queue: deque = deque(maxlen=cfg.n_action_steps)
+        self._obs_buffer: list = []  # raw keyframe obs (one per env substep) observed this chunk
+        self._executed_actions: Tensor | None = (
+            None  # last chunk's actions (model-normalized) for KV feedback
+        )
+        self._started = False  # first select_action call uses the obs as the conditioning frame
+        self._exec_step = 0  # index of the action being executed within the current chunk
+        self._prev_j = 0  # sub-step index (within a predicted frame) of the last executed action
+        # Sample one keyframe every ``action_per_frame / temporal_downsample`` executed sub-steps so
+        # that exactly ``frame_chunk_size * temporal_downsample`` frames are VAE-encoded per chunk
+        # (the Wan2.2 VAE temporal downsample is 4 -> ``frame_chunk_size`` latent frames).
+        self._keyframe_stride = max(1, cfg.action_per_frame // 4)
+        self._frame_st_id = 0
+        self._first_chunk = True
+        self._bootstrap_action = None
+        self._prompt: str | None = None
+        self._prompt_embeds = None
+        self._negative_prompt_embeds = None
+        self.last_predicted_frames = None
+        self.last_predicted_latents = None
+        # With ``return_predicted_video``: the current chunk's decoded clip, how many actions it
+        # spans, and the frame last returned (see ``_with_predicted_frame``).
+        self._chunk_frames: Tensor | None = None
+        self._chunk_len = 0
+        self._shown_frame = -1
+        self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
+        # Two independent flow-matching schedulers (video latent + action streams).
+        self._scheduler = FlowMatchScheduler(
+            shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True
+        )
+        self._action_scheduler = FlowMatchScheduler(
+            shift=cfg.action_snr_shift, sigma_min=0.0, extra_one_step=True
+        )
+        self._scheduler.set_timesteps(1000, training=True)
+        self._action_scheduler.set_timesteps(1000, training=True)
+        self._cache_initialised = False
+        # Clear KV cache on the (already-built) transformer, if present.
+        if hasattr(self, "transformer"):
+            self.transformer.clear_cache("pos")
+        # Reset the causal streaming-VAE feat cache between episodes (mirrors upstream ``_reset``).
+        # Previous-episode temporal state would corrupt the next initial latent frame count.
+        if self._frozen:
+            self._frozen["streaming_vae"].clear_cache()
+            if "streaming_vae_half" in self._frozen:
+                self._frozen["streaming_vae_half"].clear_cache()
+
+    # Flow-matching dual-stream loss with identical Flex/SDPA visibility predicates.
+    def _ensure_train_schedulers(self):
+        if getattr(self, "_train_sched_latent", None) is None:
+            cfg = self.config
+            self._train_sched_latent = FlowMatchScheduler(
+                shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True
+            )
+            self._train_sched_latent.set_timesteps(1000, training=True)
+            self._train_sched_action = FlowMatchScheduler(
+                shift=cfg.action_snr_shift, sigma_min=0.0, extra_one_step=True
+            )
+            self._train_sched_action.set_timesteps(1000, training=True)
+
+    @torch.no_grad()
+    def _add_noise_stream(self, latent, scheduler, action_mask, action_mode, noisy_cond_prob):
+        """Flow-matching noising of one stream (port of upstream ``Trainer._add_noise``)."""
+        device = latent.device
+        b, _c, f, _h, _w = latent.shape
+        p = self.config.patch_size
+        patch_f, patch_h, patch_w = (1, 1, 1) if action_mode else (p[0], p[1], p[2])
+
+        ts_ids = _sample_timestep_id(f, num_train_timesteps=scheduler.num_train_timesteps)
+        noise = torch.zeros_like(latent).normal_()
+        timesteps = scheduler.timesteps[ts_ids].to(device)
+        noisy_latents = scheduler.add_noise(latent, noise, timesteps, t_dim=2)
+        targets = scheduler.training_target(latent, noise, timesteps)
+
+        grid_id = (
+            get_mesh_id(
+                latent.shape[-3] // patch_f,
+                latent.shape[-2] // patch_h,
+                latent.shape[-1] // patch_w,
+                t=1 if action_mode else 0,
+                f_w=1,
+                f_shift=0,
+                action=action_mode,
+            )
+            .to(device)[None]
+            .repeat(b, 1, 1)
+        )
+
+        if torch.rand(1).item() < noisy_cond_prob:
+            cond_ids = _sample_timestep_id(
+                f,
+                min_timestep_bd=0.5,
+                max_timestep_bd=1.0,
+                num_train_timesteps=scheduler.num_train_timesteps,
+            )
+            cond_noise = torch.zeros_like(latent).normal_()
+            cond_timesteps = scheduler.timesteps[cond_ids].to(device)
+            latent = scheduler.add_noise(latent, cond_noise, cond_timesteps, t_dim=2)
+        else:
+            cond_timesteps = torch.zeros_like(timesteps)
+
+        if action_mask is not None:
+            noisy_latents = noisy_latents * action_mask.float()
+            targets = targets * action_mask.float()
+            latent = latent * action_mask.float()
+
+        return {
+            "timesteps": timesteps[None].repeat(b, 1),
+            "noisy_latents": noisy_latents,
+            "targets": targets,
+            "latent": latent,
+            "cond_timesteps": cond_timesteps[None].repeat(b, 1),
+            "grid_id": grid_id,
+        }
+
+    def _flow_matching_loss(self, input_dict, pred):
+        """Dual-stream flow-matching loss (port of upstream ``Trainer.compute_loss``)."""
+        latent_pred, action_pred = pred
+        ld, ad = input_dict["latent_dict"], input_dict["action_dict"]
+        action_pred = rearrange(action_pred, "b (f n) c -> b c f n 1", f=ad["targets"].shape[-3])
+        latent_pred = data_seq_to_patch(
+            self.config.patch_size,
+            latent_pred,
+            ld["targets"].shape[-3],
+            ld["targets"].shape[-2],
+            ld["targets"].shape[-1],
+            batch_size=latent_pred.shape[0],
+        )
+        bn, fn = ld["timesteps"].shape
+        lw = self._train_sched_latent.training_weight(ld["timesteps"].flatten()).reshape(bn, fn)
+        aw = self._train_sched_action.training_weight(ad["timesteps"].flatten()).reshape(bn, fn)
+
+        latent_loss = F.mse_loss(
+            latent_pred.float(), ld["targets"].float().detach(), reduction="none"
+        )
+        latent_loss = (
+            (latent_loss * lw[:, None, :, None, None])
+            .permute(0, 2, 3, 4, 1)
+            .flatten(0, 1)
+            .flatten(1)
+        )
+        latent_loss = (
+            latent_loss.sum(dim=1) / (torch.ones_like(latent_loss).sum(dim=1) + 1e-6)
+        ).mean()
+
+        amask = ad["actions_mask"].float()
+        action_loss = F.mse_loss(
+            action_pred.float(), ad["targets"].float().detach(), reduction="none"
+        )
+        action_loss = (
+            (action_loss * aw[:, None, :, None, None] * amask)
+            .permute(0, 2, 3, 4, 1)
+            .flatten(0, 1)
+            .flatten(1)
+        )
+        amask_f = amask.permute(0, 2, 3, 4, 1).flatten(0, 1).flatten(1)
+        action_loss = (action_loss.sum(dim=1) / (amask_f.sum(dim=1) + 1e-6)).mean()
+        return latent_loss, action_loss
+
+    def training_loss_from_streams(self, latents, actions, actions_mask, text_emb):
+        """Core dual-stream training loss given prepared latents / actions / text embeddings.
+
+        ``latents``: ``[B, in_channels, F, h, w]`` (normalized video latents).
+        ``actions`` / ``actions_mask``: ``[B, action_dim, F, action_per_frame, 1]``.
+        ``text_emb``: ``[B, seq_len, text_dim]``. Returns ``(loss, {latent_loss, action_loss})``.
+        """
+        if self.config.attn_mode not in ("flex", "torch"):
+            raise ValueError(
+                "LingBot-VA training requires flex or torch block-causal attention masks"
+            )
+        self._ensure_train_schedulers()
+        latent_dict = self._add_noise_stream(
+            latents,
+            self._train_sched_latent,
+            action_mask=None,
+            action_mode=False,
+            noisy_cond_prob=0.5,
+        )
+        action_dict = self._add_noise_stream(
+            actions,
+            self._train_sched_action,
+            action_mask=actions_mask,
+            action_mode=True,
+            noisy_cond_prob=0.0,
+        )
+        latent_dict["text_emb"] = text_emb
+        action_dict["text_emb"] = text_emb
+        action_dict["actions_mask"] = actions_mask
+        input_dict = {
+            "latent_dict": latent_dict,
+            "action_dict": action_dict,
+            "chunk_size": int(torch.randint(1, 5, (1,)).item()),
+            "window_size": int(torch.randint(4, 65, (1,)).item()),
+        }
+        pred = self.transformer(input_dict, train_mode=True)
+        latent_loss, action_loss = self._flow_matching_loss(input_dict, pred)
+        loss = latent_loss + action_loss
+        return loss, {"latent_loss": latent_loss.detach(), "action_loss": action_loss.detach()}
+
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
+        """Training forward: dual-stream flow-matching loss.
+
+        Encodes the camera clips and tasks from the platform batch, then trains
+        both video and action streams with explicit block-causal masks.
+        """
+        self._ensure_frozen_modules()
+        latents, actions, actions_mask, text_emb = self._build_training_streams(batch)
+        loss, metrics = self.training_loss_from_streams(latents, actions, actions_mask, text_emb)
+        return loss * batch.get("_loss_weight", 1.0), metrics
+
+    @property
+    def device(self):
+        return next(self.transformer.parameters()).device
+
+    @property
+    def dtype(self):
+        return next(self.transformer.parameters()).dtype
+
+    @torch.no_grad()
+    def _build_training_streams(self, batch):
+        from alohamini.policies.slots import NamedSlots
+
+        cfg = self.config
+        text_emb = self._get_t5_prompt_embeds(batch["task"], cfg.max_sequence_length)
+        latents = self._encode_training_latents(batch).to(self.device, self.dtype)
+        frames = cfg.frame_chunk_size + 1
+        if latents.shape[2] != frames:
+            raise ValueError(
+                "LingBot-VA requires initial latent plus configured future latent frames"
+            )
+        # Author alignment: one physical-zero bootstrap group before real commands.
+        actions = torch.cat((batch["action.bootstrap"], batch["action"]), dim=1)
+        slots = NamedSlots(cfg.action_names, cfg.action_slots, cfg.action_dim)
+        full = slots.pack(actions)
+        size = len(full)
+        full = full.reshape(size, frames, cfg.action_per_frame, cfg.action_dim)
+        full = full.permute(0, 3, 1, 2).unsqueeze(-1).to(self.dtype)
+        mask = slots.mask(size, frames * cfg.action_per_frame, device=self.device)
+        mask = mask.reshape(size, frames, cfg.action_per_frame, cfg.action_dim)
+        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)
+        return latents, full, mask, text_emb
+
+    @torch.no_grad()
+    def _encode_training_latents(self, batch) -> Tensor:
+        """Encode camera clips into normalized video latents [B, C, F, h, w]."""
+        vae_device = next(self._vae.parameters()).device
+
+        def _clip(key):
+            x = batch[key].to(vae_device)
+            if x.dim() == 4:  # [B, C, H, W] -> single frame clip
+                x = x.unsqueeze(2)
+            elif x.shape[1] not in (1, 3) and x.shape[2] in (
+                1,
+                3,
+            ):  # [B, T, C, H, W] -> [B, C, T, H, W]
+                x = x.permute(0, 2, 1, 3, 4)
+            return x.contiguous()
+
+        def _encode(x, size):
+            b, c, t = x.shape[:3]
+            x = F.interpolate(
+                x.flatten(0, 1).float(), size=size, mode="bilinear", align_corners=False
+            )
+            x = (x.view(b, c, t, *size) * 2.0 - 1.0).to(self._vae.dtype)
+            mu = self._vae.encode(x).latent_dist.mode()  # [B, z_dim, F, h, w]
+            mean = torch.tensor(self._vae.config.latents_mean).view(1, -1, 1, 1, 1).to(mu.device)
+            inv_std = (
+                (1.0 / torch.tensor(self._vae.config.latents_std))
+                .view(1, -1, 1, 1, 1)
+                .to(mu.device)
+            )
+            return ((mu.float() - mean) * inv_std).to(mu)
+
+        keys = self.config.obs_cam_keys
+        if self.config.camera_layout == "robotwin_tshape":
+            h, w = self.config.height, self.config.width
+            head = _encode(_clip(keys[0]), (h, w))
+            left = _encode(_clip(keys[1]), (h // 2, w // 2))
+            right = _encode(_clip(keys[2]), (h // 2, w // 2))
+            return torch.cat([torch.cat([left, right], dim=-1), head], dim=-2).to(self.device)
+        per_cam = [_encode(_clip(k), (self.config.height, self.config.width)) for k in keys]
+        return torch.cat(per_cam, dim=-1).to(self.device)
+
+    @torch.no_grad()
+    def select_action(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        video_noise: Tensor | None = None,
+    ) -> Tensor | dict:
+        """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
+
+        Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
+        the conditioning frame; every observation produced afterwards is buffered as a keyframe and,
+        once the chunk's actions are exhausted, the buffered frames + executed actions are fed back
+        into the KV cache before the next chunk is predicted.
+
+        With ``config.return_predicted_video``, returns a `dict` whose prediction holds the
+        imagined camera frames matching the action being served (see ``_with_predicted_frame``).
+        """
+        self.eval()
+        self._ensure_frozen_modules()
+        self._maybe_init_prompt(batch)
+
+        if not self._started:
+            # First call: this observation conditions the first chunk (it is *not* a keyframe).
+            self._started = True
+            # [B, chunk_size, n_used]
+            actions = self._predict_and_decode(batch, noise=noise, video_noise=video_noise)
+            self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
+            self._obs_buffer = []
+            self._exec_step = 0
+        else:
+            # This observation is the result of the previously executed action -> a candidate
+            # keyframe. Buffer it on the sub-step boundary the upstream client samples on.
+            if (self._prev_j + 1) % self._keyframe_stride == 0:
+                self._obs_buffer.append(self._extract_raw_obs(batch))
+            if len(self._action_queue) == 0:
+                # All actions for the current chunk have been executed; feed the observed
+                # keyframes + executed actions back and predict the next chunk.
+                actions = self._predict_and_decode(None, noise=noise, video_noise=video_noise)
+                self._action_queue.extend(actions.transpose(0, 1))
+                self._exec_step = 0
+
+        self._prev_j = self._exec_step % self.config.action_per_frame
+        self._exec_step += 1
+        return self._with_predicted_frame(self._action_queue.popleft())
+
+    def _predict_and_decode(
+        self, batch: dict[str, Tensor] | None, *, noise: Tensor | None, video_noise: Tensor | None
+    ) -> Tensor:
+        """Predict the next chunk, optionally retaining its decoded imagined clip."""
+        actions, latents = self._predict_chunk(batch, noise=noise, video_noise=video_noise)
+        if self.config.return_predicted_video:
+            self._chunk_frames = self._decode_video_batch(latents)  # [B, T, H, W, 3] uint8
+            self._chunk_len = actions.shape[1]
+            self._shown_frame = -1
+        return actions
+
+    def _with_predicted_frame(self, action: Tensor) -> Tensor | dict:
+        """Pair ``action`` with the imagined frame it belongs to, when that frame changes.
+
+        The clip's frames are spread evenly over the chunk's actions, so the imagined video plays
+        as the chunk executes. Returns the bare action when there is no new frame to show.
+        """
+        if self._chunk_frames is None:
+            return action
+        n_frames = self._chunk_frames.shape[1]
+        served = self._chunk_len - len(self._action_queue) - 1  # index of ``action`` in its chunk
+        index = min(served * n_frames // self._chunk_len, n_frames - 1)
+        if index == self._shown_frame:
+            return action
+        self._shown_frame = index
+        frames = self._chunk_frames[:, index].permute(
+            0, 3, 1, 2
+        )  # [B, 3, H, W], like camera frames
+        return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
+
+    def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
+        """Split decoded [B, 3, H, W] frames back into their ordered camera views."""
+        keys, h, w = self.config.obs_cam_keys, self.config.height, self.config.width
+        if self.config.camera_layout == "robotwin_tshape":
+            wrists, head = frames.split([h // 2, h], dim=2)
+            left, right = wrists.split(w // 2, dim=3)
+            return {keys[0]: head, keys[1]: left, keys[2]: right}
+        return dict(zip(keys, frames.split(w, dim=3), strict=True))
+
+    @torch.no_grad()
+    def predict_action_chunk(self, batch, *, noise=None, video_noise=None):
+        # Offline predictions are independent; online select_action owns stream feedback.
+        output = []
+        for row in range(len(batch["task"])):
+            sample = {}
+            for key, value in batch.items():
+                batched = (
+                    isinstance(value, (list, tuple)) or isinstance(value, Tensor) and value.ndim > 0
+                )
+                sample[key] = value[row : row + 1] if batched else value
+            self.reset()
+            try:
+                action, _ = self._predict_chunk(
+                    sample,
+                    noise=None if noise is None else noise[row : row + 1],
+                    video_noise=None if video_noise is None else video_noise[row : row + 1],
+                )
+                output.append(action)
+            finally:
+                self.reset()
+        return torch.cat(output)
+
+    def _predict_chunk(
+        self, batch: dict[str, Tensor] | None, *, noise: Tensor | None, video_noise: Tensor | None
+    ) -> tuple[Tensor, Tensor]:
+        """Run one autoregressive chunk; return its actions and predicted video latents."""
+        self.eval()
+        self._ensure_frozen_modules()
+        self._maybe_init_prompt(batch)
+
+        is_first = self._first_chunk
+        if is_first:
+            from alohamini.policies.slots import NamedSlots
+
+            slots = NamedSlots(
+                self.config.action_names, self.config.action_slots, self.config.action_dim
+            )
+            initial = slots.pack(batch["action.bootstrap"])
+            self._bootstrap_action = (
+                initial.transpose(1, 2).unsqueeze(2).unsqueeze(-1).to(self.dtype)
+            )
+            init_latent = self._encode_frames([self._extract_raw_obs(batch)])
+            self._init_latent = init_latent
+            self._init_streaming_cache(init_latent)
+            self._obs_buffer = []  # frame 0 (the init obs) conditions the chunk; it is not fed back
+            actions, latents = self._infer(
+                init_latent, frame_st_id=0, noise=noise, video_noise=video_noise
+            )
+            self._first_chunk = False
+        else:
+            # Feed the real observed keyframes + the executed actions back into the KV cache.
+            self._compute_kv_cache(self._obs_buffer, self._executed_actions)
+            self._obs_buffer = []
+            actions, latents = self._infer(
+                None, frame_st_id=self._frame_st_id, noise=noise, video_noise=video_noise
+            )
+
+        # actions: [B, action_dim, F, action_per_frame, 1] (model-normalized). Keep for KV feedback.
+        self._executed_actions = actions
+
+        if self.config.save_predicted_video:
+            # Match upstream LingBot-VA visualization: collect chunk latents and decode the
+            # concatenated latent sequence once after the rollout finishes.
+            self.last_predicted_frames = None
+            self.last_predicted_latents = latents.detach().to("cpu")
+
+        # On the first chunk, frame 0 is the conditioning frame (already "known"): the upstream
+        # LIBERO client skips it (start_idx=1), so we drop the first frame's actions here.
+        used = self.config.used_action_channel_ids
+        a = actions[:, used]  # [B, n_used, F, action_per_frame, 1]
+        if is_first:
+            a = a[:, :, 1:]  # drop frame 0 -> (F-1) frames of actions
+        a = a.squeeze(-1).flatten(2)  # [B, n_used, n_steps]
+        a = a.transpose(1, 2).contiguous()  # [B, n_steps, n_used]
+        return a.to(torch.float32), latents
+
+    # Prompt / text encoding
+    def _maybe_init_prompt(self, batch):
+        if self._prompt_embeds is not None or batch is None:
+            return
+        task = batch.get("task")
+        prompt = task[0] if isinstance(task, list | tuple) else task
+        self._prompt = prompt or ""
+        self._prompt_embeds, self._negative_prompt_embeds = self._encode_prompt(self._prompt)
+
+    def _get_t5_prompt_embeds(self, prompt, max_sequence_length):
+        from .assets import encode_features, feature_key
+
+        tasks = [prompt] if isinstance(prompt, str) else prompt
+        keys = [feature_key(task, max_sequence_length) for task in tasks]
+
+        def produce(missing):
+            if self._frozen["text_encoder"] is None:
+                encoder = load_text_encoder(
+                    self.config.wan_pretrained_path,
+                    torch_dtype=getattr(torch, self.config.dtype),
+                    torch_device=self.config.text_encoder_device,
+                    subfolder="text_encoder",
+                )
+                self._frozen["text_encoder"] = encoder.eval().requires_grad_(False)
+            return encode_features(missing, self._frozen["tokenizer"], self._frozen["text_encoder"])
+
+        output = torch.stack(self._text_features.get_many(keys, produce))
+        if output.shape[-1] != self.config.text_dim:
+            raise ValueError("LingBot-VA frozen text features differ from text_dim")
+        return output.to(self.device, self.dtype)
+
+    def _encode_prompt(self, prompt):
+        max_len = self.config.max_sequence_length
+        prompt_embeds = self._get_t5_prompt_embeds(prompt, max_len)
+        negative_prompt_embeds = None
+        if self._use_cfg:
+            negative_prompt_embeds = self._get_t5_prompt_embeds("", max_len)
+        return prompt_embeds, negative_prompt_embeds
+
+    # Observation (image) encoding -> normalized video latents
+    def _extract_raw_obs(self, batch) -> dict[str, Tensor]:
+        """Snapshot the configured camera images from a batch (kept raw for later VAE encoding)."""
+        return {
+            k: (batch[k][:, 0] if batch[k].ndim == 5 else batch[k]).detach()
+            for k in self.config.obs_cam_keys
+        }
+
+    def _camera_frame(self, raw_obs, key, size=None) -> Tensor:
+        """Return a single-frame camera tensor [1, C, 1, H, W] resized + scaled to [-1, 1]."""
+        img = raw_obs[key]
+        if img.dim() == 3:  # [C, H, W]
+            img = img.unsqueeze(0)
+        # The platform processor supplies float RGB in [0, 1], shape [B, C, H, W].
+        img = img.to(self.device, torch.float32)
+        if self.config.image_hflip:
+            img = torch.flip(img, dims=[-1])  # undo the env processor's horizontal flip
+        if size is None:
+            size = (self.config.height, self.config.width)
+        img = F.interpolate(img, size=size, mode="bilinear", align_corners=False)
+        img = img * 2.0 - 1.0
+        return img.unsqueeze(2).to(self.dtype)  # [1, C, F=1, H, W]
+
+    def _normalize_vae_latent(self, enc_out: Tensor) -> Tensor:
+        """Take the mean of a VAE encoder output and channel-normalize it (matches upstream)."""
+        mu, _logvar = torch.chunk(enc_out, 2, dim=1)
+        latents_mean = torch.tensor(self._vae.config.latents_mean).to(mu.device)
+        latents_std = torch.tensor(self._vae.config.latents_std).to(mu.device)
+        mean = latents_mean.view(1, -1, 1, 1, 1)
+        inv_std = (1.0 / latents_std).view(1, -1, 1, 1, 1)
+        return ((mu.float() - mean) * inv_std).to(mu)
+
+    @torch.no_grad()
+    def _encode_frames(self, raw_frames: list) -> Tensor:
+        """VAE-encode a temporal clip of observed frames and concat the per-camera latents on width.
+
+        ``raw_frames`` is a list of per-frame obs dicts (one per env sub-step). Each configured
+        camera is stacked along the temporal axis into a ``[1, C, F, H, W]`` clip and encoded in a
+        single streaming ``encode_chunk`` call so the VAE temporal downsample (x4) collapses the F
+        input frames into ``F / 4`` latent frames, with the causal ``feat_cache`` carried across
+        chunks (mirrors upstream ``_encode_obs``).
+        """
+        vae_device = next(self._vae.parameters()).device
+        if self.config.camera_layout == "robotwin_tshape":
+            return self._encode_frames_tshape(raw_frames, vae_device)
+        per_cam_videos = []
+        for k in self.config.obs_cam_keys:
+            frames = [self._camera_frame(fb, k) for fb in raw_frames]
+            per_cam_videos.append(torch.cat(frames, dim=2))  # [1, C, F, H, W]
+        videos = torch.cat(per_cam_videos, dim=0)  # [num_cam, C, F, H, W]
+        enc_out = self._streaming_vae.encode_chunk(videos.to(vae_device).to(self._vae.dtype))
+        mu_norm = self._normalize_vae_latent(enc_out)
+        # Concatenate the per-camera latents along width.
+        video_latent = torch.cat(mu_norm.split(1, dim=0), dim=-1)
+        return video_latent.to(self.device)
+
+    @torch.no_grad()
+    def _encode_frames_tshape(self, raw_frames: list, vae_device) -> Tensor:
+        """RoboTwin T-shape latent assembly: full-res head + half-res wrists (second streaming VAE).
+
+        The two wrist latents are concatenated on width and stacked (on the height axis) on top of
+        the head latent, mirroring upstream ``_encode_obs`` for ``env_type='robotwin_tshape'``.
+        """
+        cfg = self.config
+        h, w = cfg.height, cfg.width
+        head_key, left_key, right_key = (
+            cfg.obs_cam_keys[0],
+            cfg.obs_cam_keys[1],
+            cfg.obs_cam_keys[2],
+        )
+        head = torch.cat(
+            [self._camera_frame(fb, head_key, size=(h, w)) for fb in raw_frames], dim=2
+        )
+        left = torch.cat(
+            [self._camera_frame(fb, left_key, size=(h // 2, w // 2)) for fb in raw_frames], dim=2
+        )
+        right = torch.cat(
+            [self._camera_frame(fb, right_key, size=(h // 2, w // 2)) for fb in raw_frames], dim=2
+        )
+        wrists = torch.cat([left, right], dim=0)  # [2, C, F, H/2, W/2]
+        enc_high = self._streaming_vae.encode_chunk(head.to(vae_device).to(self._vae.dtype))
+        enc_lr = self._frozen["streaming_vae_half"].encode_chunk(
+            wrists.to(vae_device).to(self._vae.dtype)
+        )
+        # wrists side-by-side on width, then stacked on top of the head latent on the height axis.
+        enc_out = torch.cat([torch.cat(enc_lr.split(1, dim=0), dim=-1), enc_high], dim=-2)
+        video_latent = self._normalize_vae_latent(enc_out)
+        return video_latent.to(self.device)
+
+    # KV cache management
+    @property
+    def _latent_hw(self):
+        if self.config.camera_layout == "robotwin_tshape":
+            # head (full) on the bottom, two half-res wrists side-by-side on top -> 1.5x height.
+            return (
+                (self.config.height // self.config.vae_spatial_factor) * 3
+            ) // 2, self.config.width // self.config.vae_spatial_factor
+        h = self.config.height // self.config.vae_spatial_factor
+        w = (self.config.width // self.config.vae_spatial_factor) * len(self.config.obs_cam_keys)
+        return h, w
+
+    def _init_streaming_cache(self, init_latent):
+        cfg = self.config
+        latent_h, latent_w = self._latent_hw
+        p = cfg.patch_size
+        latent_token_per_chunk = (cfg.frame_chunk_size * latent_h * latent_w) // (
+            p[0] * p[1] * p[2]
+        )
+        action_token_per_chunk = cfg.frame_chunk_size * cfg.action_per_frame
+        self.transformer.create_empty_cache(
+            "pos",
+            cfg.attn_window,
+            latent_token_per_chunk,
+            action_token_per_chunk,
+            device=self.device,
+            dtype=(
+                torch.get_autocast_dtype(self.device.type)
+                if torch.is_autocast_enabled(self.device.type)
+                else self.dtype
+            ),
+            batch_size=2 if self._use_cfg else 1,
+        )
+        self._cache_initialised = True
+
+    def _repeat_input_for_cfg(self, input_dict):
+        if self._use_cfg:
+            input_dict["noisy_latents"] = input_dict["noisy_latents"].repeat(2, 1, 1, 1, 1)
+            input_dict["text_emb"] = torch.cat(
+                [
+                    self._prompt_embeds.to(self.dtype).clone(),
+                    self._negative_prompt_embeds.to(self.dtype).clone(),
+                ],
+                dim=0,
+            )
+            input_dict["grid_id"] = input_dict["grid_id"][None].repeat(2, 1, 1)
+            input_dict["timesteps"] = input_dict["timesteps"][None].repeat(2, 1)
+        else:
+            input_dict["grid_id"] = input_dict["grid_id"][None]
+            input_dict["timesteps"] = input_dict["timesteps"][None]
+        return input_dict
+
+    def _prepare_latent_input(
+        self,
+        latent_model_input,
+        action_model_input,
+        latent_t=0,
+        action_t=0,
+        latent_cond=None,
+        action_cond=None,
+        frame_st_id=0,
+    ):
+        cfg = self.config
+        device = self.device
+        p = cfg.patch_size
+        out = {}
+        if latent_model_input is not None:
+            out["latent_res_lst"] = {
+                "noisy_latents": latent_model_input,
+                "timesteps": torch.ones(
+                    [latent_model_input.shape[2]], dtype=torch.float32, device=device
+                )
+                * latent_t,
+                "grid_id": get_mesh_id(
+                    latent_model_input.shape[-3] // p[0],
+                    latent_model_input.shape[-2] // p[1],
+                    latent_model_input.shape[-1] // p[2],
+                    0,
+                    1,
+                    frame_st_id,
+                ).to(device),
+                "text_emb": self._prompt_embeds.to(self.dtype).clone(),
+            }
+            if latent_cond is not None:
+                out["latent_res_lst"]["noisy_latents"][:, :, 0:1] = latent_cond[:, :, 0:1]
+                out["latent_res_lst"]["timesteps"][0:1] *= 0
+        if action_model_input is not None:
+            out["action_res_lst"] = {
+                "noisy_latents": action_model_input,
+                "timesteps": torch.ones(
+                    [action_model_input.shape[2]], dtype=torch.float32, device=device
+                )
+                * action_t,
+                "grid_id": get_mesh_id(
+                    action_model_input.shape[-3],
+                    action_model_input.shape[-2],
+                    action_model_input.shape[-1],
+                    1,
+                    1,
+                    frame_st_id,
+                    action=True,
+                ).to(device),
+                "text_emb": self._prompt_embeds.to(self.dtype).clone(),
+            }
+            if action_cond is not None:
+                out["action_res_lst"]["noisy_latents"][:, :, 0:1] = action_cond[:, :, 0:1]
+                out["action_res_lst"]["timesteps"][0:1] *= 0
+            out["action_res_lst"]["noisy_latents"][:, ~self._action_mask] *= 0
+        return out
+
+    @property
+    def _action_mask(self):
+        mask = torch.zeros([self.config.action_dim], dtype=torch.bool)
+        mask[self.config.used_action_channel_ids] = True
+        return mask
+
+    # Action conditioning (executed action history) (de)normalization
+    def _preprocess_action_state(self, action_norm: Tensor) -> Tensor:
+        """Build the action-conditioning tensor from the already-normalized executed actions.
+
+        ``action_norm`` is the model-space action chunk ``[B, action_dim, F, action_per_frame, 1]``.
+        Upstream re-derives the conditioning from the raw executed action via quantile norm; here
+        the executed actions are already in the model-normalized space, so we pass them through.
+        """
+        return action_norm.to(self.device, self.dtype)
+
+    def _compute_kv_cache(self, obs_buffer, executed_actions):
+        """Feed real observed keyframes + executed actions back into the KV cache."""
+        if not obs_buffer or executed_actions is None:
+            return
+        self.transformer.clear_pred_cache("pos")
+        # Encode the buffered keyframe clip in one streaming call (carries the causal VAE cache).
+        latent_model_input = self._encode_frames(obs_buffer)
+        # On the first feedback, prepend the init latent so the latent/action frame counts align
+        # (upstream prepends ``init_latent`` to the observed keyframes when frame_st_id == 0).
+        if self._frame_st_id == 0 and getattr(self, "_init_latent", None) is not None:
+            latent_model_input = torch.cat([self._init_latent, latent_model_input], dim=2)
+        action_model_input = self._preprocess_action_state(executed_actions)
+        action_model_input = action_model_input.to(latent_model_input)
+        input_dict = self._prepare_latent_input(
+            latent_model_input, action_model_input, frame_st_id=self._frame_st_id
+        )
+        with torch.no_grad():
+            self.transformer(
+                self._repeat_input_for_cfg(input_dict["latent_res_lst"]),
+                update_cache=2,
+                cache_name="pos",
+                action_mode=False,
+            )
+            self.transformer(
+                self._repeat_input_for_cfg(input_dict["action_res_lst"]),
+                update_cache=2,
+                cache_name="pos",
+                action_mode=True,
+            )
+        self._frame_st_id += latent_model_input.shape[2]
+
+    # The core dual-stream denoising loop (one chunk)
+    @torch.no_grad()
+    def _infer(
+        self,
+        init_latent,
+        frame_st_id=0,
+        *,
+        noise: Tensor | None = None,
+        video_noise: Tensor | None = None,
+    ):
+        cfg = self.config
+        device = self.device
+        latent_h, latent_w = self._latent_hw
+        frame_chunk_size = cfg.frame_chunk_size + (1 if frame_st_id == 0 else 0)
+
+        # Denoising updates both samples in place; preserve the caller's noise tensors.
+        if video_noise is None:
+            latents = torch.randn(
+                1,
+                cfg.in_channels,
+                frame_chunk_size,
+                latent_h,
+                latent_w,
+                device=device,
+                dtype=self.dtype,
+            )
+        else:
+            latents = video_noise.to(device=device, dtype=self.dtype).clone()
+        if noise is None:
+            actions = torch.randn(
+                1,
+                cfg.action_dim,
+                frame_chunk_size,
+                cfg.action_per_frame,
+                1,
+                device=device,
+                dtype=self.dtype,
+            )
+        else:
+            actions = noise.to(device=device, dtype=self.dtype).clone()
+
+        self._scheduler.set_timesteps(cfg.num_inference_steps)
+        self._action_scheduler.set_timesteps(cfg.action_num_inference_steps)
+        timesteps = F.pad(self._scheduler.timesteps, (0, 1), mode="constant", value=0)
+        if cfg.video_exec_step != -1:
+            timesteps = timesteps[: cfg.video_exec_step]
+        action_timesteps = F.pad(self._action_scheduler.timesteps, (0, 1), mode="constant", value=0)
+
+        # 1. Video-latent denoising loop
+        for i, t in enumerate(timesteps):
+            last_step = i == len(timesteps) - 1
+            latent_cond = (
+                init_latent[:, :, 0:1].to(self.dtype)
+                if frame_st_id == 0 and init_latent is not None
+                else None
+            )
+            input_dict = self._prepare_latent_input(
+                latents, None, t, t, latent_cond, None, frame_st_id=frame_st_id
+            )
+            video_noise_pred = self.transformer(
+                self._repeat_input_for_cfg(input_dict["latent_res_lst"]),
+                update_cache=1 if last_step else 0,
+                cache_name="pos",
+                action_mode=False,
+            )
+            if not last_step or cfg.video_exec_step != -1:
+                video_noise_pred = data_seq_to_patch(
+                    cfg.patch_size,
+                    video_noise_pred,
+                    frame_chunk_size,
+                    latent_h,
+                    latent_w,
+                    batch_size=2 if self._use_cfg else 1,
+                )
+                if cfg.guidance_scale > 1:
+                    video_noise_pred = video_noise_pred[1:] + cfg.guidance_scale * (
+                        video_noise_pred[:1] - video_noise_pred[1:]
+                    )
+                else:
+                    video_noise_pred = video_noise_pred[:1]
+                latents = self._scheduler.step(video_noise_pred, t, latents, return_dict=False)
+            if frame_st_id == 0 and latent_cond is not None:
+                latents[:, :, 0:1] = latent_cond
+
+        # 2. Action denoising loop
+        for i, t in enumerate(action_timesteps):
+            last_step = i == len(action_timesteps) - 1
+            action_cond = None
+            if frame_st_id == 0:
+                action_cond = self._bootstrap_action
+                if cfg.bootstrap_condition == "normalized_zero":
+                    action_cond = torch.zeros_like(action_cond)
+            input_dict = self._prepare_latent_input(
+                None, actions, t, t, None, action_cond, frame_st_id=frame_st_id
+            )
+            action_noise_pred = self.transformer(
+                self._repeat_input_for_cfg(input_dict["action_res_lst"]),
+                update_cache=1 if last_step else 0,
+                cache_name="pos",
+                action_mode=True,
+            )
+            if not last_step:
+                action_noise_pred = rearrange(
+                    action_noise_pred, "b (f n) c -> b c f n 1", f=frame_chunk_size
+                )
+                if cfg.action_guidance_scale > 1:
+                    action_noise_pred = action_noise_pred[1:] + cfg.action_guidance_scale * (
+                        action_noise_pred[:1] - action_noise_pred[1:]
+                    )
+                else:
+                    action_noise_pred = action_noise_pred[:1]
+                actions = self._action_scheduler.step(
+                    action_noise_pred, t, actions, return_dict=False
+                )
+            if frame_st_id == 0 and action_cond is not None:
+                actions[:, :, 0:1] = action_cond
+
+        actions[:, ~self._action_mask] *= 0
+        return actions, latents
+
+    # Predicted-video decoding (opt-in)
+    @torch.no_grad()
+    def decode_predicted_latents(self, latents) -> Tensor:
+        """Decode a concatenated predicted-latent sequence into ``[T, H, W, 3]`` uint8 frames."""
+        return self._decode_predicted_video(latents)
+
+    @torch.no_grad()
+    def _decode_predicted_video(self, latents) -> Tensor:
+        """Decode the first environment's uint8 frame stack [T, H, W, 3] on CPU."""
+        return self._decode_video_batch(latents)[0]
+
+    @torch.no_grad()
+    def _decode_video_batch(self, latents) -> Tensor:
+        """VAE-decode predicted latents into uint8 frame stacks ``[B, T, H, W, 3]`` on CPU."""
+        vae = self._vae
+        z_dim = vae.config.z_dim
+        vae_device = next(vae.parameters()).device
+        latents = latents.to(device=vae_device, dtype=vae.dtype)
+        latents = denormalize_latents(
+            latents, vae.config.latents_mean, vae.config.latents_std, z_dim
+        )
+        video = vae.decode(latents, return_dict=False)[0]  # [B, C, F, H, W] in [-1, 1]
+        video = (video.float().clamp(-1, 1) + 1.0) / 2.0
+        video = (video.permute(0, 2, 3, 4, 1) * 255.0).round().to(torch.uint8)  # [B, F, H, W, C]
+        return video.cpu()

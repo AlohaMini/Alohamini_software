@@ -1,8 +1,33 @@
 """Trainable weight storage, independent of autocast compute precision."""
 
+from contextlib import contextmanager
+
 import torch
 
 TRAINABLE_DTYPES = ("preserve", "float32")
+
+
+def resolve_tf32(settings):
+    """Keep legacy defaults while making the matmul/convolution policy explicit."""
+    value = settings.get("tf32", not settings.get("cudnn_deterministic", False))
+    if type(value) is not bool:
+        raise ValueError("tf32 must be a boolean")
+    return value
+
+
+@contextmanager
+def tf32_context(enabled):
+    """Apply the same FP32 math policy to forward, backward and recomputation."""
+    if type(enabled) is not bool:
+        raise ValueError("tf32 must be a boolean")
+    matmul, cudnn = torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = enabled
+        torch.backends.cudnn.allow_tf32 = enabled
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul
+        torch.backends.cudnn.allow_tf32 = cudnn
 
 
 def validate_trainable_dtype(value):

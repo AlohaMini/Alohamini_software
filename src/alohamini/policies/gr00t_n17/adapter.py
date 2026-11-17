@@ -6,7 +6,6 @@ from itertools import islice
 from pathlib import Path
 
 import torch
-from safetensors.torch import load_file
 
 from alohamini.datasets.statistics import ExactQuantileStats
 from alohamini.learning.data_index import ordered_indices
@@ -20,6 +19,7 @@ from .preset import apply_preset
 
 
 class GR00TN17Algorithm(ChunkAlgorithm):
+    asset_fields = ("assets_path",)
     config_class = GR00TN17Config
     apply_preset = staticmethod(apply_preset)
     supports_field_transforms = True
@@ -154,25 +154,9 @@ class GR00TN17Algorithm(ChunkAlgorithm):
         root = Path(
             settings.get("pretrained_path") or WorkspacePaths().pretrained / "gr00t_n17"
         ).expanduser()
-        index = root / "model.safetensors.index.json"
-        files = (
-            sorted(set(json.loads(index.read_text())["weight_map"].values()))
-            if index.exists()
-            else ["model.safetensors"]
-        )
-        expected, loaded = model.state_dict(), set()
-        for name in files:
-            values = load_file(root / name)
-            unknown = values.keys() - expected.keys()
-            if unknown:
-                raise ValueError(f"Unexpected official GR00T tensors: {sorted(unknown)[:5]}")
-            for key, tensor in values.items():
-                if key in loaded or expected[key].shape != tensor.shape:
-                    raise ValueError(f"GR00T tensor shape/name mismatch: {key}")
-            model.load_state_dict(values, strict=False)
-            loaded.update(values)
-        if loaded != expected.keys():
-            raise ValueError(f"Incomplete GR00T weights: {sorted(expected.keys() - loaded)[:5]}")
+        from alohamini.learning.weights import load_weights
+
+        load_weights(model, root)
         if model.config.reinitialize_embodiment:
             from ._vendor.embodiment_conditioned_mlp import CategorySpecificLinear
 

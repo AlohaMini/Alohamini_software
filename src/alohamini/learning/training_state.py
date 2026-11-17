@@ -423,6 +423,10 @@ def load_training_checkpoint(path, cfg, samples, validation):
             return str(Path(value).expanduser().resolve())
         if key == "trainable_dtype":
             return config.get(key, "preserve")
+        if key == "tf32":
+            from alohamini.learning.precision import resolve_tf32
+
+            return resolve_tf32(config)
         if key == "ema":
             return asdict(EMAConfig.from_dict(value))
         if key == "paper_preset" and isinstance(value, dict):

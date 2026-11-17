@@ -8,21 +8,17 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-ASSET_FIELDS = {
-    "xiaomi_robotics1": ("assets_path",),
-    "lingbot_vla_v2": (
-        "tokenizer_path", "text_tokenizer_path", "image_processor_path", "teacher_root",
-    ),
-    "gr00t_n17": ("assets_path",),
-    "acdit": ("assets_path",),
-    "hyvla05": ("assets_path",),
-    "openwam": ("assets_path",),
-    "spirit": ("backbone_path",),
-    "multi_task_dit": ("vision_encoder_name", "text_encoder_name"),
-    "smolvla": ("vlm_model_name",),
-    "pi05": ("tokenizer_path", "fast_tokenizer_path"),
-    "fastwam": ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id"),
-}
+
+def _asset_fields(component):
+    """Resource names belong to the registered adapter, not the checkpoint engine."""
+    fields = getattr(component, "asset_fields", ())
+    if (
+        not isinstance(fields, tuple)
+        or any(not isinstance(name, str) or not name for name in fields)
+        or len(set(fields)) != len(fields)
+    ):
+        raise ValueError("Policy asset_fields must be distinct nonempty configuration names")
+    return fields
 
 
 def save_weights(path, model, state=None, *, prefix=""):
@@ -115,7 +111,7 @@ def checkpoint_sidecars(manifest):
     }
     for key in (
         "field_transforms", "statistics_features", "data_fields", "recorded_state_stats",
-        "image_resize_mode", "image_pad_value",
+        "image_resize_mode", "image_pad_value", "annotations",
     ):
         if key in manifest:
             processor[key] = manifest[key]
@@ -123,13 +119,15 @@ def checkpoint_sidecars(manifest):
 
 
 def write_checkpoint_metadata(path, manifest):
+    from alohamini.policies.registry import algorithm
+
     manifest["layout_version"] = 2
     manifest["assets"] = {
         key: {
             "path": manifest["config"][key],
             "storage": "external" if Path(manifest["config"][key]).is_absolute() else "bundled",
         }
-        for key in ASSET_FIELDS.get(manifest["kind"], ())
+        for key in _asset_fields(algorithm(manifest["kind"]))
         if manifest["config"].get(key)
     }
     for filename, content in {"policy.json": manifest, **checkpoint_sidecars(manifest)}.items():
@@ -175,18 +173,24 @@ def resolve_pretrained(settings, *, expected_kind=None):
     )
     overrides = cfg.get("model", {})
     options = _merge(manifest["config"], overrides)
+    from alohamini.policies.registry import algorithm
+
+    component = algorithm(manifest["kind"])
+    prepare = getattr(component, "finetuning_options", None)
+    if prepare is not None:
+        options = prepare(options, manifest["config"], overrides)
     if manifest["kind"] in ("act", "am_act"):
         # Missing in legacy checkpoints: retain their architecture unless the
         # caller explicitly opts into camera identities for fine-tuning.
         options.setdefault("use_camera_embeddings", False)
-    for key in ASSET_FIELDS.get(manifest["kind"], ()):
+    for key in _asset_fields(component):
         if not options.get(key):
             continue
         asset = Path(options[key]).expanduser()
         if not asset.is_absolute():
             asset = (
                 Path.cwd()
-                if key in overrides and overrides[key] != manifest["config"][key]
+                if key in overrides and overrides[key] != manifest["config"].get(key)
                 else path
             ) / asset
         if not asset.exists():

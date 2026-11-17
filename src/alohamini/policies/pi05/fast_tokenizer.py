@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from scipy.fft import dct
+from scipy.fft import dct, idct
 from tokenizers import Tokenizer
 
 FAST_REPO = "physical-intelligence/fast"
@@ -17,11 +17,23 @@ FAST_REVISION = "ec4d7aa71691cac0b8bed6942be45684db2110f4"
 FAST_FILES = ("tokenizer.json", "processor_config.json")
 
 
+def fast_asset_files(path):
+    """Resolve both released UniversalActionProcessor and flat native codec assets."""
+    path = Path(path).expanduser()
+    tokenizer = path / "tokenizer.json"
+    if not tokenizer.is_file():
+        tokenizer = path / "bpe_tokenizer/tokenizer.json"
+    result = {"tokenizer.json": tokenizer, "processor_config.json": path / "processor_config.json"}
+    if any(not file.is_file() for file in result.values()):
+        raise FileNotFoundError(f"FAST tokenizer/configuration assets are missing: {path}")
+    return result
+
+
 class FASTTokenizer:
-    def __init__(self, path, sentencepiece, max_tokens=256):
-        path = Path(path).expanduser()
-        config = json.loads((path / "processor_config.json").read_text())
-        self.bpe = Tokenizer.from_file(str(path / "tokenizer.json"))
+    def __init__(self, path, sentencepiece, max_tokens=256, *, skip_tokens=128):
+        files = fast_asset_files(path)
+        config = json.loads(files["processor_config.json"].read_text())
+        self.bpe = Tokenizer.from_file(str(files["tokenizer.json"]))
         self.scale, self.min_token = float(config["scale"]), int(config["min_token"])
         self.vocab_size = int(config["vocab_size"])
         if (
@@ -31,7 +43,9 @@ class FASTTokenizer:
         ):
             raise ValueError("Invalid FAST tokenizer configuration")
         self.sp, self.max_tokens = sentencepiece, max_tokens
-        self.offset = sentencepiece.vocab_size() - 1 - 128
+        if type(skip_tokens) is not int or skip_tokens < 0:
+            raise ValueError("FAST skip_tokens must be a nonnegative integer")
+        self.offset = sentencepiece.vocab_size() - 1 - skip_tokens
         if self.offset - self.vocab_size < 0:
             raise ValueError("FAST vocabulary exceeds PaliGemma reserved range")
 
@@ -59,6 +73,27 @@ class FASTTokenizer:
             [self.offset - token for token in row] + end for row in self.encode_actions(actions)
         ]
         return pad_targets(sequences, self.max_tokens, device=device)
+
+    def decode_actions(self, codes, *, horizon, action_dim):
+        """Invert the author's DCT/BPE codec, rejecting malformed generated actions."""
+        if type(horizon) is not int or horizon < 1 or type(action_dim) is not int or action_dim < 1:
+            raise ValueError("FAST decoding requires positive horizon and action_dim")
+        chunks = []
+        for row in codes:
+            if not row or any(type(i) is not int or not 0 <= i < self.vocab_size for i in row):
+                raise ValueError("Generated FAST action contains invalid BPE tokens")
+            text = self.bpe.decode(row, skip_special_tokens=False)
+            values = np.asarray([ord(char) + self.min_token for char in text], np.float64)
+            if len(values) != horizon * action_dim:
+                raise ValueError(
+                    f"Generated FAST coefficients have length {len(values)}; "
+                    f"expected {horizon * action_dim}"
+                )
+            coefficients = values.reshape(horizon, action_dim) / self.scale
+            chunks.append(idct(coefficients, axis=0, norm="ortho").astype(np.float32))
+        if not chunks:
+            raise ValueError("FAST decoding requires at least one action sequence")
+        return np.stack(chunks)
 
 
 def pad_targets(sequences, max_tokens, *, device):

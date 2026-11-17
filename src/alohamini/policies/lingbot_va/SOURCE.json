@@ -1,0 +1,36 @@
+{
+  "repository": "https://github.com/Robbyant/lingbot-va",
+  "revision": "7c6ffa9bfc4b83582cafc860fab4c82cc7deeeeb",
+  "paper": "https://arxiv.org/abs/2601.21998",
+  "reference": "wan_va/configs/va_libero_cfg.py",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/lingbot_va"
+  },
+  "base": {
+    "repository": "https://huggingface.co/robbyant/lingbot-va-base",
+    "revision": "68b7bc1b35da6ddc67ea94c4ceb58d768fbb3f9c",
+    "validation": "All839 active transformer names/shapes match the full meta model across three shard headers; two obsolete patch_embedding Conv3d tensors are explicitly excluded, matching the current author core. All source tensors are BF16. Full contents and full-scale training were not tested."
+  },
+  "adaptations": [
+    "Native platform data reader, statistics, optimizer execution, success-step state and checkpoint interfaces; no LeRobot runtime",
+    "Shared Wan2.2 transformer30 layers,24 heads of128,48 video channels and30 named action slots; actual depth and geometry inherit local transformer config",
+    "Local-only Wan VAE and UMT5 assets; frozen/eval modules outside optimizer and model checkpoint; cache frozen text inputs on writer rank for training and validation tasks and empty negative prompt",
+    "Generic atomic frozen feature stores with checksums and bounded CPU LRU; prepared features are bundled, while VAE/tokenizer and uncached text encoder remain external local assets",
+    "Wan Unicode/HTML/whitespace prompt cleanup; max512 tokens; masked text embeddings set to zero",
+    "Preserve ordered cameras, with width concatenation or explicit head/left/right T layout; bilinear resizing128x128 and RGB[-1,1] before causal VAE",
+    "Recorded named command coordinates normalized before30D placement; no dimensional inference of joint, pose or gripper semantics; reset action input/output projections for new robots by default",
+    "Training input actions are QUANTILES, unlike pinned LeRobot's IDENTITY training processor; recorded adaptation preserves outliers, explicit lingbot normalization clips targets[-1.5,1.5], denominator epsilon1e-6",
+    "Horizon means future commands: H=frame_chunk_size*action_per_frame; source first inference chunk includes initial frame in frame_chunk_size, native first chunk allocates one extra condition frame so every chunk emits H commands",
+    "Training cameras cover offsets0..H at action_per_frame/4 stride; one normalized physical-zero action group precedes future commands; complete windows trim H rows from episode ends",
+    "Native bootstrap_condition=physical_zero aligns inference with normalized training bootstrap; normalized_zero selects author's original inference conditioning convention",
+    "Original timestep sampling, random block/window visibility, noisy video conditioning and separate flow losses retained; masks passed explicitly through non-reentrant checkpointing, no class-global mutable mask",
+    "GPU Flex and CPU/reference SDPA share visibility predicates; inference automatically uses unmasked cached SDPA without manually editing config; cache follows active autocast dtype",
+    "Offline chunks independently reset and use current images only; online select_action retains actual per-tick camera feedback and predicted executed command history",
+    "Official trainer initializes FP32 weights and shards with BF16 forward/FP32 reduction; native preset uses FP32 trainable storage and BF16 AMP, retaining FP32 optimizer states; frozen assets retain BF16",
+    "Input dtype follows actual parameter storage and platform autocast instead of forcing BF16; explicit FP32 is an additional debug/reference path; global TF32 remains trainer-owned",
+    "Remote chunk execution, RTC, LoRA and dictionary-valued predicted-frame actions are not integrated"
+  ],
+  "pretrained_weights_included": false
+}

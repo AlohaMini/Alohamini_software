@@ -188,11 +188,26 @@ TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理
 | <a id="dit-policydit-block"></a>[dit-policy（DiT-Block）](../src/alohamini/policies/dit_policy/README.md) | `dit_policy` |
 | <a id="multi-task-dit"></a>[Multi-Task DiT](../src/alohamini/policies/multi_task_dit/README.md) | `multi_task_dit` |
 | <a id="fastwam"></a>[FastWAM](../src/alohamini/policies/fastwam/README.md) | `fastwam` |
+| [Long-WAM](../src/alohamini/policies/longwam/README.md) | `longwam` |
+| [VQ-BeT](../src/alohamini/policies/vqbet/README.md) | `vqbet` |
 | <a id="ac-dit"></a>[AC-DiT](../src/alohamini/policies/acdit/README.md) | `acdit` |
 | <a id="gr00t-n17"></a>[GR00T N1.7](../src/alohamini/policies/gr00t_n17/README.md) | `gr00t_n17` |
 | <a id="leworldmodel"></a>[LeWorldModel](../src/alohamini/policies/lewm/README.md) | `lewm` |
 | <a id="smolvla"></a>[SmolVLA](../src/alohamini/policies/smolvla/README.md) | `smolvla` |
 | <a id="π05"></a>[π0.5](../src/alohamini/policies/pi05/README.md) | `pi05` |
+| [π0](../src/alohamini/policies/pi0/README.md) | `pi0` |
+| [π0-FAST](../src/alohamini/policies/pi0_fast/README.md) | `pi0_fast` |
+| [EO-1](../src/alohamini/policies/eo1/README.md) | `eo1` |
+| [EVO1](../src/alohamini/policies/evo1/README.md) | `evo1` |
+| [X-VLA](../src/alohamini/policies/xvla/README.md) | `xvla` |
+| [DM0.5](../src/alohamini/policies/dm05/README.md) | `dm05` |
+| [FineART-VLA](../src/alohamini/policies/fineart_vla/README.md) | `fineart_vla` |
+| [WALL-OSS-0.5](../src/alohamini/policies/wall_oss_05/README.md) | `wall_oss_05` |
+| [VLA-JEPA](../src/alohamini/policies/vla_jepa/README.md) | `vla_jepa` |
+| [LingBot-VA](../src/alohamini/policies/lingbot_va/README.md) | `lingbot_va` |
+| [Cosmos3 Nano](../src/alohamini/policies/cosmos3/README.md) | `cosmos3_nano` |
+| [Cosmos3 Edge](../src/alohamini/policies/cosmos3/README.md) | `cosmos3_edge` |
+| [G0.5](../src/alohamini/policies/g05/README.md) | `g05` |
 | <a id="hyvla-05"></a>[HyVLA-0.5](../src/alohamini/policies/hyvla05/README.md) | `hyvla05` |
 | <a id="openwam-α"></a>[OpenWAM-α](../src/alohamini/policies/openwam/README.md) | `openwam` |
 | <a id="xiaomi-robotics-1"></a>[Xiaomi-Robotics-1](../src/alohamini/policies/xiaomi_robotics1/README.md) | `xiaomi_robotics1` |
@@ -268,7 +283,7 @@ ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比�
 `--video_cache_size`；增大 worker、预取与缓存会增加主机内存占用。
 图像按各策略的尺寸、裁剪和归一化规则处理，配置随 checkpoint 保存。
 
-### 优化器、精度与多卡
+### 优化器与调度
 
 在训练命令后追加所需参数：
 
@@ -276,29 +291,47 @@ ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比�
 --optimizer.type=adamw --optimizer.lr=0.0001
 --optimizer.weight_decay=0.0001 --optimizer.betas='[0.9,0.999]'
 --optimizer.eps=1e-8 --optimizer.grad_clip_norm=10
---gradient_accumulation_steps=4 --mixed_precision=bfloat16
 ```
 
 优化器支持 `adamw`、`adam`、`sgd`，默认沿用策略配置。
 ACT／AM-ACT 默认无调度，SmolVLA 使用 `cosine`，π0.5／Spirit 使用 `warmup_cosine`，
 Diffusion／FastWAM 使用 `diffusers_cosine`；
 `--scheduler.type=none` 禁用调度。可覆盖 `warmup_steps`、`decay_steps`、`decay_lr`。
+`warmup_linear` 在预热后线性衰减；它与 `staged_cosine`、`constant_with_warmup`
+均支持 `--scheduler.start_step`；
+`--scheduler.before_start` 接收“参数组名到学习率倍率”的 JSON 对象，设置阶段开始前各组的倍率。
+组名由策略声明；不在对象中的组默认倍率为 1，未知组名会报错。阶段按成功优化器更新计数。
 
-`--mixed_precision=none|bfloat16|float16` 控制 autocast 计算精度；
-`--trainable_dtype=preserve|float32` 独立控制可训练参数的存储类型。
-默认 `preserve` 沿用模型类型；`float32` 在加载权重、创建优化器前将可训练参数设为 FP32，
-冻结参数与 buffer 保留原类型。Adam／AdamW 的动量随参数采用 FP32。
-需要保留低于 BF16 间距的小更新时，追加：
+### 数值精度
+
+不指定时沿用策略预设；三项设置分别控制计算、参数存储和 FP32 加速：
+
+| 设置 | 参数 | 默认 |
+| --- | --- | --- |
+| 自动混合精度计算 | `--mixed_precision=none\|bfloat16\|float16` | 策略预设，未配置时为 `none` |
+| 可训练参数的存储与更新 | `--trainable_dtype=preserve\|float32` | 策略预设，未配置时为 `preserve` |
+| 允许 FP32 矩阵乘法、卷积使用 TF32 | `--tf32=true\|false` | `true` |
+
+常用组合，追加到训练命令：
 
 ```text
+# FP32 可训练参数，BF16 混合精度计算
 --trainable_dtype=float32 --mixed_precision=bfloat16
+
+# 关闭自动混合精度和 TF32
+--mixed_precision=none --tf32=false
 ```
 
-该组合采用 FP32 权重更新与 BF16 混合精度计算，实现
-[FP32 主权重方案](https://arxiv.org/html/2610.31859#S6)，适用于各原生策略及单设备、DDP、FSDP2。
-相较 BF16 参数，FP32 参数与优化器动量占用更多内存；已有配置的学习率可能需要重新调整。
-选项随 checkpoint 保存并在加载时恢复，从原生 checkpoint 微调时默认继承，显式参数可覆盖。
-精确续训须保持原值；旧 checkpoint 按 `preserve` 处理。改变存储类型时，使用 `--policy.path` 开始新训练。
+`none` 关闭自动混合精度，不会把模型已有的 BF16 权重改成 FP32。
+`trainable_dtype=float32` 只转换可训练参数，冻结参数和 buffer 保持原类型；显存占用会增加。
+TF32 不改变参数存储类型，只影响 FP32 运算，可与 BF16/FP16 混合精度并用。
+`--cudnn_deterministic=true` 时 TF32 默认关闭；显式 `--tf32` 优先。
+
+设置随 checkpoint 保存，推理沿用已保存的设置。
+`--policy.path` 开始新微调时，只默认继承 `trainable_dtype`；混合精度、TF32 使用本次配置或策略默认值。
+显式参数优先；`--resume=true` 续训须保持原设置。模型内部必须使用 FP32 的算子保留其数值保护。
+
+### 多卡与梯度累积
 
 | 配置 | 追加参数 |
 | --- | --- |
@@ -324,9 +357,11 @@ FastWAM 的外置冻结 VAE／文本编码器仍在每张卡保留一份。
 
 ### 训练器 EMA
 
-EMA 默认关闭，使用 `--ema.enable=true` 开启。
+EMA 使用策略预设，未配置时关闭；使用 `--ema.enable=true` 开启。
 默认衰减参数为 `inv_gamma=1.0`、`power=0.75`、`min_decay=0`、`max_decay=0.9999`、`update_after_step=0`。
 固定衰减可设 `--ema.decay=0.99`，与自定义 `min_decay/max_decay` 互斥。
+`--ema.schedule=power_law` 使用 `(1-1/n)^power`，`n` 为预热后的成功更新次数；
+默认 `inverse_power` 使用 `1-(1+(n-1)/inv_gamma)^(-power)`。策略可提供各自的指数与上限。
 
 EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
 验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
@@ -529,6 +564,9 @@ Notebook 入口见 [Notebook](notebook.md)，LeRobot 权重使用见 [LeRobot](l
 `async` 可用 `--inference.continuity=none` 关闭策略默认衔接；
 `--inference.continuity=phase` 仅适用于 BSP。`rtc` 无需另选连续性方法。
 ACT 异步执行时须关闭时间融合：`--policy.temporal_ensemble_coeff none`。
+
+支持语言规划的策略可在本地 `evaluate` 或云端 `inference serve` 中追加
+`--language-replan-interval-s=2 --task='任务指令'`。默认关闭；按观测时间更新子任务，切换时清空旧动作队列，每个回合重置。
 
 异步模式默认根据剩余轨迹时间与预测耗时自动重规划。必要时可调整：
 
