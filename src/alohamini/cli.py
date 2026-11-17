@@ -231,7 +231,25 @@ def main(argv: list[str] | None = None) -> int:
         "--video-encoding-workers",
         type=int,
         default=None,
-        help="保存时并行编码的相机数量上限（默认按启用的相机数量）",
+        help="并行编码的相机数量上限（默认按启用的相机数量）",
+    )
+    recorder.add_argument(
+        "--video-encoder",
+        choices=("cpu", "nvenc"),
+        default="cpu",
+        help="H.264 编码器：CPU libx264 或 NVIDIA NVENC（不可用时回退 CPU）",
+    )
+    recorder.add_argument(
+        "--background-video-encoding",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="采集时后台编码，原始 JPEG 保留至保存成功（默认开启）",
+    )
+    recorder.add_argument(
+        "--video-encoding-memory-mib",
+        type=int,
+        default=2048,
+        help="编码子进程的内存限额，单位 MiB（默认 2048）",
     )
     recorder.add_argument(
         "--num_episodes", "--dataset.num_episodes", dest="num_episodes", type=int, default=1

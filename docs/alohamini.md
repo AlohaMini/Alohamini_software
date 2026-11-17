@@ -204,6 +204,15 @@ alohamini record \
 默认 30 Hz 数采，记录 Host 开启的全部相机。`--display_data` 开启预览。
 `--profile_timing` 开启采集、保存分段和各相机视频处理计时；默认关闭，不采集详细视频计时。
 
+| 参数 | 用途 |
+| --- | --- |
+| `--video-encoder nvenc` | 使用 NVIDIA GPU 编码 H.264，需驱动和 PyAV NVENC 支持；默认 `cpu` |
+| `--no-background-video-encoding` | 关闭后台编码，默认开启 |
+| `--video-encoding-workers 2` | 限制同时编码的相机数量，默认按启用相机数 |
+| `--video-encoding-memory-mib 2048` | 编码子进程的内存限额（MiB）；不包含整个录制程序或 GPU 显存 |
+
+NVENC 与 CPU 编码的图像像素和文件大小可能不同。
+
 | 按键 | 操作 |
 | --- | --- |
 | 右方向键 | 提前结束当前阶段 |

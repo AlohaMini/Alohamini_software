@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import math
 import tempfile
 import time
@@ -24,9 +25,10 @@ import pyarrow.parquet as pq
 
 from alohamini.datasets.images import image_path, image_rgb
 from alohamini.datasets.record import _write_json
+from alohamini.datasets.recording_video import encoder_settings
 
 _ENCODER_THREADS = 2
-_RECORDING_OPTIONS = {"crf": "18", "preset": "fast", "g": "2"}
+_RECORDING_OPTIONS = encoder_settings("cpu")[1]
 
 
 def file_sha256(path: Path) -> str:
@@ -124,6 +126,7 @@ def finalize_recording_video(
     workers=None,
     timings=None,
     camera_timings=None,
+    preencoded=None,
 ) -> None:
     """Encode temporary Host JPEGs (or legacy PNGs), then replace the image index.
 
@@ -145,8 +148,35 @@ def finalize_recording_video(
     summary = json.loads((episode / "episode.json").read_text())
     indices = set(sample_indices(summary["length"]))
     (episode / "videos").mkdir(exist_ok=True)
+    if preencoded is not None:
+        try:
+            if set(preencoded["cameras"]) != set(cameras):
+                raise ValueError("Background encoder camera set differs")
+            for camera in cameras:
+                expected = {
+                    "frames": summary["length"],
+                    "fps": fps,
+                    "shape": summary["image_shapes"][camera],
+                }
+                if (
+                    preencoded["cameras"][camera]["frames"] != summary["length"]
+                    or inspect_video(episode / "videos" / f"{camera}.mp4") != expected
+                ):
+                    raise ValueError(f"Background encoded video differs: {camera}")
+        except (OSError, ValueError, KeyError, av.error.FFmpegError) as exc:
+            logging.warning(
+                "Background video validation failed (%s); re-encoding original JPEGs on CPU.", exc
+            )
+            preencoded = None
 
     def encode_camera(camera):
+        if preencoded is not None:
+            path = episode / "videos" / f"{camera}.mp4"
+            reference = {"path": f"videos/{camera}.mp4", "sha256": file_sha256(path)}
+            detail = (
+                preencoded["cameras"][camera]["timings"] if camera_timings is not None else None
+            )
+            return camera, reference, ImageStatistics(), detail
         camera_started = time.perf_counter() if camera_timings is not None else 0.0
         image_stats = ImageStatistics()
         key = f"observation.images.{camera}"
@@ -244,7 +274,14 @@ def finalize_recording_video(
         timings["video_encode_headers_hash"] = time.perf_counter() - started
     started = time.perf_counter()
     references = {}
-    image_stats = ImageStatistics()
+    if preencoded is None:
+        image_stats = ImageStatistics()
+    else:
+        # Actual episode length is only known after early-stop/re-record. Keep
+        # the existing sampled, pre-encoding JPEG statistics exactly unchanged.
+        from alohamini.datasets.image_statistics import sample_recording_images
+
+        image_stats = sample_recording_images(episode, cameras, summary["length"])
     for camera, reference, camera_stats, detail in encoded:
         references[camera] = reference
         image_stats.merge(camera_stats)

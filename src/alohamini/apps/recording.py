@@ -540,8 +540,14 @@ def record(
     profile_timing=False,
     fixed_dimensions=None,
     video_encoding_workers=None,
+    video_encoder="cpu",
+    background_video_encoding=True,
+    video_encoding_memory_mib=2048,
 ):
     from alohamini.datasets.record import LocalDataset, preserve_dataset
+    from alohamini.datasets.recording_video import validate_video_options
+
+    validate_video_options(video_encoder, background_video_encoding, video_encoding_memory_mib)
 
     if video_encoding_workers is not None and (
         type(video_encoding_workers) is not int or video_encoding_workers < 1
@@ -617,10 +623,21 @@ def record(
             robot_metadata=metadata,
             resume=resume,
             video_encoding_workers=video_encoding_workers,
+            video_encoder=video_encoder,
+            background_video_encoding=background_video_encoding,
+            video_encoding_memory_mib=video_encoding_memory_mib,
             profile_timing=profile_timing,
             **({"fixed_dimensions": fixed_config} if fixed_config else {}),
         )
         dataset_cleanup.enter_context(preserve_dataset(dataset))
+
+        def discard_rerecord_on_exit():
+            # Ctrl+C can arrive during capture/reset, before the normal R branch.
+            # A rejected attempt must never be auto-saved by preserve_dataset.
+            if keyboard.events["rerecord_episode"]:
+                dataset.discard_episode()
+
+        dataset_cleanup.callback(discard_rerecord_on_exit)
         on_frame = None
         if display_data:
             from alohamini.apps.visualization import init_rerun, log_snapshot, shutdown_rerun
