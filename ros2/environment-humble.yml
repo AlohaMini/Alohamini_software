@@ -12,6 +12,7 @@ dependencies:
   - make
   - c-compiler
   - cxx-compiler
+  - sysroot_linux-64=2.34
   - colcon-common-extensions
   - colcon-notification
   - pytest>=8,<9
