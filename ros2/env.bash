@@ -29,7 +29,10 @@ _alohamini_ros_environment() {
             echo "Open a fresh terminal without sourcing /opt/ros before loading RoboStack." >&2
             return 1 ;;
     esac
-    conda_executable="${CONDA_EXE:-$(command -v conda)}"
+    conda_executable="${CONDA_EXE:-$(type -P conda || true)}"
+    if [[ -z "$conda_executable" && -x "$HOME/miniconda3/bin/conda" ]]; then
+        conda_executable="$HOME/miniconda3/bin/conda"
+    fi
     if [[ ! -x "$conda_executable" ]]; then
         echo "Install Conda before loading the ROS environment." >&2
         return 1
