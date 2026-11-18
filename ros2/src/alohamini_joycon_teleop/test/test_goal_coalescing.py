@@ -10,6 +10,7 @@ from action_msgs.msg import GoalStatus
 from alohamini_joycon_teleop.teleop_node import ArmControl, JoyConTeleop, arm_names
 from builtin_interfaces.msg import Time
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+from rclpy.exceptions import InvalidHandle
 from sensor_msgs.msg import JointState
 
 
@@ -20,6 +21,19 @@ def real_node():
     yield node
     node.destroy_node()
     rclpy.shutdown()
+
+
+def test_node_exit_releases_action_handles_before_context_shutdown():
+    rclpy.init(args=[])
+    node = JoyConTeleop()
+    clients = [*node.arm_clients.values(), *node.gripper_clients.values()]
+    node.destroy_node()
+    try:
+        for client in clients:
+            with pytest.raises(InvalidHandle):
+                client.server_is_ready()
+    finally:
+        rclpy.shutdown()
 
 
 def input_payload(**changes):
