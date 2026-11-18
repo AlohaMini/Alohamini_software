@@ -13,10 +13,20 @@ from pathlib import Path
 
 from alohamini.calibration.servo import MotorCalibration, load_motor_calibration
 from alohamini.hardware.feetech_device import DeviceOperationError
+from alohamini.model import ActuatorSpec
 from alohamini.model.joint_spec import ModelJointSpecification
 
 PROTOCOL = "alohamini-reference-v1"
 
+
+def calibration_motors(model, side, *, leader):
+    motors = tuple(m for m in model.actuators if m.bus == side)
+    if not leader:
+        return motors
+    return tuple(
+        ActuatorSpec(m.name.removeprefix(f"arm_{side}_"), side, m.motor_id, "sts3215")
+        for m in motors if m.name.startswith("arm_")
+    )
 
 def side_calibration(spec, side, actuators, positions, *, leader):
     """Compute one side without I/O; reject a model interval that cannot fit STS counts."""
@@ -262,15 +272,8 @@ def load_reference_profile(calibration_path, robot_model):
         raise ValueError("Invalid reference calibration role")
     references, captures = {}, {}
     for side in ("left", "right"):
-        motors = tuple(m for m in spec.model.actuators if m.bus == side)
+        motors = calibration_motors(spec.model, side, leader=leader)
         if leader:
-            from alohamini.model import ActuatorSpec
-
-            motors = tuple(
-                ActuatorSpec(m.name.removeprefix(f"arm_{side}_"), side, m.motor_id, "sts3215")
-                for m in motors
-                if m.name.startswith("arm_")
-            )
             files = [
                 name for name in profile["calibration_sha256"] if name.endswith(f"_{side}.json")
             ]

@@ -4,6 +4,7 @@
 """Passive bimanual leaders using the deployed per-arm calibration files."""
 
 import logging
+import sys
 from collections.abc import Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -13,7 +14,8 @@ from alohamini.calibration.procedure import ensure_calibration
 from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.hardware.feetech_device import FeetechBusDevice
-from alohamini.hardware.usb_setup import leader_calibration_directory
+from alohamini.hardware.serial_ports import serial_port_key
+from alohamini.hardware.usb_setup import connected_leader_ports, leader_calibration_directory
 from alohamini.model import ActuatorSpec, get_robot_model
 from alohamini.paths import WorkspacePaths
 
@@ -40,7 +42,7 @@ class BimanualLeader:
         model = get_robot_model(robot_model)
         if len(set(active_sides)) != len(active_sides) or set(active_sides) - {"left", "right"}:
             raise ValueError("Invalid active leader sides")
-        if len(active_sides) == 2 and Path(left_port).resolve() == Path(right_port).resolve():
+        if len(active_sides) == 2 and serial_port_key(left_port) == serial_port_key(right_port):
             raise ValueError("Leader arms must use different serial devices")
         leader_id = leader_id or (
             "so101_leader_bi" if robot_model == "alohamini1" else "am_leader_bi"
@@ -58,8 +60,17 @@ class BimanualLeader:
             else paths.calibration / "teleoperators"
         )
         if calibration_dir is None and robot_model != "alohamini1":
+            if active_sides and sys.platform in ("darwin", "win32") and self._ports == {
+                side: f"/dev/am_arm_leader_{side}" for side in ("left", "right")
+            }:
+                self._ports = connected_leader_ports(paths)
+                if not self._ports:
+                    raise ValueError(
+                        "Connect the registered leader pair. "
+                        "For first-time setup, run alohamini calibrate leader."
+                    )
             directory = leader_calibration_directory(paths, leader_id, self._ports, active_sides)
-        for side, port in (("left", left_port), ("right", right_port)):
+        for side, port in self._ports.items():
             if side not in active_sides:
                 continue
             # The old BiSOLeader stores <id>_left/right.json with unprefixed joints.

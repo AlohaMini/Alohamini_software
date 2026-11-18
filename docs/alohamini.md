@@ -50,7 +50,9 @@ conda activate alohamini
 alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
 ```
 
-首次按提示记录左右主臂 USB 控制板序列号并绑定设备名：拔下左右主臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码。
+Windows、macOS 和 Linux 使用同一套主臂标定流程。在 Studio 中打开「标定主臂」，首次可点击「一键准备标定环境」。按提示拔下两根 USB 线后按回车，先插左臂，识别后保持连接，再插右臂。两臂摆好 Home 后按回车记录零位。
+
+Studio 按控制板序列号记住左右臂。换 USB 口后，Windows 会找到新的 COM 口，macOS 会找到当前串口，Linux 会使用系统设备别名。Linux 首次安装别名时可能提示输入系统密码。
 
 同一 PC 可保存多套主臂：新主臂执行上述命令登记并标定，已登记主臂接回后自动使用各自的记录。同一时间只连接一套主臂。
 

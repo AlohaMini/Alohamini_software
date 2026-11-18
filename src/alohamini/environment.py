@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import importlib.metadata as metadata
 import json
@@ -13,10 +12,8 @@ import re
 import subprocess
 import sys
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-
-import tomllib
 
 _WARNED = set()
 
@@ -72,6 +69,8 @@ def installed_versions():
 
 
 def inspect_environment(root, role, names=None):
+    import tomllib
+
     expected, sources = read_lock(lock_path(root, role))
     installed = installed_versions()
     selected = expected.keys() if names is None else set(names) & expected.keys()
@@ -139,12 +138,90 @@ def command_packages(argv):
     return set()
 
 
+def inspect_pc_environment():
+    """检查本机录制与训练入口，部署版本以同一份 PC 锁文件为准。"""
+    import io
+    from contextlib import redirect_stdout
+    from importlib import import_module
+
+    names = command_packages(["record"]) | command_packages(["train"]) | command_packages(["calibrate"])
+    # 发行包名与 Python 导入名不同，版本要求来自命令和部署锁。
+    modules = {"pyzmq": "zmq", "opencv-python-headless": "cv2", "pyserial": "serial",
+               "feetech-servo-sdk": "scservo_sdk.protocol_packet_handler",
+               "huggingface-hub": "huggingface_hub", "pillow": "PIL.Image"}
+    packages = []
+    usable = set()
+    cuda = mps = False
+    torch_version = ""
+    for name in sorted(names | {"pillow"}):
+        try:
+            version = metadata.version(name)
+            if name == "opencv-python-headless" and platform.system() == "Darwin":
+                # 两个 macOS 视频轮子各自携带 FFmpeg，同时导入会重复注册原生类。
+                probe = subprocess.run([sys.executable, "-c", "import cv2"], capture_output=True,
+                                       text=True, timeout=10)
+                if probe.returncode:
+                    raise RuntimeError(probe.stderr.strip() or "Failed to import OpenCV")
+            else:
+                module = import_module(modules.get(name, name))
+            if name == "torch":
+                cuda, mps = module.cuda.is_available(), module.backends.mps.is_available()
+                torch_version = version
+            usable.add(name)
+        except (ImportError, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+            version = str(error)
+        packages.append({"name": name, "display_name": name, "installed": name in usable,
+                         "version": version})
+
+    try:
+        from alohamini.learning.train_config import parse_training_args
+        with redirect_stdout(io.StringIO()):
+            parse_training_args(["--help"])
+        trainer, detail = True, ""
+    except SystemExit as error:
+        trainer, detail = error.code == 0, str(error)
+    except (ImportError, OSError, ValueError, RuntimeError) as error:
+        trainer, detail = False, str(error)
+    packages.append({"name": "trainer", "display_name": "训练入口", "installed": trainer,
+                     "version": detail})
+    dependencies_ready = all(p["installed"] for p in packages)
+    root = checkout()
+    supported, differences = True, []
+    if root is not None:
+        try:
+            lock_path(root, "pc")
+        except ValueError:
+            supported = False
+        if supported:
+            differences = inspect_environment(root, "pc", names | {"pillow"})["differences"]
+    installation_ready = dependencies_ready and not differences
+    ready = supported and installation_ready
+    problems = [p["display_name"] for p in packages if not p["installed"]]
+    message = "电脑所需依赖已通过检查。" if not problems else "请准备或修复：" + "、".join(problems)
+    if differences:
+        message = "电脑环境与当前 software 版本不一致：" + "、".join(row["package"] for row in differences)
+    return {"is_ready": ready, "installation_ready": installation_ready,
+            "deployment_supported": supported, "can_connect": {"pyzmq", "pillow"} <= usable,
+            "installation_message": message,
+            "status_message": message if supported else "当前 software 的录制和训练部署环境支持 Linux x86_64。主臂标定可单独使用。",
+            "packages": packages, "python_path": sys.executable,
+            "python_version": sys.version.split()[0], "torch_version": torch_version,
+            "compute_device": "cuda" if cuda else "mps" if mps else "cpu"}
+
+
 def inferred_role():
     return "host" if Path(sys.prefix).name.endswith("_host") else "pc"
 
 
 @contextmanager
 def environment_lock(exclusive=False, prefix=None):
+    if os.name == "nt":
+        raise ValueError(
+            "Deployment environment locking requires Linux. "
+            "For leader calibration, run alohamini calibrate leader."
+        )
+    import fcntl
+
     key = hashlib.sha256(str(Path(prefix or sys.prefix).resolve()).encode()).hexdigest()
     directory = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     directory = directory / "alohamini" / "environments"
@@ -166,6 +243,22 @@ def runtime_environment(argv):
     root, names = checkout(), command_packages(argv)
     if root is None or not names:
         yield
+        return
+    if argv[:2] == ["calibrate", "leader"]:
+        # 三端共用串口依赖锁，Linux 标定期间仍需阻止部署环境被同步。
+        with environment_lock() if platform.system() == "Linux" else nullcontext():
+            versions, _ = read_lock(root / "env/hardware.lock")
+            for name, expected in versions.items():
+                try:
+                    installed = metadata.version(name)
+                except metadata.PackageNotFoundError:
+                    installed = "not installed"
+                if installed != expected:
+                    raise ValueError(
+                        f"Leader calibration requires {name}=={expected} (current: {installed}). "
+                        "Install the dependencies from env/hardware.lock."
+                    )
+            yield
         return
     role = "host" if argv[0] == "host" else inferred_role()
     # Reading metadata does not import optional frameworks or contact a package index.
@@ -251,6 +344,8 @@ def ensure_snapshot(sources):
 
 
 def sync_environment(root, role, *, dry_run=False):
+    import tomllib
+
     prefix = Path(sys.prefix)
     if not (prefix / "conda-meta").is_dir() and sys.prefix == sys.base_prefix:
         raise ValueError("请先激活 Conda 或 venv 环境，不在系统 Python 中同步。")
