@@ -22,7 +22,7 @@ from scipy.spatial import ConvexHull, cKDTree
 
 from .description import numbers, origin
 from .frames import points_in_frame
-from .meshes import Mesh, binary_msh, binary_stl
+from .meshes import Mesh, binary_msh, read_mesh
 from .shapes import Primitive
 
 
@@ -354,7 +354,7 @@ def generate_bundle(
             data = (description.robot_model.directory / source["path"]).read_bytes()
             if hashlib.sha256(data).hexdigest() != source["sha256"]:
                 raise ValueError(f"CAD source changed during preparation: {source['path']}")
-            raw = binary_stl(data)
+            raw = read_mesh(data, source["path"])
             vertices = points_in_frame(
                 source["T_link_visual"], raw.vertices * np.asarray(source["scale"])
             )
@@ -540,7 +540,7 @@ def load_bundle(description, directory):
         or metadata.get("units") != "m"
         or metadata.get("robot_model") != description.robot_model.model_id
         or not isinstance(metadata.get("links"), dict)
-        or not metadata["links"]
+        or (not metadata["links"] and "assembly_inventory" not in metadata)
         or metadata.get("coverage", "complete-link") != "complete-link"
     ):
         raise ValueError("Collision bundle has an incompatible coordinate contract")

@@ -54,6 +54,13 @@ def test_window_edits_cannot_change_physics_and_controls_use_simulation_time(rob
     gravity = robot.model.opt.gravity.copy()
     timestep = robot.model.opt.timestep
 
+    class NativeState:
+        # MuJoCo 3.12 exposes this property without a setter. The passive
+        # window's Run flag does not own the application's playback state.
+        @property
+        def run(self):
+            return 1
+
     class Window:
         def __init__(self, model, data, key_callback, **kwargs):
             self.model, self.data, self.callback = model, data, key_callback
@@ -61,6 +68,10 @@ def test_window_edits_cannot_change_physics_and_controls_use_simulation_time(rob
             self.perturb = mujoco.MjvPerturb()
             self.text = None
             self.lock_held = False
+            self.native_state = NativeState()
+
+        def _sim(self):
+            return self.native_state
 
         def __enter__(self):
             return self

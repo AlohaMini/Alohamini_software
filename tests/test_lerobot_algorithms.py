@@ -15,6 +15,7 @@ from test_smolvla import tiny_assets as tiny_assets
 
 from alohamini.datasets.lerobotv3 import export_lerobot
 from alohamini.learning.data import AlohaMiniDataset
+from alohamini.learning.data_fields import prepare_fields
 from alohamini.learning.evaluate import evaluate_checkpoint
 from alohamini.learning.policy import NativePolicy, save_checkpoint
 from alohamini.learning.statistics import sample_arguments
@@ -73,6 +74,11 @@ def small_pi05(tmp_path, monkeypatch):
 def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     recording, tmp_path, monkeypatch, request, kind
 ):
+    if kind == "fineart_vla":
+        from test_fineart_vla import check_native_dataset_checkpoint
+
+        check_native_dataset_checkpoint(recording, tmp_path, monkeypatch)
+        return
     if kind in ("xiaomi_robotics1", "lingbot_vla_v2"):
         # These protocols require three views and named geometry. Exercise the
         # same v3/trainer/checkpoint path with its calibrated three-view fixture.
@@ -81,6 +87,10 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
         check_native_dataset_checkpoint(tmp_path, kind)
         return
     root = tmp_path / "original-v3"
+    if kind in ("lingbot_va", "cosmos3_nano", "cosmos3_edge"):
+        from test_native_learning import recording as make_recording
+
+        recording = make_recording.__wrapped__(tmp_path / "long-clips", frames=12)
     export_lerobot(recording, root)
     (root / "meta/alohamini.json").unlink()
     for path in (root / "meta/safety").glob("*.jsonl"):
@@ -88,6 +98,58 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     recipe = algorithm(kind)
     if kind in ("act", "am_act"):
         options = model_options()
+    elif kind == "g05":
+        from test_g05 import tiny_options
+
+        options = tiny_options(tmp_path / "g05-assets")
+    elif kind == "longwam":
+        from test_longwam import tiny_options
+
+        options = tiny_options(tmp_path / "umt5-assets")
+    elif kind == "lingbot_va":
+        from test_lingbot_va import tiny_options
+
+        options = tiny_options(tmp_path / "lingbot-assets")
+    elif kind in ("cosmos3_nano", "cosmos3_edge"):
+        from test_cosmos3 import tiny_options
+
+        options = tiny_options(tmp_path / "cosmos3-assets", kind.removeprefix("cosmos3_"))
+    elif kind == "vqbet":
+        from test_vqbet import tiny_options
+
+        options = tiny_options()
+    elif kind == "pi0":
+        from test_pi0 import tiny_options
+
+        options = tiny_options(tmp_path, monkeypatch)
+    elif kind == "pi0_fast":
+        from test_pi0_fast import tiny_options
+
+        options = tiny_options(tmp_path / "fast-assets", monkeypatch)
+    elif kind == "eo1":
+        from test_eo1 import tiny_options
+
+        options = tiny_options(tmp_path / "qwen25-assets")
+    elif kind == "evo1":
+        from test_evo1 import tiny_options
+
+        options = tiny_options(tmp_path / "internvl-assets")
+    elif kind == "xvla":
+        from test_xvla import tiny_options
+
+        options = tiny_options(tmp_path / "florence-assets")
+    elif kind == "vla_jepa":
+        from test_vla_jepa import tiny_options
+
+        options = tiny_options(request.getfixturevalue("groot_assets"))
+    elif kind == "wall_oss_05":
+        from test_wall_oss_05 import tiny_options
+
+        options = tiny_options(tmp_path / "wall-assets")
+    elif kind == "dm05":
+        from test_dm05 import tiny_options
+
+        options = tiny_options(tmp_path / "gemma3-assets")
     elif kind in ("cdp", "dit_policy"):
         from test_cdp_dit_policy import small_options
 
@@ -98,6 +160,12 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
         options = dit_options(tmp_path / "clip-assets")
     elif kind == "diffusion":
         options = diffusion_options()
+    elif kind == "bspline":
+        options = {
+            **diffusion_options(),
+            "degree": 3,
+            "parameter_cache_dir": str(tmp_path / "bspline-cache"),
+        }
     elif kind == "fastwam":
         fake_frozen_assets(monkeypatch)
         options = fastwam_options()
@@ -146,7 +214,10 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     data = AlohaMiniDataset(**args, episodes=train)
     assert "robot_metadata" not in data.info
     assert data.records == [{}] * len(data.rows)
+    data = prepare_fields(data, {}, recipe, options=options)
     options.update(input_features=data.input_features, output_features=data.output_features)
+    if hasattr(recipe, "prepare_options"):
+        recipe.prepare_options(options, data)
     stats = recipe.statistics(data, options)
     model = recipe.build(options, stats)
     processor = recipe.processor(model, stats, "cpu")
@@ -170,6 +241,13 @@ def test_original_v3_forward_backward_checkpoint_and_offline_inference(
     goals = {"forward": np.zeros((32, 32, 3), dtype=np.uint8)} if kind == "lewm" else None
     if goals is not None:
         loaded.set_goal(goals)
+    if kind == "pi0_fast":
+        # Random autoregressive weights do not encode valid robot commands.
+        # CE/codec/cache behavior is checked with real networks in test_pi0_fast.
+        with pytest.raises(ValueError, match="max_decoding_steps|prefix|terminator|coefficients"):
+            loaded.predict(data[0])
+        assert saved == (checkpoint / "policy.json").read_bytes()
+        return
     predicted = loaded.predict(data[0])
     assert predicted.shape[-1] == 18 and torch.isfinite(predicted).all()
     with pytest.raises(ValueError, match="Offline policy"):

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """Read-only lift-axis calibration against the native Host state endpoint."""
 
 from __future__ import annotations

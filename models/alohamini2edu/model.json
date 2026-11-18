@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "asset_revision": 1,
+  "asset_revision": 7,
   "model_id": "alohamini2edu",
   "actuators": [
     {
@@ -120,11 +120,7 @@
     "cad": "urdf/source/alohamini2edu_cad.urdf",
     "right_arm_source": "urdf/source/alohamini2edu_right_arm.urdf",
     "collision": "urdf/alohamini2edu.urdf",
-    "kinematic": "urdf/alohamini2edu_kinematic.urdf",
-    "left_kinematic": "urdf/alohamini2edu_left_kinematic.urdf",
-    "right_kinematic": "urdf/alohamini2edu_right_kinematic.urdf",
-    "navigation": "urdf/alohamini2edu_navigation.urdf",
-    "base": "urdf/alohamini2edu_base.urdf"
+    "semantic_planning": "srdf/alohamini2edu.srdf"
   },
   "kinematic_chains": {
     "left": "config/kinematics/left_chain.json",
@@ -135,8 +131,38 @@
   },
   "default_kinematic_preset": "upright_forward",
   "validation": {
-    "geometry": "alohamini2pro_plus_nominal_sensor_mounts",
+    "geometry": "shared_physical_urdf_with_prepared_structural_collisions",
     "hardware_safety_limits": false,
     "device_calibration_included": false
+  },
+  "description_views": {
+    "planning": {
+      "source": "collision",
+      "overlay": "config/planar_base.urdf"
+    },
+    "kinematic": {
+      "source": "collision",
+      "overlay": "config/planar_base.urdf",
+      "geometry": false
+    },
+    "left_kinematic": {
+      "source": "collision",
+      "root_link": "left_Base",
+      "geometry": false
+    },
+    "right_kinematic": {
+      "source": "collision",
+      "root_link": "right_Base",
+      "geometry": false
+    },
+    "navigation": {
+      "source": "collision"
+    },
+    "base": {
+      "source": "collision",
+      "exclude_joints": [
+        "vertical_move"
+      ]
+    }
   }
 }

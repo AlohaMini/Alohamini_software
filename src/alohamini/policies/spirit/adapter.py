@@ -104,6 +104,7 @@ class SpiritTrainModel(torch.nn.Module):
 
 
 class SpiritAlgorithm:
+    asset_fields = ("backbone_path",)
     supports_field_transforms = True
     supports_remote_chunks = True
 

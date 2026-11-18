@@ -4,6 +4,18 @@
 
 本文面向自定义客户端与策略开发；日常遥操、数采和评估见[使用手册](alohamini.md)与[训练与部署](training.md)。
 
+## 机器人描述
+
+```python
+from alohamini.model import get_robot_model
+
+model = get_robot_model("alohamini2pro")
+physical_xml = model.description_xml("collision")
+planning_xml = model.description_xml("planning")
+```
+
+Pro 的 `planning` 和 `kinematic` 视图由同一物理描述生成，不对应独立文件。`description_xml()` 返回可直接用于 ROS 的 XML，`description_tree()` 返回独立元素树；`description_path()` 只用于真实源文件。`description_names` 列出全部源描述与生成视图。更新模型资产后重启相关进程。
+
 ## Python 读取
 
 将地址和型号换成实际配置；树莓派启动方式见[使用手册](alohamini.md)。

@@ -156,7 +156,7 @@ def language_stub(tmp_path, monkeypatch):
         "dtype": "float32",
         "shape": [2],
         "names": names,
-        "units": dict.fromkeys(names, "rad"),
+        "units": ["rad"] * len(names),
     }
     info = {
         "format": "alohamini-episodes",
@@ -371,9 +371,7 @@ def test_persistence_baseline_does_not_assume_unknown_or_different_state_units(
     language_stub, tmp_path, state_unit
 ):
     case = language_stub
-    units = {"joint_b.pos": "rad"}
-    if state_unit is not None:
-        units["joint_a.pos"] = state_unit
+    units = [state_unit or "recorded (unit unverified)", "rad"]
     case.manifest["source_info"]["features"]["observation.state"]["units"] = units
     case.reference.data.info["features"]["observation.state"]["units"] = deepcopy(units)
     (case.checkpoint / "policy.json").write_text(json.dumps(case.manifest))

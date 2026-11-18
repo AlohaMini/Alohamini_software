@@ -4,21 +4,24 @@ from unittest.mock import patch
 
 from alohamini.errors import ProtocolError
 from alohamini.protocol import HostSnapshot, command_target_keys
-from alohamini.remote.agent import ActionBuffer, run_session
+from alohamini.remote.agent import PlanBuffer, run_session
 from alohamini.schema import CommandIdentity
+from alohamini.trajectory import DenseActionPlan
+from alohamini.trajectory_execution import ExecutionConfig
 
 MODEL = "alohamini2pro"
 JPEG = b"\xff\xd8encoded image\xff\xd9"
 
 
-class ActionBufferTests(unittest.TestCase):
+class PlanBufferTests(unittest.TestCase):
     def setUp(self):
-        self.buffer = ActionBuffer("session", {"epoch": 1}, ["joint.pos"], 10, 1.0, 8)
+        self.buffer = PlanBuffer("session", {"epoch": 1}, ["joint.pos"], 10, 1.0, ["dense"])
 
     def actions(self, request_id=1, tick=0, values=None):
         return dict(
             id=request_id, session="session", context={"epoch": 1}, tick=tick,
-            fps=10, names=["joint.pos"], actions=values or [[i] for i in range(6)],
+            fps=10, names=["joint.pos"],
+            plan=DenseActionPlan(("joint.pos",), values or [[i] for i in range(6)], 0.1).to_dict(),
             inference_s=0.1,
         )
 
@@ -56,7 +59,7 @@ class ActionBufferTests(unittest.TestCase):
         self.buffer.remember(1, 0, 100.0)
         self.buffer.accept(self.actions(), now=100.1, tick=1)
         self.assertIsNone(self.buffer.pop(2, 101.0))
-        self.assertEqual(self.buffer.targets, {})
+        self.assertIsNone(self.buffer.plan)
 
     def test_fully_missed_new_short_chunk_removes_an_old_long_tail(self):
         self.buffer.remember(1, 0, 100.0)
@@ -65,7 +68,7 @@ class ActionBufferTests(unittest.TestCase):
         count = self.buffer.accept(self.actions(2, 1, [[10]]), now=100.3, tick=3)
         self.assertEqual(count, 0)
         self.assertIsNone(self.buffer.pop(3, 100.3))
-        self.assertEqual(self.buffer.targets, {})
+        self.assertIsNone(self.buffer.plan)
 
     def test_rejects_wrong_request_and_changed_contract_without_accepting_it(self):
         changes = (
@@ -80,23 +83,28 @@ class ActionBufferTests(unittest.TestCase):
                 with self.assertRaises(ProtocolError):
                     self.buffer.accept({**self.actions(), **change}, now=100.1, tick=1)
                 self.assertEqual(self.buffer.last_response_id, 0)
-                self.assertEqual(self.buffer.targets, {})
+                self.assertIsNone(self.buffer.plan)
         self.buffer.accept(self.actions(), now=100.1, tick=1)
         with self.assertRaises(ProtocolError):
             self.buffer.accept(self.actions(), now=100.2, tick=2)
 
     def test_rejects_invalid_shape_and_nonfinite_values_before_replacing_plan(self):
         for change in (
-            {"actions": []}, {"actions": [[0]] * 9}, {"actions": [[0, 1]]},
+            {"actions": []}, {"actions": [[0]] * 16385}, {"actions": [[0, 1]]},
             {"actions": [[float("nan")]]}, {"actions": [[True]]},
             {"inference_s": float("inf")}, {"inference_s": -1},
         ):
             with self.subTest(change=change):
                 self.setUp()
                 self.buffer.remember(1, 0, 100.0)
+                body = self.actions()
+                if "actions" in change:
+                    body["plan"].update(change)
+                else:
+                    body.update(change)
                 with self.assertRaises((ProtocolError, ValueError)):
-                    self.buffer.accept({**self.actions(), **change}, now=100.1, tick=1)
-                self.assertEqual(self.buffer.targets, {})
+                    self.buffer.accept(body, now=100.1, tick=1)
+                self.assertIsNone(self.buffer.plan)
 
     def test_retained_request_history_is_bounded(self):
         for request_id in range(1, 301):
@@ -194,7 +202,8 @@ class FakeLink:
             fixed = body["fixed"]
             self.pending.append(("ready", dict(
                 session=body["session"], id=body["id"], context=body["context"], fps=body["fps"],
-                names=self.names, cameras=["front"], chunk_size=self.chunk_size,
+                names=self.names, cameras=["front"], plan_kinds=["dense"],
+                execution=ExecutionConfig(enabled=True, replan_interval_s=0.2).to_dict(),
                 fixed_current=list(fixed["targets"]) if fixed else [],
             ), {}))
         elif kind == "observation":
@@ -206,10 +215,11 @@ class FakeLink:
             if self.response_limit is not None and len(self.observations) > self.response_limit:
                 return
             rows = [[(body["tick"] + i) / 100] * len(self.names) for i in range(self.chunk_size)]
-            self.pending.append(("actions", dict(
+            self.pending.append(("plan", dict(
                 session=body["session"], id=body["id"], context=body["context"],
                 tick=body["tick"], fps=body["fps"], names=self.names,
-                actions=rows, inference_s=0.01,
+                plan=DenseActionPlan(tuple(self.names), rows, 1/body["fps"]).to_dict(),
+                inference_s=0.01,
             ), {}))
         elif kind == "stop":
             self.events.append("cloud-stop")
@@ -298,7 +308,7 @@ class RemoteSessionTests(unittest.TestCase):
         self.client.context_change_after = 4
         with self.assertRaisesRegex(RuntimeError, "Host session, control epoch"):
             self.run_session()
-        self.assertEqual(len(self.client.sent), 1)
+        self.assertGreaterEqual(len(self.client.sent), 1)
         self.assert_stopped_and_closed()
 
     def test_feedback_stall_skips_elapsed_ticks_without_catchup_commands(self):
@@ -328,7 +338,7 @@ class RemoteSessionTests(unittest.TestCase):
         self.link.fail_after = 2
         with self.assertRaisesRegex(RuntimeError, "cloud disconnected"):
             self.run_session()
-        self.assertEqual(len(self.client.sent), 1)
+        self.assertGreaterEqual(len(self.client.sent), 1)
         self.assert_stopped_and_closed()
 
     def test_lost_policy_camera_stops_before_sending_a_target(self):

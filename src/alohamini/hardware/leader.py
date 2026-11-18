@@ -10,8 +10,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from alohamini.calibration.procedure import ensure_calibration
+from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.hardware.feetech_device import FeetechBusDevice
+from alohamini.hardware.usb_setup import leader_calibration_directory
 from alohamini.model import ActuatorSpec, get_robot_model
 from alohamini.paths import WorkspacePaths
 
@@ -44,18 +46,31 @@ class BimanualLeader:
             "so101_leader_bi" if robot_model == "alohamini1" else "am_leader_bi"
         )
         paths = WorkspacePaths()
-        self.calibrations, self.devices = {}, {}
+        self.calibrations, self.devices, self.reference_profiles = {}, {}, {}
+        self.robot_model = robot_model
         self._calibration_paths = {}
         self._ports = {"left": left_port, "right": right_port}
         self._resources = ExitStack()
         self._connected = self._used = False
+        directory = (
+            Path(calibration_dir).expanduser()
+            if calibration_dir is not None
+            else paths.calibration / "teleoperators"
+        )
+        if calibration_dir is None and robot_model != "alohamini1":
+            directory = leader_calibration_directory(paths, leader_id, self._ports, active_sides)
         for side, port in (("left", left_port), ("right", right_port)):
             if side not in active_sides:
                 continue
             # The old BiSOLeader stores <id>_left/right.json with unprefixed joints.
-            filename = paths.calibration_file("teleoperators", f"{leader_id}_{side}")
-            if calibration_dir is not None:
-                filename = Path(calibration_dir).expanduser() / filename.name
+            filename = (
+                directory / paths.calibration_file("teleoperators", f"{leader_id}_{side}").name
+            )
+            if calibration_dir is None and not filename.exists():
+                raise ValueError(
+                    f"No calibration for the connected leader ({leader_id}); "
+                    "run alohamini calibrate leader"
+                )
             actuators = tuple(
                 ActuatorSpec(m.name.removeprefix(f"arm_{side}_"), side, m.motor_id, "sts3215")
                 for m in model.actuators
@@ -66,6 +81,9 @@ class BimanualLeader:
 
     def _load_device(self, side, port, actuators):
         calibration = load_motor_calibration(self._calibration_paths[side], actuators)
+        self.reference_profiles[side] = load_reference_profile(
+            self._calibration_paths[side], self.robot_model
+        )
         self.calibrations[side] = calibration
         self.devices[side] = FeetechBusDevice(
             port,

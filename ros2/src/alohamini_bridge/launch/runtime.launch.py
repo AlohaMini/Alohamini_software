@@ -16,8 +16,11 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
             DeclareLaunchArgument("host", default_value="127.0.0.1"),
-            DeclareLaunchArgument("robot_model", default_value="alohamini2pro"),
-            DeclareLaunchArgument("arm_mapping_dir", default_value=""),
+            DeclareLaunchArgument(
+                "robot_model",
+                default_value="alohamini2pro",
+                choices=["alohamini2", "alohamini2pro", "alohamini2edu"],
+            ),
             DeclareLaunchArgument("enable_cameras", default_value="true"),
             DeclareLaunchArgument("camera_stream_port", default_value="5557"),
             DeclareLaunchArgument("camera_publish_raw", default_value="true"),
@@ -39,7 +42,6 @@ def generate_launch_description() -> LaunchDescription:
                     {
                         "host": LaunchConfiguration("host"),
                         "expected_robot_model": LaunchConfiguration("robot_model"),
-                        "arm_mapping_dir": LaunchConfiguration("arm_mapping_dir"),
                     },
                 ],
             ),

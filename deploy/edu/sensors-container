@@ -13,6 +13,8 @@ def command(args):
         return [
             "docker",
             "build",
+            "--build-arg",
+            f"ROS_DISTRO={args.ros_distro}",
             "-t",
             args.image,
             "-f",
@@ -36,7 +38,7 @@ def command(args):
         "-e",
         "ROS_LOCALHOST_ONLY=0",
         "-e",
-        "RMW_IMPLEMENTATION=rmw_fastrtps_cpp",
+        "RMW_IMPLEMENTATION=" + os.environ.get("RMW_IMPLEMENTATION", "rmw_cyclonedds_cpp"),
     ]
     for name, value in (("lidar_c1", args.lidar), ("imu_usb", args.imu)):
         path = Path(value).resolve(strict=not args.dry_run)
@@ -55,13 +57,16 @@ def command(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("build", "run", "stop"))
-    parser.add_argument("--image", default="alohamini-edu-sensors:humble")
+    parser.add_argument("--ros-distro", choices=("humble", "jazzy"),
+                        default=os.environ.get("ROS_DISTRO", "humble"))
+    parser.add_argument("--image")
     parser.add_argument("--domain", type=int, default=int(os.environ.get("ROS_DOMAIN_ID", "5")))
     parser.add_argument("--lidar", default="/dev/lidar_c1")
     parser.add_argument("--imu", default="/dev/imu_usb")
     parser.add_argument("--profile")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    args.image = args.image or f"alohamini-edu-sensors:{args.ros_distro}"
     if not 0 <= args.domain <= 232:
         parser.error("--domain must be between 0 and 232")
     cmd = command(args)

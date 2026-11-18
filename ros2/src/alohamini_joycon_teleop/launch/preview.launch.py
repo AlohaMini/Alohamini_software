@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from alohamini_joycon_teleop.ik_launch import local_endpoint, start_worker
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
@@ -14,7 +15,7 @@ from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
 
 
-def _start_reader(context, package):
+def _start_reader(context):
     python = LaunchConfiguration("native_python").perform(context)
     command = (
         [python]
@@ -32,10 +33,14 @@ def _start_reader(context, package):
         ExecuteProcess(
             cmd=[
                 *command,
-                str(package / "scripts" / "joycon_native_reader.py"),
+                "-m",
+                "alohamini.inputs.joycon",
                 "--endpoint",
                 "tcp://127.0.0.1:5568",
             ],
+            additional_env={
+                "PYTHONPATH": "", "PYTHONHOME": "", "LD_LIBRARY_PATH": "", "VIRTUAL_ENV": ""
+            },
             output="screen",
         )
     ]
@@ -44,11 +49,17 @@ def _start_reader(context, package):
 def generate_launch_description() -> LaunchDescription:
     package = Path(get_package_share_directory("alohamini_joycon_teleop"))
     moveit = Path(get_package_share_directory("alohamini_moveit_config"))
+    ik_endpoint = local_endpoint()
     return LaunchDescription(
         [
             DeclareLaunchArgument("robot_model", default_value="alohamini2pro"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
             DeclareLaunchArgument("start_native_reader", default_value="true"),
+            DeclareLaunchArgument(
+                "ik_python",
+                default_value="",
+                description="Pink worker Python; empty uses conda run -n alohamini",
+            ),
             DeclareLaunchArgument(
                 "native_python",
                 default_value="",
@@ -63,8 +74,11 @@ def generate_launch_description() -> LaunchDescription:
                 }.items(),
             ),
             OpaqueFunction(
+                function=start_worker,
+                args=[ik_endpoint],
+            ),
+            OpaqueFunction(
                 function=_start_reader,
-                args=[package],
                 condition=IfCondition(LaunchConfiguration("start_native_reader")),
             ),
             Node(
@@ -74,7 +88,8 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     str(package / "config" / "joycon.yaml"),
-                    {"hardware_mode": False, "robot_model": LaunchConfiguration("robot_model")},
+                    {"hardware_mode": False, "ik_endpoint": ik_endpoint,
+                     "robot_model": LaunchConfiguration("robot_model")},
                 ],
             ),
         ]

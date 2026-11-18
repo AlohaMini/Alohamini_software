@@ -6,6 +6,8 @@ setup(
     name="alohamini_nav_sim",
     version="0.1.0",
     packages=find_packages(),
+    install_requires=["setuptools"],
+    tests_require=["pytest"],
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/alohamini_nav_sim"]),
         ("share/alohamini_nav_sim", ["package.xml"]),

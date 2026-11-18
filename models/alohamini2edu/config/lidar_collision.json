@@ -1,0 +1,35 @@
+{
+  "sensor": "SLAMTEC RPLIDAR C1M1",
+  "link": "lidar_housing",
+  "reference_frame": "laser_frame",
+  "size_m": [
+    0.056,
+    0.056,
+    0.042
+  ],
+  "center_in_reference_m": [
+    0.0,
+    0.0,
+    -0.00915
+  ],
+  "mass_kg": 0.11,
+  "inertia_approximation": "uniform_box",
+  "source": {
+    "url": "https://files.seeedstudio.com/wiki/SLAMRadar/SLAMTEC_rplidar_datasheet_C1M1_en.pdf",
+    "revision": "2024-03-12 rev.1.1",
+    "dimensions_page": 18,
+    "mass_page": 15,
+    "body_dimensions_mm": [
+      55.6,
+      55.6,
+      41.3
+    ],
+    "laser_height_from_bottom_mm": 29.8,
+    "note": "Rounded bounding box includes dimensional tolerance; cable and mounting bracket excluded."
+  },
+  "internal_collision_links": [
+    "base_link",
+    "base_cad_link",
+    "wheel2"
+  ]
+}

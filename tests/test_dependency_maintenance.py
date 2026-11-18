@@ -178,6 +178,44 @@ def test_transitive_candidates_cannot_cross_the_existing_major(manifests, monkey
     )
 
 
+def pip_formats(path):
+    import shlex
+
+    from pip._internal.req.req_file import build_parser
+
+    parser = build_parser()
+    values = parser.get_default_values()
+    for line in path.read_text().splitlines():
+        if line.startswith("--"):
+            values, _ = parser.parse_args(shlex.split(line), values=values)
+    return values.format_control
+
+
+def test_lock_generation_preserves_pip_source_exceptions(manifests, monkeypatch):
+    output = manifests / "env/pc-linux-64.lock"
+
+    def resolve(*args, **kwargs):
+        output.write_text(
+            "--no-binary docopt\n--only-binary :all:\n--no-binary docopt\n\n"
+            "docopt==0.6.2 --hash=sha256:abc\n"
+        )
+
+    monkeypatch.setattr("env.dependencies.subprocess.run", resolve)
+    compile_lock(manifests, manifests / "env/pc-linux-64.in", output)
+    control = pip_formats(output)
+    assert control.get_allowed_formats("docopt") == frozenset({"source"})
+    assert control.get_allowed_formats("torch") == frozenset({"binary"})
+    assert output.read_text().count("--no-binary docopt") == 1
+    assert exact_version(requirements(output)["docopt"][0]) == "0.6.2"
+
+
+def test_pc_lock_allows_only_declared_source_builds_with_pip():
+    control = pip_formats(ROOT / "env/pc-linux-64.lock")
+    for name in ("docopt", "evdev", "feetech-servo-sdk"):
+        assert control.get_allowed_formats(name) == frozenset({"source"})
+    assert control.get_allowed_formats("torch") == frozenset({"binary"})
+
+
 @pytest.mark.parametrize(
     "selected,processes,error",
     [

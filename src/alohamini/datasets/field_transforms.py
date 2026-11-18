@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import numpy as np
 
+from .action_transforms import JointRelativeActions
 from .kinematic_fields import KinematicFields
 from .rotations import RotationEncoding
 
@@ -19,13 +20,18 @@ class FieldTransforms:
         self.action = configuration.get("action_representation", "recorded")
         if self.state not in ("recorded", "tcp") or self.action not in (
             "recorded",
+            "joint_delta",
             "tcp_absolute",
             "tcp_delta",
         ):
             raise ValueError("Unknown state/action data representation")
         rotation = configuration.get("rotation_representation", "rotvec")
         RotationEncoding(rotation)
-        if rotation != "rotvec" and self.state == "recorded" and self.action == "recorded":
+        if (
+            rotation != "rotvec"
+            and self.state == "recorded"
+            and self.action in ("recorded", "joint_delta")
+        ):
             raise ValueError("data.rotation_representation requires TCP state or actions")
         frame = configuration.get("tcp_delta_frame", "base")
         if frame not in ("base", "tool") or (frame != "base" and self.action != "tcp_delta"):
@@ -35,13 +41,22 @@ class FieldTransforms:
                 configuration["kinematic_fields"],
                 rotation_representation=configuration.get("rotation_representation"),
             )
-            if self.state == "tcp" or self.action != "recorded"
+            if self.state == "tcp" or self.action in ("tcp_absolute", "tcp_delta")
             else None
         )
         if self.geometry:
             self.configuration["kinematic_fields"] = deepcopy(self.geometry.descriptor)
         self.relative = (
             self.geometry.relative_actions(reference_frame=frame) if self.geometry else None
+        )
+        self.joints = (
+            JointRelativeActions(
+                configuration.get("source_action_names", []),
+                self.context_names,
+                configuration.get("joint_delta_fields"),
+            )
+            if self.action == "joint_delta"
+            else None
         )
         self.selected = configuration.get("selected_state_feature")
         self.selected_units = configuration.get("selected_state_units", [])
@@ -95,9 +110,17 @@ class FieldTransforms:
         self.state_projection = projection
         return {**absolute, "shape": [len(names)], "names": names, "units": quantities}
 
+    @property
+    def context_names(self):
+        return (
+            self.geometry.names
+            if self.geometry
+            else self.configuration.get("source_state_names", [])
+        )
+
     def context(self, row):
-        source = self.configuration.get("source_state_names", self.geometry.names)
-        indices = [source.index(name) for name in self.geometry.names]
+        source = self.configuration.get("source_state_names", self.context_names)
+        indices = [source.index(name) for name in self.context_names]
         return np.asarray(row["observation.state"], dtype=np.float64)[indices]
 
     def encode(self, state, actions=None, *, anchor=None):
@@ -126,17 +149,25 @@ class FieldTransforms:
             )
         else:
             observed = state
+        return observed, self.encode_actions(state if anchor is None else anchor, actions)
+
+    def encode_actions(self, anchor, actions):
+        """Encode targets without recomputing the selected state representation."""
         if actions is None or self.action == "recorded":
-            return observed, actions
+            return actions
+        if self.action == "joint_delta":
+            return self.joints.encode(anchor, actions)
         targets = self.geometry.absolute(actions)
         if self.action == "tcp_delta":
-            reference = self.geometry.absolute(state if anchor is None else anchor)
+            reference = self.geometry.absolute(anchor)
             targets = self.relative.encode(reference, targets)
-        return observed, targets
+        return targets
 
     def decode(self, anchor, actions):
         if self.action == "recorded":
             return actions
+        if self.action == "joint_delta":
+            return self.joints.decode(anchor, actions)
         if self.action == "tcp_delta":
             actions = self.relative.decode(self.geometry.absolute(anchor), actions)
         return self.geometry.restore_absolute(actions, anchor)
@@ -152,10 +183,16 @@ class FieldTransforms:
                 units.get(name, "recorded (unit unverified)") for name in action_feature["names"]
             ],
         }
+        if self.joints:
+            for action_name, state_name in self.joints.fields.items():
+                index = self.joints.action_names.index(action_name)
+                raw_action["units"][index] = units.get(state_name, raw_action["units"][index])
         absolute = self.geometry.feature() if self.geometry else None
         result = {
             "action": (
-                self.relative.feature(absolute)
+                self.joints.feature(raw_action)
+                if self.action == "joint_delta"
+                else self.relative.feature(absolute)
                 if self.action == "tcp_delta"
                 else absolute
                 if self.action == "tcp_absolute"
@@ -169,7 +206,7 @@ class FieldTransforms:
         return result
 
     def validate_source(self, info, state_feature):
-        if self.geometry:
+        if self.geometry or self.joints:
             names = info["features"].get("observation.state", {}).get("names", [])
             if (
                 "source_state_names" in self.configuration
@@ -180,11 +217,14 @@ class FieldTransforms:
                 )
             if "selected_state_feature" in self.configuration and state_feature != self.selected:
                 raise ValueError("Selected state fields differ from field-transform source")
-            if any(name not in names for name in self.geometry.names):
-                raise ValueError("TCP transforms require recorded joint observations as anchors")
+            if any(name not in names for name in self.context_names):
+                raise ValueError("Field transforms require recorded joint observations as anchors")
+            if self.joints and info["features"]["action"]["names"] != self.joints.action_names:
+                raise ValueError("joint_delta action fields/order differ from the checkpoint")
             if self.state == "tcp" and state_feature is None:
                 raise ValueError("TCP state representation requires selected numeric inputs")
-            self.geometry.validate_source(info)
+            if self.geometry:
+                self.geometry.validate_source(info)
 
     def manifest(self, state_feature, state_units, action_feature):
         features = self.features(state_feature, state_units, action_feature)
@@ -194,7 +234,7 @@ class FieldTransforms:
                 dict(
                     operation="forward_kinematics",
                     fields=(["observation.state"] if self.state == "tcp" else [])
-                    + (["action"] if self.action != "recorded" else []),
+                    + (["action"] if self.action in ("tcp_absolute", "tcp_delta") else []),
                     descriptor=self.geometry.descriptor,
                 )
             )
@@ -205,6 +245,15 @@ class FieldTransforms:
                     field="action",
                     anchor="observation.state",
                     configuration=self.relative.configuration(),
+                )
+            )
+        if self.joints:
+            operations.append(
+                dict(
+                    operation="relative_joints",
+                    field="action",
+                    anchor="observation.state",
+                    fields=dict(self.joints.fields),
                 )
             )
         return dict(

@@ -1,0 +1,25 @@
+{
+  "repository": "https://github.com/Physical-Intelligence/openpi",
+  "revision": "15a9616a00943ada6c20a0f158e3adb39df2ccac",
+  "paths": ["src/openpi/models/pi0_fast.py", "src/openpi/models/gemma_fast.py", "src/openpi/models/tokenizer.py"],
+  "model_core": "existing native OpenPI SigLIP/Gemma without an action expert",
+  "fast_codec": {
+    "repository": "https://huggingface.co/physical-intelligence/fast",
+    "revision": "ec4d7aa71691cac0b8bed6942be45684db2110f4"
+  },
+  "pytorch_base": {
+    "repository": "https://huggingface.co/lerobot/pi0fast-base",
+    "revision": "308eb844dabdf46cd9dcd5138c1988b7a234f1d9",
+    "validation": "603 tensor names and shapes match the native full-size meta model, with tied token embeddings; complete weights/inference not tested"
+  },
+  "adaptations": [
+    "Native PyTorch implementation using platform data, trainer and checkpoint interfaces",
+    "Author quantile normalization and lowercase task/state prefix, 18 named AlohaMini coordinates",
+    "No state/action zero padding before FAST tokenization",
+    "Teacher-forced Action: postfix is predicted starting from the last valid context token",
+    "Strict malformed-action rejection instead of zero fallback or coefficient padding",
+    "Explicit base weight prefix supports published LeRobot safetensors without runtime framework dependency",
+    "No LeRobot default MEAN_STD normalization, extra postfix BOS, or omitted first-target CE"
+  ],
+  "pretrained_weights_included": false
+}

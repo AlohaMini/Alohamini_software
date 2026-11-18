@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/2toINF/X-VLA",
+  "revision": "6c4ecfb8be458ae7c0c96094e4b0add4174f4fe2",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/xvla"
+  },
+  "protocol": {
+    "architecture": "Florence2 encoder-only; 24 action Transformer blocks; width1024;16heads;32 domain soft prompts",
+    "training": "Author train.py: AdamW1e-4 betas(.9,.95),gradclip1; first1000 updates have zero LR in VLM/core; prompt/action projections update; subsequent constant LR by default",
+    "group_scaling": "Author learning_coef affects VLM and soft prompts, default1; not port's hardcoded VLM0.1",
+    "paper_action": "EE6D20 with metric XYZ, rotation6D and normalized grippers; semantic task losses"
+  },
+  "adaptations": [
+    "Native data reader/trainer/checkpoint; no LeRobot runtime or remote Python execution",
+    "Native HF Florence2 with explicit original vision config translation and saved local image/tokenizer processing",
+    "Native recorded-coordinate preset uses source AUTO action space MSE, training mean/std and named 20D padding; no guessed EE6D/gripper layout",
+    "Currently only AUTO recorded-coordinate mode is exposed; canonical EE6D deployment requires explicit semantic mapping",
+    "Platform scheduler implements arbitrary named group stage factors and successful-update accounting",
+    "Gradient checkpointing covers native Florence and action Transformer blocks"
+  ],
+  "pretrained_weights_included": false
+}

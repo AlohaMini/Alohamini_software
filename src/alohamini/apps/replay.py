@@ -205,7 +205,12 @@ def load_episode(root, episode=0):
 
 def check_coordinates(episode, snapshot):
     """A matching model name is insufficient when calibration or units changed."""
-    check_calibration(episode.metadata, snapshot)
+    if episode.metadata.get("reference_calibration") is not None:
+        from alohamini.learning.calibration import reference_binding
+
+        reference_binding(episode.metadata, snapshot)
+    else:
+        check_calibration(episode.metadata, snapshot)
     TargetRanges(episode.names, snapshot).check(
         episode.actions, host_requests=episode.host_requests
     )

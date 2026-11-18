@@ -24,24 +24,42 @@ class ObservationRequest:
     sampled_s: float
 
 
-class ActionBuffer:
-    """Anchor predictions to observation time, skipping elapsed action prefixes.
+class PlanBuffer:
+    """Pi-clock execution; sync starts at delivery while source age remains bounded."""
 
-    Tick numbers follow the Pi clock even when inference or feedback stalls.
-    This is an absolute-target buffer, not a relative-action integrator.
-    """
-
-    def __init__(self, session, context, names, fps, max_age_s, chunk_size):
+    def __init__(
+        self,
+        session,
+        context,
+        names,
+        fps,
+        max_age_s,
+        plan_kinds,
+        tcp_settings=None,
+        *,
+        synchronous=False,
+        wait_timeout_s=15.0,
+    ):
         self.session, self.context = session, context
         self.names, self.fps = tuple(names), fps
-        self.max_age_s, self.chunk_size = max_age_s, chunk_size
+        self.max_age_s, self.plan_kinds = max_age_s, tuple(plan_kinds)
         self.requests = OrderedDict()
-        self.targets = {}
+        self.plan = self.sampled_s = None
+        self.started_s = self.sync_wait_since = None
+        self.synchronous, self.wait_timeout_s = synchronous, wait_timeout_s
+        self.staged = None
         self.last_response_id = 0
-        self.skipped = 0
-        self.expired = 0
+        self.last_pop_tick = -1
+        self.first_tick = 0
+        self.skipped = self.expired = 0
         self.last_round_trip_s = None
         self.accepted_plan_id = None
+        self.tcp_tracker = None
+        self.tcp_settings = tcp_settings
+        if "tcp" in self.plan_kinds:
+            from alohamini.tcp_execution import TCPTracker
+
+            self.tcp_tracker = TCPTracker(fps=self.fps, settings=tcp_settings)
 
     def remember(self, request_id, tick, sampled_s):
         self.requests[request_id] = ObservationRequest(tick, sampled_s)
@@ -49,12 +67,16 @@ class ActionBuffer:
             self.requests.popitem(last=False)
 
     def accept(self, body, *, now, tick):
+        from alohamini.trajectory import plan_from_dict
+
+        if set(body) != {"id", "session", "context", "tick", "fps", "names", "plan", "inference_s"}:
+            raise ProtocolError("Invalid remote trajectory response fields")
         request_id = body.get("id")
         if type(request_id) is not int or request_id <= self.last_response_id:
-            raise ProtocolError("Remote action response has a repeated or invalid request ID")
+            raise ProtocolError("Remote plan response has a repeated or invalid request ID")
         record = self.requests.get(request_id)
         if record is None:
-            raise ProtocolError("Remote action response does not match a retained observation")
+            raise ProtocolError("Remote plan response does not match a retained observation")
         if (
             body.get("session") != self.session
             or body.get("context") != self.context
@@ -64,15 +86,13 @@ class ActionBuffer:
             or body["fps"] != self.fps
             or body.get("names") != list(self.names)
         ):
-            raise ProtocolError("Remote action response changed the negotiated control contract")
-        actions = body.get("actions")
-        if not isinstance(actions, list) or not 1 <= len(actions) <= self.chunk_size:
-            raise ProtocolError("Remote action chunk has an invalid length")
-        for row in actions:
-            if not isinstance(row, list) or len(row) != len(self.names):
-                raise ProtocolError("Remote action chunk has an invalid target shape")
-            for value in row:
-                finite_number(value, "remote action target")
+            raise ProtocolError("Remote plan response changed the negotiated control contract")
+        try:
+            plan = plan_from_dict(body.get("plan"), names=self.names)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ProtocolError(f"Invalid remote trajectory: {exc}") from exc
+        if plan.to_dict()["kind"] not in self.plan_kinds:
+            raise ProtocolError("Remote trajectory kind was not negotiated")
         inference_s = body.get("inference_s")
         finite_number(inference_s, "remote inference time")
         if inference_s < 0:
@@ -82,32 +102,109 @@ class ActionBuffer:
         for old_id in list(self.requests):
             if old_id <= request_id:
                 del self.requests[old_id]
-        # Never retain an older plan's tail after accepting a newer plan.
-        self.targets.clear()
-        self.accepted_plan_id = None
         age = now - record.sampled_s
-        if not 0 <= age < self.max_age_s:
+        if not 0 <= age < self.max_age_s or (
+            not self.synchronous
+            and (age >= plan.end_s or (tick - record.tick) / self.fps >= plan.end_s - 1e-9)
+        ):
             self.expired += 1
+            if getattr(self.plan, "kind", None) != "tcp":
+                self.plan = self.accepted_plan_id = self.staged = None
+            elif self.tcp_tracker is not None:
+                self.tcp_tracker.needs_replan = True
             return 0
-        prefix = max(0, tick - record.tick)
-        self.skipped += min(prefix, len(actions))
-        for index in range(prefix, len(actions)):
-            self.targets[record.tick + index] = (
-                dict(zip(self.names, map(float, actions[index]), strict=True)),
-                record.sampled_s + self.max_age_s,
-            )
-        if prefix >= len(actions):
-            self.expired += 1
+        if not self.synchronous:
+            self.skipped += max(0, tick - record.tick)
+        if not self.synchronous and age < plan.start_s:
+            self.staged = (plan, record.sampled_s, request_id)
         else:
-            self.accepted_plan_id = request_id
-        return max(0, len(actions) - prefix)
+            self.plan, self.sampled_s, self.accepted_plan_id = plan, record.sampled_s, request_id
+            self.started_s = None if self.synchronous else record.sampled_s
+            self.sync_wait_since = None
+            self.staged = None
+        self.first_tick = tick
+        start = plan.start_s if self.synchronous else max(age, plan.start_s)
+        return math.ceil((plan.end_s - start) * self.fps)
 
-    def pop(self, tick, now):
-        for old_tick in list(self.targets):
-            if old_tick < tick or now >= self.targets[old_tick][1]:
-                del self.targets[old_tick]
-        entry = self.targets.pop(tick, None)
-        return None if entry is None else entry[0]
+    def ready_for_prediction(self, now):
+        if self.plan is None:
+            return True
+        tracker = self.tcp_tracker
+        completed = (
+            tracker.completed(self.plan) or now - self.sampled_s >= self.max_age_s
+        ) and tracker.failed_plan is not self.plan
+        if completed and self.sync_wait_since is None:
+            self.sync_wait_since = now
+        if self.sync_wait_since is not None and now - self.sync_wait_since > self.wait_timeout_s:
+            raise RuntimeError("Synchronous TCP prediction wait timed out")
+        return (
+            completed or tracker.status == "holding" or now - self.sampled_s >= self.max_age_s
+        ) and tracker.stationary
+
+    def remaining_s(self, now):
+        if self.plan is None:
+            return 0.0
+        if self.tcp_tracker is not None:
+            governor = self.tcp_tracker.reference_governor
+            if governor is not None and governor.plan is self.plan:
+                return max(
+                    0.0,
+                    min(
+                        self.plan.end_s - governor.elapsed_s,
+                        self.max_age_s - (now - self.sampled_s),
+                    ),
+                )
+        if self.synchronous:
+            return max(
+                0.0,
+                min(self.plan.end_s - self.plan.start_s, self.max_age_s - (now - self.sampled_s)),
+            )
+        return max(0, min(self.plan.end_s, self.max_age_s) - (now - self.sampled_s))
+
+    def pop(self, tick, now, snapshot=None):
+        if self.staged is not None:
+            plan, sampled_s, request_id = self.staged
+            if now >= sampled_s + plan.start_s:
+                self.plan, self.sampled_s, self.accepted_plan_id = plan, sampled_s, request_id
+                self.started_s = sampled_s
+                self.staged = None
+        if tick < self.first_tick or tick <= self.last_pop_tick or self.plan is None:
+            return None
+        if self.started_s is None:
+            self.started_s = now
+        age = now - self.sampled_s
+        elapsed = now - self.started_s
+        tcp = getattr(self.plan, "kind", None) == "tcp"
+        if self.remaining_s(now) <= 0 and not tcp:
+            self.plan = None
+            self.accepted_plan_id = None
+            return None
+        if now < self.started_s + self.plan.start_s:
+            return None
+        self.last_pop_tick = tick
+        if tcp:
+            from alohamini.tcp_execution import TCPTracker
+
+            if snapshot is None:
+                raise ValueError("TCP execution requires fresh measured joint feedback")
+            if self.tcp_tracker is None:
+                self.tcp_tracker = TCPTracker(fps=self.fps, settings=self.tcp_settings)
+            if self.synchronous:
+                self.ready_for_prediction(now)
+            values = self.tcp_tracker.step(
+                self.plan,
+                snapshot,
+                elapsed,
+                now,
+                expired=age >= self.max_age_s,
+                holding=(
+                    self.synchronous
+                    and (self.tcp_tracker.completed(self.plan) or age >= self.max_age_s)
+                ),
+            )
+        else:
+            values = self.plan.action_at(max(self.plan.start_s, elapsed))
+        return dict(zip(self.names, values, strict=True))
 
 
 def _healthy(client, snapshot, robot_model, expected_context=None):
@@ -122,7 +219,7 @@ def _healthy(client, snapshot, robot_model, expected_context=None):
 
 
 def _check_ready(body, session, request_id, context, fps, robot_model, images, fixed_names):
-    names, cameras, chunk_size = body.get("names"), body.get("cameras"), body.get("chunk_size")
+    names, cameras, plan_kinds = body.get("names"), body.get("cameras"), body.get("plan_kinds")
     expected_names = command_target_keys(robot_model) - {"lift_axis.stop"}
     if (
         body.get("session") != session
@@ -139,12 +236,13 @@ def _check_ready(body, session, request_id, context, fps, robot_model, images, f
         or any(not isinstance(name, str) for name in cameras)
         or len(cameras) != len(set(cameras))
         or not set(cameras) <= set(images)
-        or type(chunk_size) is not int
-        or not 1 <= chunk_size <= 512
+        or not isinstance(plan_kinds, list)
+        or not plan_kinds
+        or not set(plan_kinds) <= {"dense", "bspline", "tcp"}
         or body.get("fixed_current", []) != fixed_names
     ):
         raise ProtocolError("Remote server returned an incompatible policy contract")
-    return names, cameras, chunk_size
+    return names, cameras, plan_kinds
 
 
 def _response(link):
@@ -228,23 +326,30 @@ def run_session(
             sleep(0.005)
         if ready is None:
             raise RuntimeError("Remote policy startup timed out; no motion was commanded")
-        names, cameras, chunk_size = _check_ready(
+        names, cameras, plan_kinds = _check_ready(
             ready, session, request_id, context, fps, robot_model, initial.images, fixed_names
         )
-        from alohamini.rtc import RTCConfig
+        from alohamini.trajectory_execution import ExecutionConfig, prediction_timing
 
-        rtc = None
-        if "rtc" in ready:
-            try:
-                rtc = RTCConfig(**ready["rtc"])
-                rtc.validate_horizon(chunk_size)
-                if not rtc.enabled:
-                    raise ValueError("RTC server configuration must be enabled")
-            except (TypeError, ValueError) as exc:
-                raise ProtocolError(f"Invalid RTC server settings: {exc}") from exc
-            max_prediction_age_s = min(max_prediction_age_s, rtc.max_prediction_age_s)
-        buffer = ActionBuffer(session, context, names, fps, max_prediction_age_s, chunk_size)
-        pending_rtc = False
+        try:
+            execution = ExecutionConfig(**ready["execution"])
+            if not execution.enabled and plan_kinds != ["tcp"]:
+                raise ValueError("Remote sync requires a TCP action checkpoint")
+        except (TypeError, KeyError, ValueError) as exc:
+            raise ProtocolError(f"Invalid trajectory execution settings: {exc}") from exc
+        max_prediction_age_s = min(max_prediction_age_s, execution.max_prediction_age_s)
+        buffer = PlanBuffer(
+            session,
+            context,
+            names,
+            fps,
+            max_prediction_age_s,
+            plan_kinds,
+            tcp_settings=execution.tcp_tracking,
+            synchronous=not execution.enabled,
+            wait_timeout_s=execution.startup_timeout_s,
+        )
+        pending = False
         last_request_tick = -1
         origin = clock()
         first_action_deadline = origin + rpc_timeout_s
@@ -279,18 +384,29 @@ def run_session(
                 raise RuntimeError("Host stopped acknowledging remote control commands")
             result = _response(link)
             if result is not None:
-                if result[0] != "actions":
-                    raise ProtocolError("Expected a remote action chunk")
+                if result[0] != "plan":
+                    raise ProtocolError("Expected a remote trajectory plan")
                 buffer.accept(result[1], now=now, tick=tick)
-                pending_rtc = False
+                pending = False
             if not set(cameras) <= set(snapshot.images):
                 raise RuntimeError("Host is missing a policy camera")
             source_tick = max(0, math.floor((snapshot.request_started_s - origin) * fps))
-            if rtc is None or (
-                not pending_rtc and (
-                    last_request_tick < 0 or source_tick >= last_request_tick + rtc.replan_steps
-                )
-            ):
+            age = now - buffer.sampled_s if buffer.plan is not None else 0
+            delay_s, lead = prediction_timing(
+                execution,
+                buffer.plan,
+                fps=fps,
+                latency_s=buffer.last_round_trip_s or 0,
+                observation_age_s=now - snapshot.request_started_s,
+            )
+            if execution.enabled:
+                due = buffer.plan is None or buffer.remaining_s(now) <= lead
+                due = due or (buffer.tcp_tracker is not None and buffer.tcp_tracker.needs_replan)
+                if execution.replan_interval_s is not None:
+                    due = due or age >= execution.replan_interval_s - lead
+            else:
+                due = buffer.ready_for_prediction(now)
+            if not pending and buffer.staged is None and due and source_tick > last_request_tick:
                 request_id += 1
                 body = dict(
                     session=session,
@@ -300,26 +416,19 @@ def run_session(
                     client_id=client.client_id,
                     context=context,
                     snapshot=snapshot_body(snapshot),
+                    plan_id=buffer.accepted_plan_id if execution.continuity != "none" else None,
+                    inference_delay_s=delay_s,
                 )
-                if rtc is not None:
-                    measured_delay = math.ceil((buffer.last_round_trip_s or 0) * fps) + 1
-                    body["rtc"] = dict(
-                        plan_id=buffer.accepted_plan_id,
-                        inference_delay=max(
-                            rtc.inference_delay_steps, measured_delay, tick - source_tick + 1
-                        ),
-                    )
-                    pending_rtc = True
-                    last_request_tick = source_tick
+                pending = True
+                last_request_tick = source_tick
                 buffer.remember(request_id, source_tick, snapshot.request_started_s)
                 link.submit(
-                    "observation", body,
-                    {camera: snapshot.images[camera] for camera in cameras},
+                    "observation", body, {camera: snapshot.images[camera] for camera in cameras}
                 )
                 stats["observations"] += 1
             if tick <= last_tick:
                 continue
-            targets = buffer.pop(tick, now)
+            targets = buffer.pop(tick, now, snapshot)
             if targets is None:
                 if stats["sent"] or now >= first_action_deadline:
                     raise RuntimeError(
@@ -341,7 +450,7 @@ def run_session(
                 elapsed = now - (report_at - 1.0)
                 print(
                     f"[REMOTE] sent_hz={(stats['sent'] - report_sent) / elapsed:.1f} "
-                    f"buffer={len(buffer.targets)} "
+                    f"remaining_s={buffer.remaining_s(now):.3f} "
                     f"observation_to_result_s={buffer.last_round_trip_s:.3f} "
                     f"skipped={buffer.skipped} expired_chunks={buffer.expired}",
                     flush=True,

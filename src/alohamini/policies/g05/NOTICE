@@ -1,0 +1,10 @@
+G0.5 is licensed under the G0.5 Community License Agreement
+(Non-Commercial + Limited Patent License), not sold.
+Copyright © 2026 Galaxea. All rights reserved by Galaxea.
+“Galaxea” and related marks are trademarks of Galaxea or its affiliates.
+
+This implementation adapts OpenGalaxea/GalaxeaVLA and its Hugging Face
+LeRobot port. Alohamini modifications provide native data, training,
+normalization, precision, loss reduction and checkpoint interfaces.
+This project and its modifications are not endorsed by Galaxea.
+The complete terms are retained in LICENSE-G0.5.

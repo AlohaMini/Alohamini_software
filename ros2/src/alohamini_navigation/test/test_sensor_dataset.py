@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 from alohamini_navigation.recording import recording_topics
@@ -103,11 +104,10 @@ def test_real_rosbag_reader_preserves_sensor_values_and_host_clock(tmp_path):
     for index, (topic, message) in enumerate(messages()):
         kind = type(message).__name__
         package = "std_msgs" if kind == "String" else "sensor_msgs"
-        writer.create_topic(
-            rosbag2_py.TopicMetadata(
-                name=topic, type=f"{package}/msg/{kind}", serialization_format="cdr"
-            )
-        )
+        fields = dict(name=topic, type=f"{package}/msg/{kind}", serialization_format="cdr")
+        if os.environ.get("ROS_DISTRO") == "jazzy":
+            fields["id"] = index
+        writer.create_topic(rosbag2_py.TopicMetadata(**fields))
         writer.write(topic, serialize_message(message), 1000_100_000_000 + index)
     del writer
     anchors, samples = collect(bag_messages(tmp_path / "bag"))

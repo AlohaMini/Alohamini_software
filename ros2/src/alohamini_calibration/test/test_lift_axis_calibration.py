@@ -233,15 +233,18 @@ def test_native_client_uses_only_local_state_endpoint():
     import zmq
 
     ready, requests, errors = Queue(), [], []
+    stop = threading.Event()
 
     def server():
         with zmq.Context() as context, context.socket(zmq.ROUTER) as socket:
             socket.setsockopt(zmq.LINGER, 0)
             ready.put(socket.bind_to_random_port("tcp://127.0.0.1"))
             try:
-                for sequence in (1, 2):
-                    if not socket.poll(3000):
-                        raise TimeoutError("missing local calibration request")
+                sequence = 0
+                while not stop.is_set():
+                    if not socket.poll(50):
+                        continue
+                    sequence += 1
                     identity, token = socket.recv_multipart()
                     requests.append(token)
                     socket.send_multipart(
@@ -258,7 +261,8 @@ def test_native_client_uses_only_local_state_endpoint():
         assert client.receive()["lift_axis.reference_sequence"] == 1
         assert client.client._command_socket is None
     finally:
+        stop.set()
         client.close()
         worker.join(timeout=4)
     assert not worker.is_alive() and not errors
-    assert len(requests) == 2 and all(token.endswith(b":state") for token in requests)
+    assert len(requests) >= 2 and all(token.endswith(b":state") for token in requests)

@@ -13,8 +13,12 @@ from pathlib import Path
 
 import mujoco
 
+from alohamini.paths import WorkspacePaths
+
 from .control import FollowerSettings, JointTrajectory
 from .model import ModelProfile, build_model
+
+_LAUNCH_DIRECTORY = "_ALOHAMINI_MUJOCO_LAUNCH_DIRECTORY"
 
 
 def _path_argument(value: str) -> Path:
@@ -22,7 +26,50 @@ def _path_argument(value: str) -> Path:
         raise argparse.ArgumentTypeError(
             "path cannot be empty; provide a path or set the referenced environment variable"
         )
-    return Path(value)
+    path = Path(value).expanduser()
+    # A viewer re-executes in its export directory. Explicit CLI inputs and
+    # outputs retain the launch directory's relative-path semantics.
+    launch_directory = os.environ.get(_LAUNCH_DIRECTORY)
+    if launch_directory and not path.is_absolute():
+        path = (Path(launch_directory) / path).resolve()
+    return path
+
+
+def _viewer_directory() -> Path:
+    return (WorkspacePaths().root / "simulation" / "viewer").resolve()
+
+
+def _exec_viewer(executable, command, environment):
+    """Set native export paths by changing only the CLI process before exec.
+
+    MuJoCo's native File actions use fixed filenames relative to the process
+    directory. Routing precedes model loading and creation of viewer threads;
+    reusable viewer APIs never change their caller's working directory.
+    """
+    destination = _viewer_directory()
+    destination.mkdir(parents=True, exist_ok=True)
+    previous = Path.cwd()
+    environment = environment.copy()
+    environment.setdefault(_LAUNCH_DIRECTORY, str(previous))
+    print(f"Viewer files: {destination}", flush=True)
+    try:
+        os.chdir(destination)
+        os.execvpe(executable, command, environment)
+    finally:
+        # exec replaces this process. Restore on launch failure, and when
+        # tests substitute an executor that returns or raises.
+        os.chdir(previous)
+
+
+def _route_viewer_files(argv):
+    destination = _viewer_directory()
+    if Path.cwd() == destination:
+        return
+    _exec_viewer(
+        sys.executable,
+        [sys.executable, "-m", "alohamini_mujoco.cli", *argv],
+        os.environ.copy(),
+    )
 
 
 def _egl_window(device: int, argv: list[str]):
@@ -89,7 +136,7 @@ def _egl_window(device: int, argv: list[str]):
     environment["MUJOCO_GL"] = "glfw"
     environment["PYGLFW_LIBRARY_VARIANT"] = "x11"
     print(f"EGL window: device egl{device}, lossless RGB (VirtualGL)", flush=True)
-    os.execvpe(executable, command, environment)
+    _exec_viewer(executable, command, environment)
 
 
 def main(argv=None):
@@ -111,7 +158,9 @@ def main(argv=None):
         "--resume", action="store_true", help="resume an unchanged reference batch"
     )
     collect.add_argument("--cameras", nargs="+", default=["agentview", "left_wrist", "right_wrist"])
-    collect.add_argument("--image-size", type=int, default=128)
+    collect.add_argument(
+        "--image-size", type=int, nargs="+", default=[128], help="square size or HEIGHT WIDTH"
+    )
     collect.add_argument("--output", required=True, type=_path_argument)
     replay = commands.add_parser("replay", help="verify or view a collected episode")
     replay.add_argument("dataset", type=_path_argument)
@@ -135,7 +184,9 @@ def main(argv=None):
     importer.add_argument("--output", type=_path_argument, required=True)
     for command in (view, replay, evaluate):
         command.add_argument(
-            "--window-egl-device", type=int, metavar="INDEX",
+            "--window-egl-device",
+            type=int,
+            metavar="INDEX",
             help="render the native window on an EGL GPU using VirtualGL",
         )
     for command in (view, collect, evaluate):
@@ -166,10 +217,13 @@ def main(argv=None):
         if args.resume and args.reset_indices is None:
             parser.error("--resume requires --reset-indices")
     try:
+        arguments = list(sys.argv[1:] if argv is None else argv)
         if getattr(args, "window_egl_device", None) is not None:
             if args.operation != "view" and not args.view:
                 raise ValueError("--window-egl-device requires --view")
-            _egl_window(args.window_egl_device, list(sys.argv[1:] if argv is None else argv))
+            _egl_window(args.window_egl_device, arguments)
+        if args.operation == "view" or getattr(args, "view", False):
+            _route_viewer_files(arguments)
         if args.operation == "replay":
             from .collection import replay_episode
 
@@ -187,8 +241,8 @@ def main(argv=None):
         if not isinstance(args.initial_positions, dict):
             raise ValueError("Initial positions must be an object keyed by URDF joint name")
         scene, configuration = None, {}
-        if args.libero_bundle or args.scene_config:
-            if not (args.libero_bundle and args.scene_config):
+        if args.libero_bundle:
+            if not args.scene_config:
                 raise ValueError("Use --libero-bundle together with --scene-config")
             from .libero import LiberoScene
 
@@ -196,13 +250,27 @@ def main(argv=None):
             scene = LiberoScene(
                 args.libero_bundle, args.task_index, configuration, args.reset_index
             )
+        elif args.scene_config:
+            if args.operation != "view":
+                raise ValueError("Research scenes use view; collection requires a task adapter")
+            from .scene import ResearchScene
+
+            scene = ResearchScene(args.scene_config)
+            configuration = scene.configuration
+        world_pose = configuration.get("T_world_root", configuration.get("T_world_base"))
         robot = build_model(
             profile=ModelProfile(
                 initial_positions={
                     **configuration.get("initial_positions", {}),
                     **args.initial_positions,
                 },
-                **({"T_world_root": configuration["T_world_root"]} if scene else {}),
+                **({"T_world_root": world_pose} if world_pose is not None else {}),
+                **(
+                    {"locked_positions": {}}
+                    if configuration.get("base_mode") == "kinematic"
+                    else {}
+                ),
+                timestep=configuration.get("timestep_s", 0.001),
                 collision_bundle=args.collision_bundle,
                 inertial_bundle=args.inertial_bundle,
             ),
@@ -254,7 +322,8 @@ def main(argv=None):
             return 0
         from .collection import CollectionSettings, collect_episode, collect_reference_batch
 
-        settings = CollectionSettings(image_size=args.image_size)
+        image_size = args.image_size[0] if len(args.image_size) == 1 else tuple(args.image_size)
+        settings = CollectionSettings(image_size=image_size)
         if args.reference is not None:
             from .retarget import MotionRecipe, ReferenceMotion
 

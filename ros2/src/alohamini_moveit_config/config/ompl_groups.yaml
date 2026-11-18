@@ -1,0 +1,12 @@
+left_arm:
+  planner_configs:
+    - RRTConnect
+right_arm:
+  planner_configs:
+    - RRTConnect
+dual_arms:
+  planner_configs:
+    - RRTConnect
+lift:
+  planner_configs:
+    - RRTConnect

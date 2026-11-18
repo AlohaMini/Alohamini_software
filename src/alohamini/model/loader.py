@@ -9,7 +9,7 @@ from types import MappingProxyType
 
 from alohamini._validation import finite_number, identifier
 
-from .types import ActuatorSpec, RobotModel, asset_path
+from .types import ActuatorSpec, DescriptionView, RobotModel, asset_path
 
 
 def _asset_root() -> Path:
@@ -127,6 +127,44 @@ def load_robot_model(directory: str | Path) -> RobotModel:
     for name, relative in descriptions.items():
         identifier(name, "description name")
         asset_path(directory, relative)
+    views = data.get("description_views", {})
+    if not isinstance(views, dict):
+        raise ValueError("description_views must be an object")
+    derived = {}
+    for name, settings in views.items():
+        identifier(name, "description view name")
+        if (
+            name in descriptions
+            or not isinstance(settings, dict)
+            or not (
+                {"source"}
+                <= settings.keys()
+                <= {"source", "overlay", "root_link", "geometry", "exclude_joints"}
+            )
+        ):
+            raise ValueError("Invalid or shadowed description view")
+        if not isinstance(settings["source"], str) or settings["source"] not in descriptions:
+            raise ValueError("Description views must use a registered source asset")
+        if "geometry" in settings and type(settings["geometry"]) is not bool:
+            raise ValueError("Description view geometry must be a boolean")
+        if settings.get("overlay") is not None:
+            asset_path(directory, settings["overlay"])
+        if settings.get("root_link") is not None:
+            identifier(settings["root_link"], "description view root")
+        if settings.get("overlay") is not None and settings.get("root_link") is not None:
+            raise ValueError("Subtree views cannot attach a planar base")
+        settings = dict(settings)
+        excluded = settings.get("exclude_joints", [])
+        if (
+            not isinstance(excluded, list)
+            or not all(isinstance(joint, str) for joint in excluded)
+            or len(set(excluded)) != len(excluded)
+        ):
+            raise ValueError("Excluded joints must be a list of unique joint names")
+        for joint in excluded:
+            identifier(joint, "excluded joint")
+        settings["exclude_joints"] = tuple(excluded)
+        derived[name] = DescriptionView(**settings)
     kinematics = {}
     for section in ("kinematic_chains", "kinematic_presets"):
         entries = data.get(section, {})
@@ -152,6 +190,7 @@ def load_robot_model(directory: str | Path) -> RobotModel:
         directory=directory,
         **kinematics,
         default_kinematic_preset=default_preset,
+        description_views=MappingProxyType(derived),
     )
 
 

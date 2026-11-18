@@ -8,10 +8,9 @@ import json
 import math
 import threading
 import time
-from pathlib import Path
+import xml.etree.ElementTree as ET
 
 import rclpy
-import yaml
 from builtin_interfaces.msg import Time as TimeMsg
 from control_msgs.msg import JointJog
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -26,12 +25,12 @@ from alohamini.client import HostClient
 from alohamini.errors import AlohaMiniError, ResponseTimeoutError
 from alohamini.kinematics import OmniBaseKinematics
 from alohamini.model import get_robot_model
-from alohamini.paths import WorkspacePaths
+from alohamini.model.joint_spec import ModelJointSpecification
 from alohamini.schema import BodyVelocity
 
 from .actions import ControllerActions
 from .commands import RobotCommands
-from .mapping import ARM_JOINTS, JointMapper, finite_number
+from .mapping import JointMapper, finite_number
 
 
 class StateReceiver:
@@ -135,38 +134,6 @@ class StateReceiver:
             raise RuntimeError("Host state receiver did not stop")
 
 
-def load_mapper(directory: Path, model):
-    def read(name):
-        path = directory / name
-        with path.open(encoding="utf-8") as stream:
-            document = yaml.safe_load(stream)
-        if (
-            not isinstance(document, dict)
-            or type(document.get("schema_version")) is not int
-            or document["schema_version"] != 1
-            or document.get("robot_model") != model.model_id
-        ):
-            raise ValueError(f"Invalid model/schema in {path}")
-        return document
-
-    arms = {}
-    motors = {motor.name: motor for motor in model.actuators}
-    for side in ("left", "right"):
-        arm = read(f"hardware_joint_map_{side}.yaml")
-        if arm.get("side") != side:
-            raise ValueError(f"Wrong arm mapping side: {side}")
-        for joint in ARM_JOINTS:
-            entry = arm["joints"][joint]
-            motor = motors[f"arm_{side}_{joint}"]
-            if entry["id"] != motor.motor_id or entry["model"] != motor.motor_model:
-                raise ValueError(f"Mapping motor differs from model: {motor.name}")
-        arms[side] = arm
-    lift = read("lift_axis.yaml")
-    if lift["urdf"].get("joint") != "vertical_move":
-        raise ValueError("Lift mapping must target vertical_move")
-    return JointMapper(arms, lift)
-
-
 class AlohaMiniBridge(Node):
     def __init__(self, **kwargs):
         # Retain existing private ROS topic paths for existing ROS clients.
@@ -183,7 +150,6 @@ class AlohaMiniBridge(Node):
             "expected_robot_model": "alohamini2pro",
             "base_only": False,
             "state_timestamp_mode": "receipt",
-            "arm_mapping_dir": str(WorkspacePaths().calibration / "hardware"),
             "joint_states_topic": "/joint_states",
             "base_velocity_topic": "/alohamini/base_velocity",
             "wheel_twist_topic": "/wheel/twist",
@@ -228,12 +194,15 @@ class AlohaMiniBridge(Node):
 
         self.model = get_robot_model(parameter("expected_robot_model"))
         self.base_only = parameter("base_only")
-        directory = Path(
-            parameter("arm_mapping_dir") or WorkspacePaths().calibration / "hardware"
-        ).expanduser()
-        if not directory.is_absolute():
-            raise ValueError("arm_mapping_dir must be absolute")
-        self.mapper = None if self.base_only else load_mapper(directory, self.model)
+        geometry = ModelJointSpecification.from_model(self.model).geometry_model
+        joints = ET.parse(geometry.description_path("collision")).findall("joint")
+        joint_names = {joint.get("name") for joint in joints}
+        self.virtual_root_joints = tuple(
+            name
+            for name in ("root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint")
+            if name in joint_names
+        )
+        self.mapper = None if self.base_only else JointMapper()
         self.obs_timeout = finite_number(
             parameter("observation_timeout_sec"), "observation timeout"
         )
@@ -266,7 +235,7 @@ class AlohaMiniBridge(Node):
         self.commands = RobotCommands(
             self.max_age,
             command_timeout,
-            mapper=None if self.base_only else load_mapper(directory, self.model),
+            mapper=None if self.base_only else JointMapper(),
             observation_timeout=self.obs_timeout,
             arm_tracking_error=parameter("arm_path_tolerance_rad"),
             lift_tracking_error=parameter("lift_path_tolerance_m"),
@@ -350,8 +319,7 @@ class AlohaMiniBridge(Node):
             command_port=parameter("command_port"),
             request_window=parameter("request_window"),
         )
-        mode = "base only" if self.base_only else f"arm mappings: {directory}"
-        self.get_logger().info(f"Host bridge; commands disabled; {mode}")
+        self.get_logger().info("Host bridge; commands disabled; using Host Home calibration")
 
     def on_cmd_vel(self, message, input_epoch):
         if input_epoch != self.commands.input_epoch:
@@ -528,7 +496,7 @@ class AlohaMiniBridge(Node):
         if host_now < finished:
             raise ValueError("Invalid Host status time")
         if self._motor_metadata is not None and metadata["motors"] != self._motor_metadata:
-            raise ValueError("Host motor calibration changed; verify mappings and restart bridge")
+            raise ValueError("Host motor calibration changed; restart the bridge")
         if now - snapshot.request_started_s + host_now - finished > self.max_age:
             self.late_state_responses += 1
             self.discard_observation("Host feedback is stale")
@@ -617,21 +585,16 @@ class AlohaMiniBridge(Node):
             self.measured_joint_pub.publish(message)
         derived = JointState()
         derived.header.stamp = stamp
-        # Virtual root and integrated wheel angles are not measured odometry.
+        # Integrated wheel angles are not measured odometry. Only legacy models
+        # with explicit virtual root joints receive the fixed zero coordinates.
         derived.name = [
-            "root_x_axis_joint",
-            "root_y_axis_joint",
-            "root_z_rotation_joint",
+            *self.virtual_root_joints,
             "wheel1_joint",
             "wheel2_joint",
             "wheel3_joint",
         ]
-        derived.position = [0.0, 0.0, 0.0, *self.wheel_positions]
-        derived.velocity = [0.0, 0.0, 0.0, *wheels]
-        if self.base_only:
-            derived.name = derived.name[3:]
-            derived.position = derived.position[3:]
-            derived.velocity = derived.velocity[3:]
+        derived.position = [0.0] * len(self.virtual_root_joints) + self.wheel_positions
+        derived.velocity = [0.0] * len(self.virtual_root_joints) + list(wheels)
         self.joint_pub.publish(derived)
         self.derived_wheel_pub.publish(derived)
 

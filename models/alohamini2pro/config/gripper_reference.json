@@ -1,0 +1,111 @@
+{
+  "format": "alohamini-gripper-reference-v1",
+  "coordinates": "URDF link-local metres",
+  "tolerance_m": 0.0005,
+  "parts": {
+    "fixed": {
+      "links": [
+        "left_Fixed_Jaw",
+        "right_Fixed_Jaw"
+      ],
+      "retained_collision_count": 7,
+      "mesh": "meshes/collision/reference/fixed_jaw.npz",
+      "sha256": "24b80fdfca15c73e3e72c8db026f3e797dc6dfe9e741eb0f33db02b0b71d8a5a",
+      "source_cad_sha256": "578a1b8564dc3287e03b4fe3c40f4513d9c4a8cd06515a6751ced4c095e00a88",
+      "source_brep_sha256": "d766c3ddf366c06b7b214da9918485b4a75d58962b75919a3a492fed72411d6a",
+      "cad_definition": "0:1:1:66",
+      "cad_name": "OB_F_J7_Gripper",
+      "source_mesh_manifest_sha256": "2d47ac2253d3344f8150a24e36726a3a42a48423ac00bea74e020351e6c6c4b1",
+      "T_link_part": [
+        [
+          -1.0,
+          -0.0,
+          -0.0,
+          -0.017772149977491065
+        ],
+        [
+          -0.0,
+          -0.0,
+          -1.0,
+          0.05062285861503862
+        ],
+        [
+          -0.0,
+          -1.0,
+          -0.0,
+          -0.22304326456341436
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "linear_deflection_m": 5e-05,
+      "angular_deflection_rad": 0.1,
+      "contact": {
+        "name": "finger_pad",
+        "normal": [
+          0.9963480171671889,
+          0.0,
+          -0.08538517838015655
+        ],
+        "tolerance_m": 5e-05,
+        "cad_face_index": 272
+      }
+    },
+    "moving": {
+      "links": [
+        "left_Moving_Jaw",
+        "right_Moving_Jaw"
+      ],
+      "retained_collision_count": 0,
+      "mesh": "meshes/collision/reference/moving_jaw.npz",
+      "sha256": "99005ec68e304c001bab143e0f97c6ca8507ea0c9c65f4ff0425aa3f2fd1faa1",
+      "source_cad_sha256": "578a1b8564dc3287e03b4fe3c40f4513d9c4a8cd06515a6751ced4c095e00a88",
+      "source_brep_sha256": "444fac1790ef5d9ff0006d0c6a4f92be4169e5d871f08181d0a7e4c4d20f89e4",
+      "cad_definition": "0:1:1:67",
+      "cad_name": "OB_F_J7_Jaw",
+      "source_mesh_manifest_sha256": "116535eb56d2b90c59bd9bc603d5e7c6caf80088ac63854ddc15aa492ab66403",
+      "T_link_part": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0379865909704297
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.2446574343990186
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          -0.12149350245322432
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "linear_deflection_m": 5e-05,
+      "angular_deflection_rad": 0.1,
+      "contact": {
+        "name": "finger_pad",
+        "normal": [
+          0.9985314474388258,
+          -0.05417516475031219,
+          0.0
+        ],
+        "tolerance_m": 5e-05,
+        "cad_face_index": 35
+      }
+    }
+  }
+}

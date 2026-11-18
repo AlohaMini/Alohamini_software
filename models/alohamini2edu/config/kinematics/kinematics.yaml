@@ -14,5 +14,5 @@ tool_frames:
   tcp_tool_m: [0.09999, -0.00400, 0.00126]
 
 notes:
-  - Joint origin and axis values are unchanged from alohamini2pro.zip.
+  - Joint origin and axis values are unchanged from alohamini2edu.zip.
   - Physical robot or authoritative CAD comparison is still required.

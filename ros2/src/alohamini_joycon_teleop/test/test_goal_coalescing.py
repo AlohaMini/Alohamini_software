@@ -10,6 +10,7 @@ from action_msgs.msg import GoalStatus
 from alohamini_joycon_teleop.teleop_node import ArmControl, JoyConTeleop, arm_names
 from builtin_interfaces.msg import Time
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+from rclpy.exceptions import InvalidHandle
 from sensor_msgs.msg import JointState
 
 
@@ -20,6 +21,19 @@ def real_node():
     yield node
     node.destroy_node()
     rclpy.shutdown()
+
+
+def test_node_exit_releases_action_handles_before_context_shutdown():
+    rclpy.init(args=[])
+    node = JoyConTeleop()
+    clients = [*node.arm_clients.values(), *node.gripper_clients.values()]
+    node.destroy_node()
+    try:
+        for client in clients:
+            with pytest.raises(InvalidHandle):
+                client.server_is_ready()
+    finally:
+        rclpy.shutdown()
 
 
 def input_payload(**changes):
@@ -41,6 +55,24 @@ def inject(node, *payloads):
     socket.recv_string.side_effect = [*(json.dumps(p) for p in payloads), zmq.Again()]
     with patch.object(node, "input_socket", socket):
         node.receive_inputs()
+
+
+def test_ik_worker_failure_holds_both_arms_until_input_release(real_node):
+    for arm in real_node.arms.values():
+        arm.active = True
+        arm.target_pose = {"position": [0.2, 0.0, 0.2], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    engaged = input_payload(
+        buttons={"trigger": False, "relatch": False, "shoulder": False, "sl": True}
+    )
+    with patch.object(
+        real_node.kinematics["left"], "step", side_effect=TimeoutError("IK deadline")
+    ) as solve:
+        real_node.update_arm_differential("left", engaged, time.monotonic(), .02)
+        assert all(not arm.active and arm.fault_latched for arm in real_node.arms.values())
+        real_node.update_arm_differential("left", engaged, time.monotonic(), .02)
+        assert solve.call_count == 1
+        real_node.update_arm_differential("left", input_payload(), time.monotonic(), .02)
+        assert not real_node.arms["left"].fault_latched
 
 
 def test_preview_interfaces_do_not_use_real_robot_topics(real_node):

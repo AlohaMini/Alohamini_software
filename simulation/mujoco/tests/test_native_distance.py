@@ -80,6 +80,22 @@ def test_censored_distance_has_no_required_witnesses():
     np.testing.assert_array_equal(witness, np.zeros(6))
 
 
+@pytest.mark.parametrize("returned", [0.0, 0.01])
+def test_deep_analytic_overlap_cannot_be_reported_as_zero_or_censored(monkeypatch, returned):
+    model, data = fixture_model("box")
+    shape, probe = model.geom("shape").id, model.geom("probe").id
+    data.mocap_pos[0] = data.geom_xpos[shape]
+    mujoco.mj_forward(model, data)
+
+    def broken(model, data, first, second, maximum, witness):
+        witness[:] = 0
+        return returned
+
+    monkeypatch.setattr(mujoco, "mj_geomDistance", broken)
+    with pytest.raises(InvalidNativeDistance, match="inscribed spheres"):
+        checked_geom_distance(model, data, shape, probe, 0.01)
+
+
 def test_separated_thin_boxes_do_not_become_a_false_gjk_contact():
     """Geometry from upstream 35342f4: an early-exit regression in GJK."""
     # https://github.com/google-deepmind/mujoco/commit/35342f4

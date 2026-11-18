@@ -432,14 +432,107 @@ class HostLifecycleTests(unittest.TestCase):
         result = self.host.cycle(self.command())
         self.assertEqual(len(result.feedback), 1)
         self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertIn(
+            "Feedback read failed for source='right': OSError: timeout", result.status.fault
+        )
+        self.assertNotIn("motor=", result.status.fault)
         self.assertFalse(result.command_applied)
         self.assert_cleanup(stop="stop_velocity")
+
+    def test_missing_feedback_without_driver_failure_names_the_source_and_motor(self):
+        self.start()
+        self.devices["right"].transform = lambda b: replace(b, samples={})
+        poll = Mock()
+        result = self.host.cycle(poll_command=poll)
+        self.assertIn("source='right'", result.status.fault)
+        self.assertIn("missing=['right_motor']", result.status.fault)
+        self.assertNotIn("failed=", result.status.fault)
+        self.assertNotIn("servo fault", result.status.fault)
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertFalse(result.command_applied)
+        poll.assert_not_called()
+        self.assert_cleanup(stop="stop_velocity")
+
+    def test_missing_unexpected_and_failed_feedback_preserves_the_original_reason(self):
+        self.start()
+        reason = (
+            "Critical feedback unavailable: /dev/test_right right_motor (ID 6): "
+            "Read 56: Feedback transaction deadline exceeded (attempts=1)"
+        )
+        self.devices["right"].transform = lambda b: replace(
+            b,
+            samples={"unexpected_motor": b.samples["right_motor"]},
+            failures={"right_motor": reason},
+        )
+        poll = Mock()
+        result = self.host.cycle(poll_command=poll)
+        self.assertIn("source='right'", result.status.fault)
+        self.assertIn("missing=['right_motor']", result.status.fault)
+        self.assertIn("unexpected=['unexpected_motor']", result.status.fault)
+        self.assertIn(f"failed={{'right_motor': {reason!r}}}", result.status.fault)
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertFalse(result.command_applied)
+        poll.assert_not_called()
+        self.assert_cleanup(stop="stop_velocity")
+
+    def test_feedback_failures_keep_all_motor_names_and_shared_deadline_reasons(self):
+        self.host = HostSupervisor(
+            self.devices,
+            [*self.actuators, ActuatorSpec("left_elbow", "left", 2, "sts3250")],
+        )
+        self.start()
+        failures = {
+            "left_motor": "Critical feedback unavailable: shared transaction deadline exceeded",
+            "left_elbow": "Critical feedback unavailable: shared transaction deadline exceeded",
+        }
+        self.devices["left"].transform = lambda b: replace(b, samples={}, failures=failures)
+        result = self.host.cycle(self.command())
+        self.assertIn("source='left'", result.status.fault)
+        self.assertIn("missing=['left_elbow', 'left_motor']", result.status.fault)
+        self.assertIn(f"failed={dict(sorted(failures.items()))}", result.status.fault)
+        self.assertNotIn("servo fault", result.status.fault)
+        self.assertEqual(result.status.phase, HostPhase.FAULT)
+        self.assertFalse(result.command_applied)
+        self.assert_cleanup(stop="stop_velocity")
+
+    def test_servo_and_missing_current_faults_include_motor_and_field_details(self):
+        for packet_error, current in ((1, 0.1), (0, None), (1, None)):
+            with self.subTest(packet_error=packet_error, current=current):
+                self.host = HostSupervisor(self.devices, self.actuators)
+                self.start()
+                sample = MotorFeedback(
+                    {},
+                    packet_error=packet_error,
+                    current_a=current,
+                    field_errors={"current_raw": "Read current deadline exceeded"}
+                    if current is None else {},
+                )
+                self.devices["right"].transform = lambda b, sample=sample: replace(
+                    b, samples={"right_motor": sample}
+                )
+                poll = Mock()
+                result = self.host.cycle(poll_command=poll)
+                self.assertIn("source='right', motor='right_motor'", result.status.fault)
+                self.assertIn(f"packet_error=0x{packet_error:02x}", result.status.fault)
+                self.assertIn(f"current_a={current!r}", result.status.fault)
+                self.assertEqual("servo fault" in result.status.fault, bool(packet_error))
+                self.assertEqual("current unavailable" in result.status.fault, current is None)
+                if current is None:
+                    self.assertIn("current_raw", result.status.fault)
+                    self.assertIn("Read current deadline exceeded", result.status.fault)
+                self.assertEqual(result.status.phase, HostPhase.FAULT)
+                self.assertFalse(result.command_applied)
+                poll.assert_not_called()
+                self.assert_cleanup(stop="stop_velocity")
 
     def test_partial_feedback_preserved_but_not_authorized_for_motion(self):
         self.start()
         self.devices["left"].transform = lambda b: replace(b, failures={"left_motor": "fault"})
         result = self.host.cycle(self.command())
         self.assertIn("left_motor", result.feedback[0].samples)
+        self.assertIn("source='left'", result.status.fault)
+        self.assertIn("failed={'left_motor': 'fault'}", result.status.fault)
+        self.assertNotIn("missing=", result.status.fault)
         self.assertFalse(result.command_applied)
         self.assertEqual(result.status.phase, HostPhase.FAULT)
         self.assert_cleanup(stop="stop_velocity")

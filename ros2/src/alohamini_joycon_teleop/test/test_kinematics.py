@@ -28,6 +28,7 @@ def test_dh_fk_matches_all_golden_tcp_transforms(kinematics):
 
 
 def test_differential_ik_reduces_xyz_error(kinematics):
+    pytest.importorskip("pink", reason="Direct IK runs in alohamini; ROS uses the IPC worker")
     joints = np.array([-0.35, -1.2, 1.8, -0.25, 0.4, -0.6])
     target = kinematics.forward(joints)
     target[:3, 3] += np.array([0.005, -0.004, 0.003])
@@ -41,6 +42,7 @@ def test_differential_ik_reduces_xyz_error(kinematics):
 
 
 def test_differential_ik_is_bounded(kinematics):
+    pytest.importorskip("pink", reason="Direct IK runs in alohamini; ROS uses the IPC worker")
     joints = np.array([0.0, -1.571, 1.571, 0.0, 0.0, 0.0])
     target = kinematics.forward(joints)
     target[:3, 3] += 1.0
@@ -55,6 +57,7 @@ def test_dls_vector_bound_preserves_joint_ratios():
 
 
 def test_joint_limit_margin_blocks_only_outward_motion(kinematics):
+    pytest.importorskip("pink", reason="Direct IK runs in alohamini; ROS uses the IPC worker")
     joints = np.array([0.0, -1.571, 1.571, 0.0, 0.0, 0.0])
     lower, upper = kinematics.joint_limits[0]
 

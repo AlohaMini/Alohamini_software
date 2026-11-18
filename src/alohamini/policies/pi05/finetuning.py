@@ -78,15 +78,13 @@ def parameter_summary(network):
 
 def load_base_weights(network, weights):
     """Only newly introduced adapters may be absent from an OpenPI base."""
-    from safetensors.torch import load_model
-
-    missing, unexpected = load_model(network, weights, strict=False, device="cpu")
+    from alohamini.learning.weights import load_weights
     adapters = {
         name for name, _ in network.named_parameters() if name.endswith((".lora_A", ".lora_B"))
     }
-    if set(missing) != adapters or unexpected:
+    missing = set(load_weights(network, weights, reinitialize=tuple(adapters)))
+    if missing != adapters:
         raise RuntimeError(
             f"Invalid PI0.5 base weights: missing={sorted(missing - adapters)}, "
-            f"unexpected={sorted(unexpected)}; "
             "use native checkpoint loading for trained LoRA weights"
         )

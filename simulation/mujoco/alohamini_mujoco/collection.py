@@ -13,6 +13,9 @@ from types import SimpleNamespace
 import mujoco
 import numpy as np
 
+from alohamini.calibration.joint_space import StandardJointSpace
+
+from .cameras import OPTICAL_TO_OPENGL, CameraCapture
 from .compilation import load_xml
 from .control import DynamicFollower, FollowerSettings
 from .libero import RESET_SETTLE_S, settle_scene, sha256
@@ -37,7 +40,7 @@ def restore_state(model, data, state):
 @dataclass(frozen=True)
 class CollectionSettings:
     fps: int = 20
-    image_size: int = 128
+    image_size: int | tuple[int, int] = 128
     reset_settle_s: float = RESET_SETTLE_S
     final_stability_s: float = 0.5
     minimum_lift_m: float = 0.02
@@ -50,10 +53,21 @@ class CollectionSettings:
     def __post_init__(self):
         if type(self.fps) is not int or self.fps != 20:
             raise ValueError("This collection protocol requires 20 Hz commands")
-        if type(self.image_size) is not int or self.image_size < 32:
-            raise ValueError("Image size must be an integer >= 32")
-        if any(not math.isfinite(v) or v <= 0 for v in asdict(self).values()):
+        if any(type(v) is not int or v < 32 for v in self.image_shape):
+            raise ValueError("Image size must be >= 32, or [height, width] with each >= 32")
+        if any(
+            not math.isfinite(v) or v <= 0 for k, v in asdict(self).items() if k != "image_size"
+        ):
             raise ValueError("Collection settings must be finite and positive")
+
+    @property
+    def image_shape(self):
+        value = self.image_size
+        if type(value) is int:
+            return value, value
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            raise ValueError("Image size must be an integer or [height, width]")
+        return tuple(value)
 
 
 def _substeps(robot, settings):
@@ -342,6 +356,25 @@ def collect_episode(
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     follower = DynamicFollower(robot, settings=follower_settings)
+    standard = StandardJointSpace.from_model(robot.description.robot_model.model_id)
+    coordinates = [standard.joints[n] for n in follower.names]
+    scales = np.array(
+        [
+            (c.standard_max - c.standard_min) / (c.position_at_max - c.position_at_min)
+            for c in coordinates
+        ]
+    )
+    offsets = np.array(
+        [c.standard_min - c.position_at_min * s for c, s in zip(coordinates, scales, strict=True)]
+    )
+    height, width = settings.image_shape
+    capture = CameraCapture(robot, cameras, width=width, height=height)
+    camera_models = {name: capture.metadata(name) for name in cameras}
+    workspace_cameras = [
+        name for name in cameras if capture.definitions.get(name, {}).get("role") == "workspace"
+    ]
+    task_objects = sorted({name for goal in robot.scene.manifest["goals"] for name in goal[1:]})
+    framing_failures = {name: [] for name in workspace_cameras}
     settle_scene(follower, settings.reset_settle_s)
     if robot.scene.goal_status(robot, follower.data)["passed"]:
         raise ValueError("Initial goal is already satisfied; no demonstration was collected")
@@ -398,40 +431,49 @@ def collect_episode(
             times = group.create_dataset("simulation_time_s", (frame_count + 1,), dtype="f8")
             positions = group.create_dataset("obs/joint_positions", actions.shape, dtype="f8")
             velocities = group.create_dataset("obs/joint_velocities", actions.shape, dtype="f8")
-            images, extrinsics = {}, {}
+            standard_actions = group.create_dataset("actions_standard", actions.shape, dtype="f8")
+            standard_positions = group.create_dataset(
+                "obs/joint_positions_standard", actions.shape, dtype="f8"
+            )
+            group.attrs["standard_joint_space"] = json.dumps(standard.descriptor)
+            group.attrs["standard_joint_space_sha256"] = standard.signature
+            images, extrinsics, optical_extrinsics, object_bounds = {}, {}, {}, {}
             for camera in cameras:
                 images[camera] = group.create_dataset(
                     f"obs/{camera}_rgb",
-                    (frame_count, settings.image_size, settings.image_size, 3),
+                    (frame_count, height, width, 3),
                     dtype="u1",
-                    chunks=(1, settings.image_size, settings.image_size, 3),
+                    chunks=(1, height, width, 3),
                     compression="gzip",
                 )
                 extrinsics[camera] = group.create_dataset(
                     f"camera/{camera}/T_world_camera", (frame_count, 4, 4), dtype="f8"
                 )
-                focal = settings.image_size / (
-                    2 * math.tan(math.radians(float(robot.model.camera(camera).fovy[0])) / 2)
+                optical_extrinsics[camera] = group.create_dataset(
+                    f"camera/{camera}/T_world_camera_optical", (frame_count, 4, 4), dtype="f8"
                 )
-                group.create_dataset(
-                    f"camera/{camera}/K",
-                    data=[
-                        [focal, 0, settings.image_size / 2],
-                        [0, focal, settings.image_size / 2],
-                        [0, 0, 1],
-                    ],
-                )
+                metadata = camera_models[camera]
+                K = np.array(metadata["K_opencv"])
+                group.create_dataset(f"camera/{camera}/K_opencv", data=K)
+                # Preserve the historical K pixel convention for existing readers.
+                K[:2, 2] += 0.5
+                group.create_dataset(f"camera/{camera}/K", data=K)
+                group.create_dataset(f"camera/{camera}/D", data=metadata["D"])
+                group[f"camera/{camera}"].attrs["model"] = json.dumps(metadata)
+                if camera in workspace_cameras:
+                    object_bounds[camera] = group.create_dataset(
+                        f"camera/{camera}/task_object_bounds_px",
+                        (frame_count, len(task_objects), 4),
+                        dtype="f8",
+                    )
+                    object_bounds[camera].attrs["object_names"] = json.dumps(task_objects)
+                    object_bounds[camera].attrs["columns"] = "xmin,ymin,xmax,ymax; OpenCV pixels"
             states[0], times[0] = physics_state(robot.model, follower.data), follower.data.time
             options = mujoco.MjvOption()
             set_geometry(options, collisions=False)
             # Sites include TCP and task debug markers, not physical surfaces.
             options.sitegroup[:] = 0
-            with mujoco.Renderer(
-                robot.model,
-                height=settings.image_size,
-                width=settings.image_size,
-                max_geom=max(10000, robot.model.ngeom + 1000),
-            ) as renderer:
+            with capture:
                 for frame in range(frame_count):
                     q, _ = trajectory.reference(frame / settings.fps)
                     follower.target[indices] = q
@@ -439,13 +481,24 @@ def collect_episode(
                     actions[frame] = follower.target
                     positions[frame] = follower.data.qpos[follower.qpos_ids]
                     velocities[frame] = follower.data.qvel[follower.dof_ids]
+                    standard_actions[frame] = actions[frame] * scales + offsets
+                    standard_positions[frame] = positions[frame] * scales + offsets
                     for camera in cameras:
-                        renderer.update_scene(follower.data, camera=camera, scene_option=options)
-                        images[camera][frame] = renderer.render()
+                        images[camera][frame] = capture.image(follower.data, camera, options)
                         transform = np.eye(4)
                         cam = follower.data.camera(camera)
                         transform[:3, :3], transform[:3, 3] = cam.xmat.reshape(3, 3), cam.xpos
                         extrinsics[camera][frame] = transform
+                        optical_extrinsics[camera][frame] = transform @ OPTICAL_TO_OPENGL
+                        if camera in object_bounds:
+                            for index, name in enumerate(task_objects):
+                                body = robot.scene.task["objects"][name]["root_body"]
+                                bounds, inside = capture.object_bounds(follower.data, camera, body)
+                                object_bounds[camera][frame, index] = bounds
+                                if not inside:
+                                    framing_failures[camera].append(
+                                        {"frame": frame, "object": name}
+                                    )
                     for _ in range(steps):
                         admission.physics_step(follower.step())
                     mujoco.mj_forward(robot.model, follower.data)
@@ -455,6 +508,14 @@ def collect_episode(
                         follower.data.time,
                     )
             report = admission.report()
+            report["checks"]["workspace_camera_framing"] = not any(framing_failures.values())
+            report["workspace_camera_framing"] = {
+                "performed": bool(workspace_cameras),
+                "method": "all task visual mesh vertices; conservative primitive bounds; positive "
+                "optical depth and complete raw-image coverage; occlusion retained",
+                "failures": framing_failures,
+            }
+            report["passed"] = report["passed"] and report["checks"]["workspace_camera_framing"]
             group.attrs["num_samples"] = frame_count
             group.attrs["quality"] = json.dumps(report, allow_nan=False)
             group.attrs["initial_simulation_time_s"] = begin
@@ -465,6 +526,14 @@ def collect_episode(
             "physics_steps_per_command": steps,
             "state_spec": int(STATE_SPEC),
             "cameras": list(cameras),
+            "camera_models": camera_models,
+            "standard_joint_space": {
+                "descriptor": standard.descriptor,
+                "sha256": standard.signature,
+                "joint_names": list(follower.names),
+                "action_dataset": "actions_standard",
+                "observation_dataset": "obs/joint_positions_standard",
+            },
             "action_semantics": (
                 "absolute URDF joint position command, held for 1/20 s; "
                 "reference velocity zero; all uncommanded joints held"
@@ -473,11 +542,12 @@ def collect_episode(
                 "obs(s_t), action(u_t), state(s_t) before physics; states has N+1 entries"
             ),
             "images": (
-                "lossless RGB, uint8, top-left origin; MuJoCo Renderer output without extra flip"
+                "lossless RGB uint8, top-left origin; calibrated raw lens projection when declared"
             ),
             "observation_rendering": {"geom_groups": [2], "site_groups": [], "frames": "none"},
             "camera_frame": (
-                "OpenGL: X right, Y up, -Z forward; K uses pixel centers at half-integers"
+                "T_world_camera: OpenGL X right, Y up, -Z forward; K uses half-integer centres; "
+                "T_world_camera_optical: X right, Y down, Z forward; K_opencv uses integer centres"
             ),
             "split": "train" if robot.scene.reset_index < 40 else "evaluation",
             "split_group": f"{robot.scene.task_index}:{robot.scene.reset_index}",

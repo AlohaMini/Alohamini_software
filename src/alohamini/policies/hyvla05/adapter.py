@@ -67,6 +67,7 @@ class HyVLA05Policy(ChunkPolicy):
 
 
 class HyVLA05Algorithm(ChunkAlgorithm):
+    asset_fields = ("assets_path",)
     supports_field_transforms = True
     loss_terms = ("flow_loss",)
     config_class = HyVLA05Config

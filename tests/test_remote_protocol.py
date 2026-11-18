@@ -77,11 +77,11 @@ class RemoteProtocolTests(unittest.TestCase):
 
     def test_rejects_ambiguous_and_nonfinite_json_on_both_paths(self):
         for raw in (
-            b'{"version":1,"version":1,"type":"ping","body":{},"images":[]}',
-            b'{"version":1,"type":"ping","body":{"a":1,"a":2},"images":[]}',
-            b'{"version":1,"type":"ping","body":{"a":NaN},"images":[]}',
-            b'{"version":1,"type":"ping","body":{"a":Infinity},"images":[]}',
-            b'{"version":1,"type":"ping","body":{"a":1e999},"images":[]}',
+            b'{"version":2,"version":2,"type":"ping","body":{},"images":[]}',
+            b'{"version":2,"type":"ping","body":{"a":1,"a":2},"images":[]}',
+            b'{"version":2,"type":"ping","body":{"a":NaN},"images":[]}',
+            b'{"version":2,"type":"ping","body":{"a":Infinity},"images":[]}',
+            b'{"version":2,"type":"ping","body":{"a":1e999},"images":[]}',
             b"\xff",
         ):
             with self.subTest(raw=raw), self.assertRaises(ProtocolError):
@@ -100,7 +100,7 @@ class RemoteProtocolTests(unittest.TestCase):
         header = json.loads(encode_message("observation", {}, {"front": JPEG})[0])
         for change in (
             {"version": True},
-            {"version": 2},
+            {"version": 1},
             {"type": "pickle"},
             {"type": []},
             {"body": []},

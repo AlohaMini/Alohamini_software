@@ -4,7 +4,6 @@
   <description>AlohaMini sensor composition</description>
   <maintainer email="anncatto@users.noreply.github.com">anncatto</maintainer>
   <license>Apache-2.0</license>
-  <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>alohamini_core</exec_depend>
   <exec_depend>alohamini_imu</exec_depend>
   <exec_depend>alohamini_rplidar_c1</exec_depend>

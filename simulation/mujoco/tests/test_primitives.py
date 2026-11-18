@@ -7,7 +7,7 @@ from alohamini_mujoco.collision import load_bundle, merge_bundles, visual_source
 from alohamini_mujoco.description import Description, origin
 from alohamini_mujoco.frames import points_in_frame, transform
 from alohamini_mujoco.interop import export_collision_urdf
-from alohamini_mujoco.meshes import binary_stl
+from alohamini_mujoco.meshes import read_mesh
 from alohamini_mujoco.model import ModelProfile, build_model
 from alohamini_mujoco.primitives import fit_primitives
 from alohamini_mujoco.shapes import Primitive
@@ -71,7 +71,8 @@ def test_fits_contain_the_entire_visual_in_declared_axes_and_preserve_wheel_shaf
         primitive = pieces[0]
         points = []
         for source in visual_sources(description, name):
-            mesh = binary_stl((description.robot_model.directory / source["path"]).read_bytes())
+            path = description.robot_model.directory / source["path"]
+            mesh = read_mesh(path.read_bytes(), path)
             points.append(points_in_frame(source["T_link_visual"], mesh.vertices * source["scale"]))
         vertices = points_in_frame(np.linalg.inv(primitive.T_link_geometry), np.vstack(points))
         source_pose = origin(description.links[name].find("collision"))
@@ -90,7 +91,7 @@ def test_fits_contain_the_entire_visual_in_declared_axes_and_preserve_wheel_shaf
                     .split()
                 ]
             )
-            np.testing.assert_allclose(source_size - size, [0.004] * 3, rtol=0, atol=5e-8)
+            np.testing.assert_allclose(source_size, size, rtol=0, atol=5e-8)
         else:
             assert np.linalg.norm(vertices[:, :2], axis=1).max() <= primitive.parameters["radius"]
             assert np.abs(vertices[:, 2]).max() <= primitive.parameters["length"] / 2
@@ -110,7 +111,7 @@ def test_native_mujoco_and_portable_urdf_preserve_analytic_types_frames_and_dyna
     np.testing.assert_array_equal(robot.model.body_mass, reference.model.body_mass)
     np.testing.assert_array_equal(robot.model.body_inertia, reference.model.body_inertia)
     np.testing.assert_array_equal(robot.model.jnt_range, reference.model.jnt_range)
-    assert robot.model.nexclude == reference.model.nexclude == 38
+    assert robot.model.nexclude == reference.model.nexclude == 35
     assert robot.model.ngeom == reference.model.ngeom
     export = export_collision_urdf(description, output, tmp_path / "portable", mesh_unit="mm")
     tree = ET.parse(export / "robot.urdf")

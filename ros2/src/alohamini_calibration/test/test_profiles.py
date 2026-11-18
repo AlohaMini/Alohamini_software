@@ -118,7 +118,7 @@ def test_import_preserves_bytes_status_and_never_overwrites(tmp_path):
     assert manifest["status"] == "imported_requires_review"
     assert (output / "cameras/intrinsics/forward.yaml").read_bytes() == original
     assert (output / "robots/AlohaMiniRobot.json").read_text() == "{}"
-    assert len(manifest["consumer_issues"]) == 3
+    assert len(manifest["consumer_issues"]) == 2
     assert any(f["sha256"] == hashlib.sha256(original).hexdigest() for f in manifest["files"])
     assert json.loads((output / "import_manifest.json").read_text()) == manifest
     with pytest.raises(FileExistsError):

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "authority": "alohamini-platform/models/alohamini2edu",
   "base_model": "alohamini2pro",
-  "base_revision": 4,
-  "base_commit": "1e0719e74e636866f9412a0bee716e2d7f46da66",
+  "base_revision": 6,
+  "base_commit": "3308604fbe40ffd42d8cca19223162c9c1c69f7a",
   "hardware_basis": "EDU is the 2 Pro platform with added LiDAR/IMU; installed hardware and sensor extrinsics require verification",
   "upstream_provenance": "source_provenance.json",
   "sensor_source": {
@@ -18,16 +18,32 @@
   ],
   "files": [
     {
+      "path": "README.md",
+      "sha256": "6b615596af3873878b12383d71e93666e35752066688f9343dca39d853954b56"
+    },
+    {
+      "path": "config/gripper_collision.json",
+      "sha256": "404949321bbc8fede3e5a7af98bc9b9062c2a743165521909c0d6a53ee741e46"
+    },
+    {
+      "path": "config/gripper_reference.json",
+      "sha256": "838e91c69848b4078b7f8dee389c70b42b5f80e5df92512e00a21d8e8e39e52b"
+    },
+    {
       "path": "config/kinematics/encoder_conventions.yaml",
       "sha256": "5fd43c9ec708758cea8d63a3f3d317a279e9d426c682bd5157445fe89a01a303"
     },
     {
       "path": "config/kinematics/joint_limits.yaml",
-      "sha256": "91a10045fc73c2d2555ef3b7485af3b18e60cc2aa591ae3426c3bd5f405725d1"
+      "sha256": "6beec108963e4cf742ecd66377e6959bb1ab1b2622cc39a0202ebff2b449d161"
+    },
+    {
+      "path": "config/kinematics/joint_spec.json",
+      "sha256": "9e050618131280fdc79bacfc98ccd76e20d98ba5e4cdc39d51c327c8db32fe9f"
     },
     {
       "path": "config/kinematics/kinematics.yaml",
-      "sha256": "7c937de3e803bc4827f162f759ae89e10400f8cd50b1d1482853fbdfcbc866c0"
+      "sha256": "03aaa1ca6393e389b9fcc430ccecf4ff362e146cace2f134f570488268dc5c8d"
     },
     {
       "path": "config/kinematics/left_chain.json",
@@ -35,11 +51,11 @@
     },
     {
       "path": "config/kinematics/physical_parameters.yaml",
-      "sha256": "75d8bf1c146dba82c2c48040e464ffe3564442a3aad0e17706a87eed68e1a1c7"
+      "sha256": "25e67ff5075407585fff8b0955cd231f88229e9af9c1abb569392f3a2784fcd2"
     },
     {
       "path": "config/kinematics/right_arm_kinematics.yaml",
-      "sha256": "82466c69709d135ffd2dc883f57f31d322e56dd1b9bd7d9dbed74039af00c962"
+      "sha256": "3622da0eefc718b680916d4d8481b94069be24cdeea440ca3f110da7de962d29"
     },
     {
       "path": "config/kinematics/right_chain.json",
@@ -48,6 +64,10 @@
     {
       "path": "config/kinematics/upright_forward.json",
       "sha256": "a916fde1e671c5fbc2370d91456f48712c7f81842f27205ac0bf8d68688d9b85"
+    },
+    {
+      "path": "config/lidar_collision.json",
+      "sha256": "70fda5ac30641a7a0abd58593e19578e58474c1658b8a07241499bb46b4686d5"
     },
     {
       "path": "config/navigation/collision.yaml",
@@ -62,8 +82,20 @@
       "sha256": "c96b8d1e2465a74334974ffe3992aa9c57b231109326f476ec85252aada0a9bf"
     },
     {
+      "path": "config/physical_model.json",
+      "sha256": "ba8c4f109fff8168257dff3b21a25f796e7b1362b11d6fabc1a6e4c7930b2671"
+    },
+    {
+      "path": "config/planar_base.urdf",
+      "sha256": "ac32a58b9c4b672276ae8bb85fc5972fc9d00169a59847557d7a069c30468c32"
+    },
+    {
       "path": "config/sensors.yaml",
       "sha256": "a1cb63f5123afe1d4724f4465a1ce4bd0731ba470be654fd6950d484f2c47f25"
+    },
+    {
+      "path": "config/structural_collision.json",
+      "sha256": "063ee5b69f0849c9c87d6dd750b7b37f82806f2b9480b7dc172361a30d1654e7"
     },
     {
       "path": "meshes/collision/arm_base_vhacd.stl",
@@ -134,8 +166,304 @@
       "sha256": "88d2b8700b62c58590e5eb98ecb3163a437220f47fe6a21244f0ba82615c1035"
     },
     {
+      "path": "meshes/collision/reference/fixed_jaw.npz",
+      "sha256": "24b80fdfca15c73e3e72c8db026f3e797dc6dfe9e741eb0f33db02b0b71d8a5a"
+    },
+    {
+      "path": "meshes/collision/reference/moving_jaw.npz",
+      "sha256": "99005ec68e304c001bab143e0f97c6ca8507ea0c9c65f4ff0425aa3f2fd1faa1"
+    },
+    {
       "path": "meshes/collision/rotation_pitch_vhacd.stl",
       "sha256": "e9d0bd018a6e9b15c429410dab05b4a4453cdd8161e6ce4004ebdd4dbf1c56c0"
+    },
+    {
+      "path": "meshes/collision/structural/091a6af8d138d4d3835f6720b00083b74f1c64e739215719aea3ce6461735004.obj",
+      "sha256": "091a6af8d138d4d3835f6720b00083b74f1c64e739215719aea3ce6461735004"
+    },
+    {
+      "path": "meshes/collision/structural/09a4cd7ca59f035a3bdd6797c94e33f0f9021600fbd50d1d0863045e2174dbb4.obj",
+      "sha256": "09a4cd7ca59f035a3bdd6797c94e33f0f9021600fbd50d1d0863045e2174dbb4"
+    },
+    {
+      "path": "meshes/collision/structural/0d47dd55282bc01ebc961707d66d94c3e936e2798b5139dbdb77444017d21075.obj",
+      "sha256": "0d47dd55282bc01ebc961707d66d94c3e936e2798b5139dbdb77444017d21075"
+    },
+    {
+      "path": "meshes/collision/structural/1750df191692e5df839b84959b5fdaa2b4633b87106c7cb08e75e9633421c781.obj",
+      "sha256": "1750df191692e5df839b84959b5fdaa2b4633b87106c7cb08e75e9633421c781"
+    },
+    {
+      "path": "meshes/collision/structural/1754bb796def836465dac9e70cf7e6e02fe0e7e639071b99cea156245748ab56.obj",
+      "sha256": "1754bb796def836465dac9e70cf7e6e02fe0e7e639071b99cea156245748ab56"
+    },
+    {
+      "path": "meshes/collision/structural/176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28.obj",
+      "sha256": "176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28"
+    },
+    {
+      "path": "meshes/collision/structural/177225f19902f7524a128d836525835f8e5dc35520b9a2bba87c1915951bc46f.obj",
+      "sha256": "177225f19902f7524a128d836525835f8e5dc35520b9a2bba87c1915951bc46f"
+    },
+    {
+      "path": "meshes/collision/structural/19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8.obj",
+      "sha256": "19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8"
+    },
+    {
+      "path": "meshes/collision/structural/1dff10015044b302dd36682eb07960acb4fc97f2732d911438634f398329e1c6.obj",
+      "sha256": "1dff10015044b302dd36682eb07960acb4fc97f2732d911438634f398329e1c6"
+    },
+    {
+      "path": "meshes/collision/structural/1f8d84cba3910096c47f8e25110b6b85bc58d6f9c4155afbbb70c68c6be5b91b.obj",
+      "sha256": "1f8d84cba3910096c47f8e25110b6b85bc58d6f9c4155afbbb70c68c6be5b91b"
+    },
+    {
+      "path": "meshes/collision/structural/1fc04b2c54d4b2151499cdb04188a8bc8b25a662b179960e18ac8b7def0ed834.obj",
+      "sha256": "1fc04b2c54d4b2151499cdb04188a8bc8b25a662b179960e18ac8b7def0ed834"
+    },
+    {
+      "path": "meshes/collision/structural/258cc154ae6e3fa15def02821734dd16c47fa2c8238b9de94fc299349bec53b5.obj",
+      "sha256": "258cc154ae6e3fa15def02821734dd16c47fa2c8238b9de94fc299349bec53b5"
+    },
+    {
+      "path": "meshes/collision/structural/27afaea55575a8f0aee51d037cee08600e4b5e857660df0efc56141fcae7ef07.obj",
+      "sha256": "27afaea55575a8f0aee51d037cee08600e4b5e857660df0efc56141fcae7ef07"
+    },
+    {
+      "path": "meshes/collision/structural/30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46.obj",
+      "sha256": "30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46"
+    },
+    {
+      "path": "meshes/collision/structural/3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338.obj",
+      "sha256": "3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338"
+    },
+    {
+      "path": "meshes/collision/structural/3555c0fe60a965ec8b91c759fd634b064b5788455da3ed346e60458b780baea9.obj",
+      "sha256": "3555c0fe60a965ec8b91c759fd634b064b5788455da3ed346e60458b780baea9"
+    },
+    {
+      "path": "meshes/collision/structural/389061abaf91dd6b8ad6b4afcae01b1dcf311e4d5320430c9bdb06d630df7865.obj",
+      "sha256": "389061abaf91dd6b8ad6b4afcae01b1dcf311e4d5320430c9bdb06d630df7865"
+    },
+    {
+      "path": "meshes/collision/structural/3c6df4df7d6f16da7e3f348ed2301250a916859c2351047c4f7f348291f35751.obj",
+      "sha256": "3c6df4df7d6f16da7e3f348ed2301250a916859c2351047c4f7f348291f35751"
+    },
+    {
+      "path": "meshes/collision/structural/3db2141ff90d8aa2b3edad1c2a8c4f54950044a6055052a05df1bf668126e355.obj",
+      "sha256": "3db2141ff90d8aa2b3edad1c2a8c4f54950044a6055052a05df1bf668126e355"
+    },
+    {
+      "path": "meshes/collision/structural/3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50.obj",
+      "sha256": "3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50"
+    },
+    {
+      "path": "meshes/collision/structural/424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35.obj",
+      "sha256": "424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35"
+    },
+    {
+      "path": "meshes/collision/structural/4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954.obj",
+      "sha256": "4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954"
+    },
+    {
+      "path": "meshes/collision/structural/4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8.obj",
+      "sha256": "4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8"
+    },
+    {
+      "path": "meshes/collision/structural/4a1c2fc60147d7f689da21e37c371032a3210f674e2334fb0dbbfc26af572ac8.obj",
+      "sha256": "4a1c2fc60147d7f689da21e37c371032a3210f674e2334fb0dbbfc26af572ac8"
+    },
+    {
+      "path": "meshes/collision/structural/54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe.obj",
+      "sha256": "54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe"
+    },
+    {
+      "path": "meshes/collision/structural/57e0a790b8badaf042c76f1496acf996fd6baf5292049a42c5bbd3bcb76903c1.obj",
+      "sha256": "57e0a790b8badaf042c76f1496acf996fd6baf5292049a42c5bbd3bcb76903c1"
+    },
+    {
+      "path": "meshes/collision/structural/5aac0401ce2a5790990a967c1db0b4f2f78e1bd51ceb4e91467e8838957a4c48.obj",
+      "sha256": "5aac0401ce2a5790990a967c1db0b4f2f78e1bd51ceb4e91467e8838957a4c48"
+    },
+    {
+      "path": "meshes/collision/structural/5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9.obj",
+      "sha256": "5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9"
+    },
+    {
+      "path": "meshes/collision/structural/610240f64c3877d3490662cf54fc2c4405b673bfadfd3fe2466e78933ced47e4.obj",
+      "sha256": "610240f64c3877d3490662cf54fc2c4405b673bfadfd3fe2466e78933ced47e4"
+    },
+    {
+      "path": "meshes/collision/structural/6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57.obj",
+      "sha256": "6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57"
+    },
+    {
+      "path": "meshes/collision/structural/644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c.obj",
+      "sha256": "644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c"
+    },
+    {
+      "path": "meshes/collision/structural/723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461.obj",
+      "sha256": "723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461"
+    },
+    {
+      "path": "meshes/collision/structural/72e9be1cb7f0153a4f29fac7bb0d57c4f697e675afccb9c1661da04dbc843bfc.obj",
+      "sha256": "72e9be1cb7f0153a4f29fac7bb0d57c4f697e675afccb9c1661da04dbc843bfc"
+    },
+    {
+      "path": "meshes/collision/structural/73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf.obj",
+      "sha256": "73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf"
+    },
+    {
+      "path": "meshes/collision/structural/74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb.obj",
+      "sha256": "74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb"
+    },
+    {
+      "path": "meshes/collision/structural/7557fa4b61f6a68a36ffca789337929de74a5be07abde68b6875c1a40f7d0ad0.obj",
+      "sha256": "7557fa4b61f6a68a36ffca789337929de74a5be07abde68b6875c1a40f7d0ad0"
+    },
+    {
+      "path": "meshes/collision/structural/7c9fc10651c221928b2f439940b7befcacef54ae45f92fcd8c5fe637e87eac68.obj",
+      "sha256": "7c9fc10651c221928b2f439940b7befcacef54ae45f92fcd8c5fe637e87eac68"
+    },
+    {
+      "path": "meshes/collision/structural/7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f.obj",
+      "sha256": "7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f"
+    },
+    {
+      "path": "meshes/collision/structural/805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c.obj",
+      "sha256": "805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c"
+    },
+    {
+      "path": "meshes/collision/structural/895908605c2cd95c38829bfe78522fe2d7a5f90ac642ce5582c51384e2c7a713.obj",
+      "sha256": "895908605c2cd95c38829bfe78522fe2d7a5f90ac642ce5582c51384e2c7a713"
+    },
+    {
+      "path": "meshes/collision/structural/8adbe5366c3215e2f39bfa5c457904a5ea386288e506f613b3a2e545c93fbd92.obj",
+      "sha256": "8adbe5366c3215e2f39bfa5c457904a5ea386288e506f613b3a2e545c93fbd92"
+    },
+    {
+      "path": "meshes/collision/structural/8bbee6e285425b43e7f0458b9c19c2bb00812cc20c150e5549e2b9e5388cda3b.obj",
+      "sha256": "8bbee6e285425b43e7f0458b9c19c2bb00812cc20c150e5549e2b9e5388cda3b"
+    },
+    {
+      "path": "meshes/collision/structural/9ac1303d4654d9eda9d49d041768e8e3326ed903d4519eea071f490a12f307f1.obj",
+      "sha256": "9ac1303d4654d9eda9d49d041768e8e3326ed903d4519eea071f490a12f307f1"
+    },
+    {
+      "path": "meshes/collision/structural/9bc6b99fd7d482aebf4007a5c41eac36dbb4e30262b86f0318e156dc774ad3ae.obj",
+      "sha256": "9bc6b99fd7d482aebf4007a5c41eac36dbb4e30262b86f0318e156dc774ad3ae"
+    },
+    {
+      "path": "meshes/collision/structural/a31da562e54013136d854665fc7192a94d964f7321f9e753ffceb8850f9a50a9.obj",
+      "sha256": "a31da562e54013136d854665fc7192a94d964f7321f9e753ffceb8850f9a50a9"
+    },
+    {
+      "path": "meshes/collision/structural/ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0.obj",
+      "sha256": "ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0"
+    },
+    {
+      "path": "meshes/collision/structural/b036471f178a1f0a65542f49aa750871f09555214b8ded7ec1d8eccb8baad8cd.obj",
+      "sha256": "b036471f178a1f0a65542f49aa750871f09555214b8ded7ec1d8eccb8baad8cd"
+    },
+    {
+      "path": "meshes/collision/structural/b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749.obj",
+      "sha256": "b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749"
+    },
+    {
+      "path": "meshes/collision/structural/b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f.obj",
+      "sha256": "b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f"
+    },
+    {
+      "path": "meshes/collision/structural/ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0.obj",
+      "sha256": "ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0"
+    },
+    {
+      "path": "meshes/collision/structural/bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8.obj",
+      "sha256": "bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8"
+    },
+    {
+      "path": "meshes/collision/structural/bbbd85127f619ed607e9ae933e9c193482aedf02cf6026ce6f3360d5765a3907.obj",
+      "sha256": "bbbd85127f619ed607e9ae933e9c193482aedf02cf6026ce6f3360d5765a3907"
+    },
+    {
+      "path": "meshes/collision/structural/bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3.obj",
+      "sha256": "bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3"
+    },
+    {
+      "path": "meshes/collision/structural/c17e57a686c521d935f73d3acadec43aed5a962af605cf239854438f47b1d9b0.obj",
+      "sha256": "c17e57a686c521d935f73d3acadec43aed5a962af605cf239854438f47b1d9b0"
+    },
+    {
+      "path": "meshes/collision/structural/c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f.obj",
+      "sha256": "c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f"
+    },
+    {
+      "path": "meshes/collision/structural/c28b730d268bb71b189aa717d7f856e514c58d8edf6a617192504f516089ce1d.obj",
+      "sha256": "c28b730d268bb71b189aa717d7f856e514c58d8edf6a617192504f516089ce1d"
+    },
+    {
+      "path": "meshes/collision/structural/ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b.obj",
+      "sha256": "ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b"
+    },
+    {
+      "path": "meshes/collision/structural/d3159c07dd72742293b33d8c2448bfe4d36a4206df7d41c612ca049e89b60edc.obj",
+      "sha256": "d3159c07dd72742293b33d8c2448bfe4d36a4206df7d41c612ca049e89b60edc"
+    },
+    {
+      "path": "meshes/collision/structural/d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165.obj",
+      "sha256": "d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165"
+    },
+    {
+      "path": "meshes/collision/structural/d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2.obj",
+      "sha256": "d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2"
+    },
+    {
+      "path": "meshes/collision/structural/dc630d77a8d5096d47cb6283d8d79a15c023e2ca297da0b0cea581954d6cd2f7.obj",
+      "sha256": "dc630d77a8d5096d47cb6283d8d79a15c023e2ca297da0b0cea581954d6cd2f7"
+    },
+    {
+      "path": "meshes/collision/structural/de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549.obj",
+      "sha256": "de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549"
+    },
+    {
+      "path": "meshes/collision/structural/debe0013a453df0cb779a10d259e92e29d41292c6ef148e2c387e14ee82f40cd.obj",
+      "sha256": "debe0013a453df0cb779a10d259e92e29d41292c6ef148e2c387e14ee82f40cd"
+    },
+    {
+      "path": "meshes/collision/structural/e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6.obj",
+      "sha256": "e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6"
+    },
+    {
+      "path": "meshes/collision/structural/e3d69e2a3cb0dcb765de246bdeaaab99909ba755f024cdc832b785151fed86c1.obj",
+      "sha256": "e3d69e2a3cb0dcb765de246bdeaaab99909ba755f024cdc832b785151fed86c1"
+    },
+    {
+      "path": "meshes/collision/structural/e8ee94f36768e712af66d5ef800c1e6cfbab75bb1acdacaf9a71e7563c596086.obj",
+      "sha256": "e8ee94f36768e712af66d5ef800c1e6cfbab75bb1acdacaf9a71e7563c596086"
+    },
+    {
+      "path": "meshes/collision/structural/ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908.obj",
+      "sha256": "ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908"
+    },
+    {
+      "path": "meshes/collision/structural/f6bca89e1b48228ed9e2c19df8f0a39a7e637ba765c90b87b69105431bb164b7.obj",
+      "sha256": "f6bca89e1b48228ed9e2c19df8f0a39a7e637ba765c90b87b69105431bb164b7"
+    },
+    {
+      "path": "meshes/collision/structural/f9010e73c38995195c7420e1a27abab167c8c0e643b91f807ee71ac419284fbc.obj",
+      "sha256": "f9010e73c38995195c7420e1a27abab167c8c0e643b91f807ee71ac419284fbc"
+    },
+    {
+      "path": "meshes/collision/structural/fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b.obj",
+      "sha256": "fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b"
+    },
+    {
+      "path": "meshes/collision/structural/fdf9c45806b2ebdea840458dad02d25dacc0b3cbcd851be44ec160c095360c82.obj",
+      "sha256": "fdf9c45806b2ebdea840458dad02d25dacc0b3cbcd851be44ec160c095360c82"
+    },
+    {
+      "path": "meshes/collision/structural/ffc95e709d887db4aa2063dc12f7d88731bf675dcbdf335311e892ba6ef46235.obj",
+      "sha256": "ffc95e709d887db4aa2063dc12f7d88731bf675dcbdf335311e892ba6ef46235"
     },
     {
       "path": "meshes/collision/upper_arm_vhacd.stl",
@@ -180,6 +508,26 @@
     {
       "path": "meshes/visual/front_camera.STL",
       "sha256": "f84933fa72c1a17f0160eb39e003fa5f7e7f88d978524a2100bfd91eec725cee"
+    },
+    {
+      "path": "meshes/visual/indexed/21cf45083704f66ad2cbae590a4a61f3fda17dc8646b8909b3ab8638aa803803.obj",
+      "sha256": "21cf45083704f66ad2cbae590a4a61f3fda17dc8646b8909b3ab8638aa803803"
+    },
+    {
+      "path": "meshes/visual/indexed/2e09e4ca99f98e7cdc116f74e0a83fe46dce0395baac7be0aa6351e33211eddc.obj",
+      "sha256": "2e09e4ca99f98e7cdc116f74e0a83fe46dce0395baac7be0aa6351e33211eddc"
+    },
+    {
+      "path": "meshes/visual/indexed/4b017e7c695693186afb4cd22ddf0b76f9a8d82efda2130f0ac6ad95c5be346f.obj",
+      "sha256": "4b017e7c695693186afb4cd22ddf0b76f9a8d82efda2130f0ac6ad95c5be346f"
+    },
+    {
+      "path": "meshes/visual/indexed/76810b7735511d970da06de382088ac803926f2206c77a809866e53322bed3bd.obj",
+      "sha256": "76810b7735511d970da06de382088ac803926f2206c77a809866e53322bed3bd"
+    },
+    {
+      "path": "meshes/visual/indexed/f31785cf8c7de7f73b4b8d8a9972ae0332393e99a06b6ed9e01efc8e199ecd77.obj",
+      "sha256": "f31785cf8c7de7f73b4b8d8a9972ae0332393e99a06b6ed9e01efc8e199ecd77"
     },
     {
       "path": "meshes/visual/left_Base.STL",
@@ -259,39 +607,15 @@
     },
     {
       "path": "model.json",
-      "sha256": "3531052238dda21133ac4732efe2c8c98f059cbbef3dac71db2287f81ea1df7e"
-    },
-    {
-      "path": "source_provenance.json",
-      "sha256": "2b47b1585b97e5b7b6c5906bf3e96032cf08dba84955da8f953ddc56c8fcdc9a"
+      "sha256": "7b208dc184a051c251978ad451dd17524b8630667fea25345beca3e60896022d"
     },
     {
       "path": "srdf/alohamini2edu.srdf",
-      "sha256": "c61e1c9c104d465e9d39d287f35ac851a4895d5852a72e9f0a19f36a27dccf10"
+      "sha256": "2707701283ab550eb4638f456e7657e07d7add84ac2c9c9fcd398d20ff5903b7"
     },
     {
       "path": "urdf/alohamini2edu.urdf",
-      "sha256": "cc97b672a24fa98d54998f4969ebd86f402cddcdec789c4d9f4f313aea268d0c"
-    },
-    {
-      "path": "urdf/alohamini2edu_base.urdf",
-      "sha256": "c7727659dc548cc9109a600df8535c0f7bfe30c9c8b255cd8a634dd75d6656ef"
-    },
-    {
-      "path": "urdf/alohamini2edu_kinematic.urdf",
-      "sha256": "4c592be31149f3743b9461d8a4c481b92fcaed292bc3798088b518fc23db73ae"
-    },
-    {
-      "path": "urdf/alohamini2edu_left_kinematic.urdf",
-      "sha256": "1c17b0702fdb252fc902a37744db790735d20595030bbdf4c242f2ae22766a69"
-    },
-    {
-      "path": "urdf/alohamini2edu_navigation.urdf",
-      "sha256": "774c818b124c6449051232661081390b28826dd3a7b4f974f6d9dc6f3efab55c"
-    },
-    {
-      "path": "urdf/alohamini2edu_right_kinematic.urdf",
-      "sha256": "2a1c4b63da6f55b7e704d5eb6284d35d69b94662601a383d95fdc3eac216a92e"
+      "sha256": "e7226dbb445938b9b94b524dc754db5a56fe062dd7a174bd01a8e3e19e8d1484"
     },
     {
       "path": "urdf/source/alohamini2edu_cad.urdf",

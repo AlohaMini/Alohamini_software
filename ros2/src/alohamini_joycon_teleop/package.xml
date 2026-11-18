@@ -6,7 +6,6 @@
   <maintainer email="anncatto@users.noreply.github.com">anncatto</maintainer>
   <license>Apache-2.0</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>action_msgs</exec_depend>
   <exec_depend>alohamini_core</exec_depend>

@@ -15,11 +15,11 @@ from typing import Any
 from alohamini.errors import ProtocolError
 from alohamini.protocol import MAX_FRAME_BYTES, MAX_JSON_BYTES, MAX_MESSAGE_BYTES, HostSnapshot
 
-VERSION = 1
+VERSION = 2
 MAX_CAMERAS = 16
 MAX_MESSAGE_FRAMES = 1 + MAX_CAMERAS
 KINDS = frozenset(
-    {"hello", "ready", "observation", "actions", "error", "ping", "pong", "stop", "ack"}
+    {"hello", "ready", "observation", "plan", "error", "ping", "pong", "stop", "ack"}
 )
 _CAMERA_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 

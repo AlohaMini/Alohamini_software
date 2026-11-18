@@ -63,18 +63,18 @@ def test_sync_episode_resets_policy_submits_and_stops(setup):
 
 
 def test_rtc_episode_waits_for_first_plan_and_stops_before_worker_cleanup(setup):
-    import torch
-    from test_rtc import ManualExecutor
+    from test_trajectory import Worker as ManualExecutor
 
-    from alohamini.learning.rtc import RTCPolicy
-    from alohamini.rtc import RTCConfig
+    from alohamini.learning.trajectory_execution import TrajectoryExecutor
+    from alohamini.trajectory import DenseActionPlan
+    from alohamini.trajectory_execution import ExecutionConfig, PlanCapabilities
 
     clock, client, policy, stop = setup
     policy.fps, policy.names, policy.task = 30, state_names("alohamini2pro"), "pick"
-    policy.validate_rtc.return_value = 20
-    policy.predict_action_chunk.side_effect = lambda snap, **_: torch.tensor([
+    policy.plan_capabilities = PlanCapabilities()
+    policy.predict_plan.side_effect = lambda snap, **_: DenseActionPlan(tuple(policy.names), [
         [snap.payload[name] for name in policy.names] for _ in range(20)
-    ])
+    ], 1/30)
 
     class ImmediateExecutor(ManualExecutor):
         def submit(self, fn, *args):
@@ -82,13 +82,13 @@ def test_rtc_episode_waits_for_first_plan_and_stops_before_worker_cleanup(setup)
             self.complete()
             return result
 
-    rtc = RTCPolicy(
-        policy, RTCConfig(enabled=True, replan_steps=3, inference_delay_steps=1),
+    rtc = TrajectoryExecutor(
+        policy, ExecutionConfig(enabled=True, replan_interval_s=0.1),
         clock=lambda: clock.now, executor=ImmediateExecutor(),
     )
     count = run_evaluation(client, rtc, "alohamini2pro", duration_s=0.3)
     assert count >= 5 and count == len(client.sent)
-    assert policy.predict_action_chunk.call_count >= 2
+    assert policy.predict_plan.call_count >= 2
     assert rtc.plan is None  # Episode exit invalidates the old timeline.
     stop.assert_called_once()
     rtc.close()

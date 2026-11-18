@@ -21,6 +21,13 @@ from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
 
+if __name__ == "__main__":
+    from alohamini.environment import runtime_environment
+
+    # Report drift before importing the optional learning frameworks.
+    with runtime_environment(["train", *sys.argv[1:]]):
+        pass
+
 import numpy as np
 import torch
 from accelerate import __version__ as accelerate_version
@@ -46,8 +53,10 @@ from alohamini.learning.logging import (
 from alohamini.learning.metrics import MetricAccumulator, format_metrics
 from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optimization
 from alohamini.learning.policy import NativePolicy, make_policy, make_processor
-from alohamini.learning.precision import validate_trainable_dtype
+from alohamini.learning.precision import resolve_tf32, tf32_context, validate_trainable_dtype
 from alohamini.learning.statistics import sample_arguments, training_statistics, write_statistics
+from alohamini.learning.streaming import StreamingBatchSampler
+from alohamini.learning.train_config import resolve_dataset_options
 from alohamini.learning.training_state import (
     load_training_checkpoint,
     restore_rng,
@@ -72,6 +81,7 @@ def launch_training(settings):
     """Launch a detached local trainer with exclusive config/log/PID files."""
     validate_ema_setup(settings)
     validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
+    resolve_tf32(settings)
     paths = WorkspacePaths()
     processes = settings.get("num_processes", 1)
     validate_local_workers(processes, settings.get("device", "cuda"))
@@ -168,9 +178,7 @@ def offline_evaluate(
         policy.reset()
         with torch.inference_mode(), policy.inference_context():
             prepared = policy.processor(policy.fixed_input(batch))
-            return policy.execution_action(
-                policy.model.predict_action_chunk(prepared), context=prepared.get("_action_context")
-            ).cpu()
+            return policy.predict_prepared_actions(prepared).cpu()
 
     device = next(policy.model.parameters()).device
     if loader is None:
@@ -276,10 +284,12 @@ def update_policy(model, batch, optimizer, grad_clip_norm, *, mixed_precision="n
 
 def train(settings):
     settings = resolve_pretrained(settings)
-    validate_trainable_dtype(settings.setdefault("trainable_dtype", "preserve"))
+    validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
     components = algorithm(settings.get("policy", "act"))
     settings = components.apply_preset(settings)
-    settings = resolve_data_pipeline(settings)
+    validate_trainable_dtype(settings.setdefault("trainable_dtype", "preserve"))
+    settings["tf32"] = resolve_tf32(settings)
+    settings = resolve_dataset_options(resolve_data_pipeline(settings))
     validate_ema_setup(settings)
     if settings.get("deterministic_algorithms"):
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -290,7 +300,7 @@ def train(settings):
     try:
         if settings.get("num_processes", execution.local_world_size) != execution.local_world_size:
             raise ValueError("Use --background or torchrun to launch the requested num_processes")
-        with training_logging(execution.main, training=True):
+        with training_logging(execution.main, training=True), tf32_context(settings["tf32"]):
             logger.info("%s", pformat(settings))
             logger.info("Logs will be saved locally.")
             return _train(settings, execution)
@@ -325,7 +335,6 @@ def _train(settings, execution):
     deterministic = cfg.get("cudnn_deterministic", False)
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
-    torch.backends.cuda.matmul.allow_tf32 = not deterministic
     torch.use_deterministic_algorithms(cfg.get("deterministic_algorithms", False))
     save_freq = cfg.get("save_freq", 20_000)
     keep = cfg.get("keep_last_checkpoints")
@@ -502,6 +511,18 @@ def _train(settings, execution):
             stats = artifact["stats"]
             if execution.main:
                 write_statistics(output / "statistics.json", artifact)
+            asset_preparation = getattr(components, "prepare_training_assets", None)
+            if asset_preparation is not None:
+                options = execution.main_process_call(
+                    lambda: asset_preparation(
+                        options, samples, stats, validation_samples=validation
+                    ),
+                    label="Preparing policy assets",
+                    timeout_s=preparation_timeout,
+                )
+                # Resolve assets once; keep exact paths, fitting reports and protocol on resume.
+                policy_config = components.config_class(**options)
+                cfg["model"] = asdict(policy_config)
             with log_stage("Creating policy and processors"):
                 model = make_policy(
                     cfg.get("policy", "act"), options, stats, trainable_dtype=trainable_dtype
@@ -561,18 +582,34 @@ def _train(settings, execution):
             consumed = resume_state.get("consumed_batches", start_step)
             if execution.scaler is not None and resume_state.get("scaler"):
                 execution.scaler.load_state_dict(resume_state["scaler"])
-        sampler = RankBatchSampler(
-            len(samples),
+        sampler_type = StreamingBatchSampler if cfg["dataset_streaming"] else RankBatchSampler
+        if cfg["dataset_streaming"]:
+            logger.info(
+                "Streaming local samples: episode_pool_size=%d; bounded episode mixing; "
+                "ordered validation retained",
+                cfg["streaming_episode_pool_size"],
+            )
+        sampler = sampler_type(
+            samples if cfg["dataset_streaming"] else len(samples),
             batch_size,
             seed,
             execution.rank,
             execution.world_size,
             cfg.get("drop_last", False),
             consumed,
+            **(
+                {"pool_size": cfg["streaming_episode_pool_size"]}
+                if cfg["dataset_streaming"]
+                else {}
+            ),
         )
         if resume_state:
             logger.debug("Resuming at step %d; consumed microbatches=%d", start_step, consumed)
         metric_specs = components.metric_specs(model.config)
+        counter_factory = getattr(components, "make_loss_counter", None)
+        loss_counts = (
+            counter_factory(model.config, stats) if counter_factory else components.loss_counts
+        )
         progress = TrainingProgress(
             execution,
             frames=len(samples),
@@ -617,7 +654,7 @@ def _train(settings, execution):
                 generator=torch.Generator().manual_seed(seed),
             )
             if eval_steps:
-                eval_totals = loss_denominators(validation, components.loss_counts)
+                eval_totals = loss_denominators(validation, loss_counts)
                 logger.debug("Validation loss reduction: algorithm denominators %s", eval_totals)
         with log_stage("Preparing execution backend"):
             wrapped, optimizer = execution.prepare(model, optimizer)
@@ -662,9 +699,16 @@ def _train(settings, execution):
             "distributed_backend": cfg["distributed_backend"],
             "accelerate": accelerate_version,
             "mixed_precision": precision,
+            "tf32": cfg["tf32"],
             "trainable_dtype": trainable_dtype,
             "world_size": execution.world_size,
             "gradient_accumulation_steps": accumulation,
+            "dataset_streaming": cfg["dataset_streaming"],
+            "streaming_episode_pool_size": (
+                cfg["streaming_episode_pool_size"] if cfg["dataset_streaming"] else None
+            ),
+            "dataset_cache_size_mb": cfg["dataset_cache_size_mb"],
+            "dataset_cache_block_rows": cfg["dataset_cache_block_rows"],
             "optimizer": cfg["optimizer"],
             "scheduler": cfg["scheduler"],
             "paper_preset": cfg.get("paper_preset"),
@@ -725,7 +769,7 @@ def _train(settings, execution):
                     optimizer,
                     cfg["optimizer"]["grad_clip_norm"],
                     processor,
-                    reduction=components.loss_counts,
+                    reduction=loss_counts,
                     metric_specs=metric_specs,
                     ema=ema,
                 )
@@ -794,7 +838,7 @@ def _train(settings, execution):
                                 model,
                                 processor,
                                 eval_loader,
-                                components.loss_counts,
+                                loss_counts,
                                 eval_totals,
                                 device=device,
                                 log_freq=eval_log_freq,
@@ -882,11 +926,17 @@ def _train(settings, execution):
                 model.reset()
                 with torch.no_grad(), execution.autocast():
                     prepared = processor(batch)
-                    return scale_action(
-                        processor.action(
+                    decode = getattr(components, "predict_action_samples", None)
+                    actions = (
+                        decode(model, processor, prepared, fps=validation.info["fps"])
+                        if decode is not None
+                        else processor.action(
                             model.predict_action_chunk(prepared),
                             context=prepared.get("_action_context"),
-                        ),
+                        )
+                    )
+                    return scale_action(
+                        actions,
                         getattr(model.config, "inference_action_scale_dims", ()),
                         getattr(model.config, "inference_action_scale", 1.0),
                     ).cpu()
@@ -934,15 +984,17 @@ def _train(settings, execution):
 
 
 def main():
+    from alohamini.environment import runtime_environment
     from alohamini.learning.train_config import parse_training_args
 
-    cfg, background = parse_training_args()
-    if background:
-        job = launch_training(cfg)
-        print(json.dumps(job, ensure_ascii=False, indent=2))
-        print("tail -f", shlex.quote(job["log"]))
-    else:
-        train(cfg)
+    with runtime_environment(["train", *sys.argv[1:]]):
+        cfg, background = parse_training_args()
+        if background:
+            job = launch_training(cfg)
+            print(json.dumps(job, ensure_ascii=False, indent=2))
+            print("tail -f", shlex.quote(job["log"]))
+        else:
+            train(cfg)
 
 
 if __name__ == "__main__":

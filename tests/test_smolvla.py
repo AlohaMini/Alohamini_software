@@ -122,8 +122,8 @@ def batch():
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_rtc_real_smolvla_cache_and_vjp(tiny_assets, device):
     from alohamini.policies.rtc import RTCGuidance
+    from alohamini.policies.rtc import RTCGuidanceConfig as RTCConfig
     from alohamini.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-    from alohamini.rtc import RTCConfig
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA unavailable")
@@ -133,7 +133,7 @@ def test_rtc_real_smolvla_cache_and_vjp(tiny_assets, device):
     with torch.autocast(device, dtype=torch.bfloat16, enabled=device == "cuda"):
         baseline = model.predict_action_chunk(inputs, noise=noise)
         guided = model.predict_action_chunk(
-            inputs, noise=noise, rtc_processor=RTCGuidance(RTCConfig(enabled=True)),
+            inputs, noise=noise, rtc_processor=RTCGuidance(RTCConfig()),
             prev_chunk_left_over=baseline[:, :2] + 0.1, inference_delay=1,
         )
     assert guided.shape == baseline.shape and guided.isfinite().all()
@@ -142,7 +142,9 @@ def test_rtc_real_smolvla_cache_and_vjp(tiny_assets, device):
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_real_transformer_forward_backward_queue_and_official_parity(tiny_assets, device):
+def test_real_transformer_forward_backward_queue_and_official_parity(
+    tiny_assets, device, monkeypatch
+):
     from alohamini.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
     torch.set_num_threads(1)
@@ -166,10 +168,25 @@ def test_real_transformer_forward_backward_queue_and_official_parity(tiny_assets
 
     # Reference is optional in native-only environments, never a runtime dependency.
     pytest.importorskip("lerobot")
+    # LeRobot's reference uses the old crop(target_length) contract. Transformers
+    # 5.21 changed it to crop(negative_tokens_to_remove); preserve reference math.
+    import inspect
+
     from lerobot.configs import FeatureType
     from lerobot.configs import PolicyFeature as OfficialFeature
     from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig as OfficialConfig
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy as OfficialPolicy
+    from transformers.cache_utils import DynamicCache
+
+    crop = DynamicCache.crop
+    if "tokens_to_remove" in inspect.signature(crop).parameters:
+        def crop_to_length(cache, length):
+            for layer in cache.layers:
+                extra = layer.get_seq_length() - length
+                if extra > 0:
+                    layer.crop(-extra)
+
+        monkeypatch.setattr(DynamicCache, "crop", crop_to_length)
 
     opts = options(tiny_assets)
     for field in ("input_features", "output_features"):

@@ -41,19 +41,17 @@ def fit_statistics(samples, config):
             samples.info, state_names=samples.selection.feature["names"]
         )
     trackers = {key: ExactQuantileStats() for key in ("observation.state", "action")}
-    anchors = samples.sample_indices
-    action_indices = sorted(samples._used_rows["action"])
-    states = np.asarray(
-        [samples.selection.frame(samples.rows[i]) for i in anchors], dtype=np.float64
-    )
-    actions = np.asarray([samples.rows[i]["action"] for i in action_indices], dtype=np.float64)
-    if fields.geometry:
-        states = fields.geometry.absolute(states)
-        actions = fields.geometry.absolute(actions)
-    action_rows = dict(zip(action_indices, actions, strict=True))
-    for state, anchor in zip(states, anchors, strict=True):
+    for anchor in samples.sample_indices:
+        state = np.asarray(samples.selection.frame(samples.rows[anchor]), dtype=np.float64)
         indices, _ = samples._get_query_indices(anchor)
-        targets = np.asarray([action_rows[i] for i in indices["action"]])
+        targets = np.asarray(
+            [samples.rows[i]["action"] for i in indices["action"]], dtype=np.float64
+        )
+        if fields.geometry:
+            # Keep the original 2D batch geometry API, with only this anchor
+            # and its action window resident instead of every recorded row.
+            state = fields.geometry.absolute(state[None])[0]
+            targets = fields.geometry.absolute(targets)
         if fields.relative:
             targets = fields.relative.encode(state, targets)
         trackers["observation.state"].update(state[None])

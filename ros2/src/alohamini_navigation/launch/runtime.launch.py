@@ -17,7 +17,6 @@ def _nodes(context):
         use_imu=value("use_imu").lower() == "true",
         base_only=value("base_only").lower() == "true",
         sensor_profile=value("sensor_profile"),
-        arm_mapping_dir=value("arm_mapping_dir"),
         state_timestamp_mode=value("state_timestamp_mode"),
         observation_port=value("observation_port"),
         command_port=value("command_port"),

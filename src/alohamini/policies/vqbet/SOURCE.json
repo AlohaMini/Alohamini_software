@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/jayLEE0301/vq_bet_official",
+  "revision": "09d4851288ca5deaaa1ab367a208e520f8ee9a84",
+  "paper": "https://arxiv.org/abs/2403.03181",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/vqbet"
+  },
+  "adaptations": [
+    "Author PushT GPT geometry: 6 layers, 6 heads, width 120; not port defaults 8/8/512",
+    "Author visual mean/std retained including the released 0.255 blue-channel std",
+    "Native multiview/state token projection and spatial-softmax RGB encoder adapted from the LeRobot image variant",
+    "Author separately pretrained RVQ becomes an explicit in-run stage; successful-step count persists",
+    "Named normalized robot commands replace author task-specific raw units and act_scale=500",
+    "Native dataset/trainer/checkpoints, no LeRobot runtime"
+  ],
+  "pretrained_weights_included": false
+}

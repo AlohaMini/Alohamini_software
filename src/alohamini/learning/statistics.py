@@ -60,6 +60,9 @@ def sample_arguments(cfg, components, options):
         camera_workers=cfg.get("camera_workers", 0),
         return_uint8=cfg.get("return_uint8", False),
         allow_unannotated=cfg.get("allow_unannotated", False),
+        cache_size_mb=cfg.get("dataset_cache_size_mb", 64),
+        cache_block_rows=cfg.get("dataset_cache_block_rows", 128),
+        cache_dir=cfg.get("dataset_cache_dir"),
     )
     if active(cfg.get("data", {})):
         args["exclude_fixed_state"] = False
@@ -86,6 +89,27 @@ def _canonical(value):
     return json.loads(json.dumps(value, sort_keys=True, allow_nan=False))
 
 
+def _sample_indices_digest(indices):
+    """Hash the original compact JSON list representation without materializing it."""
+    digest = hashlib.sha256(b"[")
+    buffer = []
+    written = False
+    for index in indices:
+        buffer.append(str(index))
+        if len(buffer) == 1024:
+            if written:
+                digest.update(b",")
+            digest.update(",".join(buffer).encode())
+            buffer.clear()
+            written = True
+    if buffer:
+        if written:
+            digest.update(b",")
+        digest.update(",".join(buffer).encode())
+    digest.update(b"]")
+    return digest.hexdigest()
+
+
 def _contract(components, samples, options, kind):
     model = asdict(components.config_class(**options))
     # Device and execution cadence do not change the fitted training population.
@@ -104,9 +128,7 @@ def _contract(components, samples, options, kind):
         windows=samples.delta_indices,
         sample_boundary="episode",
         sample_filter=samples.sample_filter,
-        sample_indices_sha256=hashlib.sha256(
-            json.dumps(samples.sample_indices, separators=(",", ":")).encode()
-        ).hexdigest(),
+        sample_indices_sha256=_sample_indices_digest(samples.sample_indices),
     )
     if (
         getattr(samples, "image_resize_mode", "stretch") != "stretch"

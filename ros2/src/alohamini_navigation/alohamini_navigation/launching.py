@@ -1,13 +1,19 @@
 """Compose ROS navigation around one existing native Host client."""
 
+import shutil
+import tempfile
 from pathlib import Path
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, RegisterEventHandler
+from launch.event_handlers import OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 from alohamini.model import get_robot_model
+
+from .parameters import navigation_parameters
 
 
 def include(package, filename, **arguments):
@@ -19,6 +25,21 @@ def include(package, filename, **arguments):
 
 def model_config(model, name):
     return str(get_robot_model(model).asset_path(f"config/navigation/{name}.yaml"))
+
+
+def configured_file(path, kind, overrides=None):
+    settings = navigation_parameters(yaml.safe_load(Path(path).read_text()), kind)
+    if overrides:
+        settings["slam_toolbox"]["ros__parameters"].update(overrides)
+    directory = Path(tempfile.mkdtemp(prefix="alohamini-navigation-"))
+    output = directory / f"{kind}.yaml"
+    output.write_text(yaml.safe_dump(settings, sort_keys=False))
+
+    def cleanup(_event, _context):
+        shutil.rmtree(directory, ignore_errors=True)
+        return []
+
+    return str(output), RegisterEventHandler(OnShutdown(on_shutdown=cleanup))
 
 
 def ekf_parameters(use_imu, use_sim_time=False):
@@ -61,7 +82,6 @@ def runtime_defaults():
         use_imu="true",
         base_only="true",
         sensor_profile="",
-        arm_mapping_dir="",
         state_timestamp_mode="host_wall",
         observation_port="5556",
         command_port="5555",
@@ -84,7 +104,6 @@ def runtime(
     use_imu=True,
     sensor_profile="",
     base_only=True,
-    arm_mapping_dir="",
     state_timestamp_mode="host_wall",
     observation_port="5556",
     command_port="5555",
@@ -99,6 +118,9 @@ def runtime(
 ):
     if runtime_mode not in ("hardware", "simulation", "replay"):
         raise ValueError("runtime_mode must be hardware, simulation or replay")
+    collision_file, cleanup_collision = configured_file(
+        collision_params or model_config(model, "collision"), "collision"
+    )
     if runtime_mode != "hardware" and (not use_sim_time or start_sensors or enable_cameras):
         raise ValueError("Offline modes require sim time and forbid hardware sensors/cameras")
     if runtime_mode == "hardware" and use_sim_time:
@@ -122,13 +144,13 @@ def runtime(
                 host=host,
                 robot_model=model,
                 base_only=str(base_only).lower(),
-                arm_mapping_dir=arm_mapping_dir,
                 state_timestamp_mode=state_timestamp_mode,
                 cmd_vel_topic="/cmd_vel_safe",
                 observation_port=observation_port,
                 command_port=command_port,
             )
         )
+    actions.append(cleanup_collision)
     actions.extend(
         [
             Node(
@@ -148,7 +170,7 @@ def runtime(
                 executable="collision_monitor",
                 name="collision_monitor",
                 parameters=[
-                    collision_params or model_config(model, "collision"),
+                    collision_file,
                     {"use_sim_time": use_sim_time},
                 ],
                 output="screen",

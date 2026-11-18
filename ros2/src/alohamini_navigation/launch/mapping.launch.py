@@ -1,8 +1,9 @@
 """One runtime plus asynchronous slam_toolbox; saving never owns motor hardware."""
 
+import os
 from pathlib import Path
 
-from alohamini_navigation.launching import include, model_config, runtime_defaults
+from alohamini_navigation.launching import configured_file, include, model_config, runtime_defaults
 from alohamini_navigation.maps import validate_map_revision
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -22,7 +23,11 @@ def _nodes(context):
             raise ValueError("pose_graph must name an existing .posegraph/.data basename")
         validate_map_revision(path.parent / "map.yaml", value("robot_model"))
         params.update(map_file_name=str(path), map_start_at_dock=True)
+    slam_params, cleanup = configured_file(
+        value("slam_params") or model_config(value("robot_model"), "slam"), "slam", params
+    )
     return [
+        cleanup,
         include("alohamini_navigation", "runtime.launch.py"),
         Node(
             package="alohamini_navigation",
@@ -31,12 +36,12 @@ def _nodes(context):
             parameters=[{"use_sim_time": params["use_sim_time"]}],
             output="screen",
         ),
-        Node(
-            package="slam_toolbox",
-            executable="async_slam_toolbox_node",
-            name="slam_toolbox",
-            parameters=[value("slam_params") or model_config(value("robot_model"), "slam"), params],
-            output="screen",
+        include(
+            "slam_toolbox",
+            "online_async_launch.py",
+            slam_params_file=slam_params,
+            use_sim_time=value("use_sim_time"),
+            use_lifecycle_manager="true" if os.environ.get("ROS_DISTRO") == "jazzy" else "false",
         ),
         Node(
             package="nav2_map_server",
@@ -55,7 +60,8 @@ def _nodes(context):
             parameters=[
                 {
                     "autostart": True,
-                    "node_names": ["map_saver"],
+                    "node_names": ["map_saver"]
+                    + (["slam_toolbox"] if os.environ.get("ROS_DISTRO") == "jazzy" else []),
                     "use_sim_time": params["use_sim_time"],
                 }
             ],

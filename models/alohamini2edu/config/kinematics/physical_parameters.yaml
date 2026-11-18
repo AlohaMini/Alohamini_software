@@ -1,56 +1,49 @@
 schema_version: 1
-source: measured_assembly_totals_with_estimated_link_distribution
-calibrated: assembly_mass_totals_only
-
-measured_assembly_masses_kg:
+source: cad_mass_overrides_and_nominal_wheel_inertia_split
+calibrated: false
+estimated_assembly_masses_kg:
   whole_robot: 16.0
   lifted_subtree_with_two_arms_and_t_carriage: 5.1
   left_arm_assembly: 2.0
   right_arm_assembly: 2.0
-  # Derived constraints, not independently weighed:
   fixed_non_lifted_subtree_derived: 10.9
   t_carriage_without_arms_derived: 1.1
-  source: physical_scale_measurement_reported_2026-08-06
-  note: assembly totals are measured; individual link values remain engineering estimates
-
+  source: engineering_estimates
+  note: Reference values only; do not rescale independently verified CAD mass properties
+    to these totals.
 mass_distribution_kg:
-  fixed_non_lifted_subtree:
-    base_link: 9.6
-    wheel1: 0.3
-    wheel2: 0.3
-    wheel3: 0.3
-    back_camera: 0.2
-    front_camera: 0.2
-    total: 10.9
-  lifted_carriage_without_arms:
-    vertical_link: 0.9
-    chest_camera: 0.2
-    total: 1.1
-  arms:
-    left_total_including_wrist_camera: 2.0
-    right_total_including_wrist_camera: 2.0
-    wrist_camera_each_estimate: 0.2
-    non_camera_links_each_total: 1.8
-  method:
-    chassis: current CAD mass distribution retained and constrained to the measured fixed-subtree total
-    arm: original CAD relative ratios for non-camera links, scaled to 1.8 kg per arm
-    inertia: original CAD tensor scaled by new_mass / original_mass
-    center_of_mass: original CAD inertial origin retained
-
+  base_link: 5.60562
+  vertical_link: 1.1246500000000001
+  wheel1: 0.3
+  wheel2: 0.3
+  wheel3: 0.3
+  left_Base: 0.557515311983734
+  left_Rotation_Pitch: 0.2713066873729841
+  left_Upper_Arm: 0.33534
+  left_Lower_Arm: 0.23725331262701596
+  left_Wrist_Pitch_Roll: 0.03222937603253181
+  left_wrist_yaw: 0.2256206239674682
+  left_Fixed_Jaw: 0.16937
+  left_Moving_Jaw: 0.0209846880162659
+  right_Base: 0.557515311983734
+  right_Rotation_Pitch: 0.2713066873729841
+  right_Upper_Arm: 0.33534
+  right_Lower_Arm: 0.23725331262701596
+  right_Wrist_Pitch_Roll: 0.03222937603253181
+  right_wrist_yaw: 0.2256206239674682
+  right_Fixed_Jaw: 0.16937
+  right_Moving_Jaw: 0.0209846880162659
+  known_subtotal: 11.32951
 mass_policy:
   source: urdf
   override_all_links: false
-
 known_issues:
-  - Individual link masses are estimated because only assembly totals have been weighed.
-  - Centers of mass still use the original CAD-export inertial origins.
-  - Inertia tensors are mass-scaled CAD estimates, not identified from physical experiments.
-  - Wrist camera mass is provisionally estimated at 0.2 kg including its mount and should be weighed later.
-
+- Stationary column electronics, battery and cabling remain outside the reported mass
+  subtotal.
+- Wheel mass uses the existing 0.3 kg engineering reference and a uniform collision-cylinder
+  inertia; fixed combined mass, COM and tensor are preserved.
+- Motor dynamics, omni-roller contact, friction and delay require physical identification.
 collision:
-  visual_meshes_may_be_used_as_collision: true
-  simplified_collision_complete: false
-  arm_collision_profile: shared_symmetric_vhacd
-  arm_collision_mesh_origin_matches_visual: true
-  wrist_camera_envelope: vhacd
-  calibrated: false
+  profile: shared_structural_contact_geometry
+  complete_link_coverage: true
+  contact_calibrated: false

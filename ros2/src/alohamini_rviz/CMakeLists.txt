@@ -21,6 +21,11 @@ if(BUILD_TESTING)
     SKIP_LINKING_MAIN_LIBRARIES TIMEOUT 10 ENV QT_QPA_PLATFORM=offscreen)
   target_link_libraries(test_image_shutdown ${PROJECT_NAME})
   ament_target_dependencies(test_image_shutdown rviz_default_plugins)
+  # Humble gtest sources need this standard header with recent compilers.
+  if(TARGET gtest)
+    target_compile_options(gtest PRIVATE -include cstdint)
+  endif()
+
 endif()
 
 ament_package()

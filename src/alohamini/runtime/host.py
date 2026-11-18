@@ -10,6 +10,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import asdict
 
 from alohamini.calibration.servo import MotorCalibration
@@ -121,6 +122,7 @@ class NativeHost:
         state_port: int = 5556,
         camera_port: int = 5557,
         motor_calibrations: Mapping[str, MotorCalibration] | None = None,
+        reference_calibration: Mapping | None = None,
     ) -> None:
         if not isinstance(model, RobotModel):
             raise TypeError("Expected RobotModel")
@@ -159,8 +161,19 @@ class NativeHost:
         self.model = model
         self._motor_buses = dict(devices)
         self._keys = command_target_keys(model.model_id)
+        insets = {}
+        if reference_calibration is not None:
+            from alohamini.model.joint_spec import ModelJointSpecification
+
+            spec = ModelJointSpecification.from_model(model)
+            if reference_calibration.get("specification_sha256") != spec.signature:
+                raise ValueError("Reference calibration differs from the model joint specification")
+            insets = {
+                row.host_field.removesuffix(".pos"): row.command_inset
+                for row in spec.joints.values() if row.unit == "rad"
+            }
         self.control = RobotController(
-            ArmController(devices, joints),
+            ArmController(devices, joints, command_insets_rad=insets),
             BaseLiftController(
                 devices,
                 wheels=tuple(by_name[f"base_{side}_wheel"] for side in ("left", "back", "right")),
@@ -267,6 +280,8 @@ class NativeHost:
                     **asdict(units),
                     "homing_offset": calibration.homing_offset,
                 }
+        if reference_calibration is not None:
+            self._metadata["reference_calibration"] = deepcopy(dict(reference_calibration))
         for name, profile in profiles.items():
             self._metadata["motors"][name]["motion_profile"] = asdict(profile)
         self._software = dict(software_identity())

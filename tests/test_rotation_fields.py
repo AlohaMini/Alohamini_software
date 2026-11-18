@@ -195,6 +195,17 @@ def test_vla_tool_6d_training_statistics_checkpoint_and_physical_decode(
     np.testing.assert_allclose(result.numpy(), samples[0]["_recorded_action"].numpy(), atol=2e-3)
     raw = {**source[0], "_action_context": samples[0]["_action_context"]}
     np.testing.assert_allclose(loaded.predict(raw).numpy(), result.numpy(), atol=1e-6)
+    reference_batch = {
+        key: value[:1] if isinstance(value, torch.Tensor) else value
+        for key, value in prepared.items()
+    }
+    plan = loaded._plan_from_batch(reference_batch, tcp_reference=True)
+    assert plan.kind == "tcp"
+    np.testing.assert_allclose(
+        plan.actions,
+        loaded.field_transform.geometry.absolute(samples[0]["_recorded_action"].numpy()),
+        atol=2e-3,
+    )
 
 
 @pytest.mark.parametrize(

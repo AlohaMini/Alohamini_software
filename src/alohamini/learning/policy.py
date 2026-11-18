@@ -1,7 +1,7 @@
 """Local policy checkpoints and the adapter to the shared protected evaluator."""
 
 from collections import deque
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from hashlib import sha256
@@ -17,7 +17,12 @@ from alohamini.datasets.record import StateSelection, motor_feedback_frame, stat
 from alohamini.learning.auxiliary import auxiliary_features, snapshot_auxiliary
 from alohamini.learning.checkpoint import read_checkpoint, write_checkpoint_metadata
 from alohamini.learning.data_fields import FieldProcessor, active
-from alohamini.learning.precision import apply_trainable_dtype, validate_trainable_dtype
+from alohamini.learning.loading import collate_samples
+from alohamini.learning.precision import (
+    apply_trainable_dtype,
+    tf32_context,
+    validate_trainable_dtype,
+)
 from alohamini.learning.processor import image_tensor, scale_action
 from alohamini.policies.registry import algorithm
 
@@ -72,6 +77,12 @@ def save_checkpoint(path, model, stats, samples, *, training, model_state=None):
     from alohamini.learning.fixed import action_summary
 
     manifest["fixed_state_excluded"] = getattr(samples, "fixed_state_excluded", True)
+    if getattr(samples, "annotation_context", False) or getattr(samples, "annotation_fields", ()):
+        manifest["annotations"] = {
+            "fields": list(samples.annotation_fields),
+            "time_basis": "recorded_timestamp",
+            "identity": ["episode_index", "frame_index"],
+        }
     summary = action_summary(getattr(samples, "source", samples))
     if summary is not None:
         manifest["physical_action_summary"] = summary
@@ -118,6 +129,8 @@ class NativePolicy:
         robot_model=None,
         offline=False,
         goal_images=None,
+        time_scale=None,
+        language_replan_interval_s=None,
     ):
         if calibration_mode not in ("strict", "normalized", "legacy_normalized"):
             raise ValueError("calibration_mode must be strict, normalized or legacy_normalized")
@@ -174,6 +187,13 @@ class NativePolicy:
         ):
             raise ValueError("Checkpoint state names/units mismatch")
         self.algorithm = algorithm(manifest["kind"])
+        self._language_controller = None
+        if language_replan_interval_s is not None:
+            from alohamini.learning.language_control import LanguageController
+
+            if "subtask" not in getattr(self.algorithm, "language_query_kinds", ()):
+                raise ValueError("This policy does not declare subtask generation support")
+            self._language_controller = LanguageController(language_replan_interval_s)
         self.field_transform = (
             FieldTransforms(manifest["data_fields"]) if manifest.get("data_fields") else None
         )
@@ -183,6 +203,10 @@ class NativePolicy:
         options = self.algorithm.checkpoint_options(
             path, manifest["config"], device, n_action_steps, temporal_ensemble_coeff
         )
+        if time_scale is not None:
+            if "time_scale" not in options:
+                raise ValueError("This policy does not declare an execution time scale")
+            options["time_scale"] = time_scale
         self.model = make_policy(
             manifest["kind"],
             options,
@@ -236,6 +260,10 @@ class NativePolicy:
         else:
             configure(self, fixed_dimensions, fixed_dataset, current=fixed_current)
         self.fixed_deployment["calibration_mode"] = calibration_mode
+        if self._language_controller is not None:
+            self.fixed_deployment["language_control"] = {
+                "replan_interval_s": self._language_controller.interval_s,
+            }
         self.reset()
 
         if goal_images is not None:
@@ -259,12 +287,25 @@ class NativePolicy:
         """Bind once before execution; later changes always require strict matching."""
         if getattr(self, "offline", False):
             raise ValueError("Offline policy cannot bind to a robot")
-        if self.calibration_mode == "strict" or self._robot_bound:
+        if self._robot_bound:
             self._check_calibration(snapshot)
             return None
-        from alohamini.learning.calibration import legacy_normalized_binding, normalized_transfer
+        from alohamini.learning.calibration import (
+            legacy_normalized_binding,
+            normalized_transfer,
+            reference_binding,
+        )
 
-        if self.calibration_mode == "legacy_normalized":
+        shared_reference = self.calibration_mode == "strict" and (
+            self.source.get("robot_metadata", {}).get("reference_calibration") is not None
+        )
+        if self.calibration_mode == "strict" and not shared_reference:
+            self._check_calibration(snapshot)
+            self._robot_bound = True
+            return None
+        if shared_reference:
+            metadata, report = reference_binding(self.source["robot_metadata"], snapshot)
+        elif self.calibration_mode == "legacy_normalized":
             if self.selection and self.selection.source_names != state_names(snapshot.robot_model):
                 raise ValueError("Legacy state names/order differ from the declared Host model")
             metadata, report = legacy_normalized_binding(
@@ -272,13 +313,15 @@ class NativePolicy:
             )
         else:
             metadata, report = normalized_transfer(self.source["robot_metadata"], snapshot)
+        validation_metadata = self.source["robot_metadata"] if shared_reference else metadata
         if getattr(self, "field_transform", None) is not None:
             self.field_transform.validate_source(
-                {**self.source, "robot_metadata": metadata}, self.manifest["state_feature"]
+                {**self.source, "robot_metadata": validation_metadata},
+                self.manifest["state_feature"],
             )
         validate_binding = getattr(getattr(self, "algorithm", None), "validate_robot_binding", None)
         if validate_binding is not None:
-            validate_binding(self.config, self.source, metadata)
+            validate_binding(self.config, self.source, validation_metadata)
         if self.selection and self.calibration_mode != "legacy_normalized":
             live_source = {**self.source, "robot_metadata": metadata}
             self.selection = StateSelection(
@@ -305,6 +348,13 @@ class NativePolicy:
             raise ValueError(
                 "Legacy policy must bind to validated Host calibration before execution"
             )
+        if (
+            getattr(self, "calibration_mode", "strict") == "strict"
+            and not getattr(self, "_robot_bound", False)
+            and getattr(self, "source", {}).get("robot_metadata", {}).get("reference_calibration")
+            is not None
+        ):
+            self.bind_robot(snapshot)
         # Compare owned copies: in-place changes must invalidate the static check.
         context = (
             snapshot.robot_model,
@@ -315,6 +365,10 @@ class NativePolicy:
         )
         if context != getattr(self, "_calibration_context", None):
             check_calibration(self.robot_metadata, snapshot)
+            if getattr(self, "_robot_bound", False) and self.robot_metadata.get(
+                "reference_calibration"
+            ) != snapshot.payload["_robot_metadata"].get("reference_calibration"):
+                raise ValueError("Host reference calibration changed after binding")
             self._calibration_context = deepcopy(context)
 
     def bind_fixed_current(self, snapshot, client_id):
@@ -331,6 +385,9 @@ class NativePolicy:
         self.model.reset()
         self._observation_history = None
         self._execution_actions = deque()
+        self._synchronous_plan = None
+        if getattr(self, "_language_controller", None) is not None:
+            self._language_controller.reset()
 
     def refresh_latent(self):
         """Notify AM-ACT of a task phase boundary before its next observation."""
@@ -352,6 +409,22 @@ class NativePolicy:
                 action[..., self.names.index(name)] = value
         return action
 
+    def predict_prepared_actions(self, batch):
+        """Batched physical commands for evaluation at dataset action offsets."""
+        decode = getattr(self.algorithm, "predict_action_samples", None)
+        if decode is None:
+            return self.execution_action(
+                self.model.predict_action_chunk(batch), context=batch.get("_action_context")
+            )
+        action = scale_action(
+            decode(self.model, self.processor, batch, fps=self.fps),
+            getattr(self.config, "inference_action_scale_dims", ()),
+            getattr(self.config, "inference_action_scale", 1.0),
+        )
+        for name, value in (self.fixed_dimensions or {}).get("targets", {}).items():
+            action[..., self.names.index(name)] = value
+        return action
+
     def fixed_input(self, sample):
         self._require_fixed_current()
         if self.fixed_state_references and "observation.state" in sample:
@@ -367,24 +440,34 @@ class NativePolicy:
             sample["observation.state"] = state
         return sample
 
+    @contextmanager
     def inference_context(self):
-        precision = self.manifest.get("training", {}).get("mixed_precision")
-        if precision in ("bfloat16", "float16"):
-            return torch.autocast(
+        training = self.manifest.get("training", {})
+        precision = training.get("mixed_precision")
+        amp = (
+            torch.autocast(
                 next(self.model.parameters()).device.type, dtype=getattr(torch, precision)
             )
-        return nullcontext()
+            if precision in ("bfloat16", "float16") else nullcontext()
+        )
+        with tf32_context(training["tf32"]) if "tf32" in training else nullcontext(), amp:
+            yield
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def predict(self, sample):
-        """Offline physical action chunk; sample has no batch dimension."""
+        """Offline physical action chunk; retain version counters for FSDP2 collectives."""
         batch = self.processor(
-            {
-                k: ([v] if k == "task" else v[None])
+            collate_samples([{
+                k: v
                 for k, v in self.fixed_input(sample).items()
                 if k not in ("action", "action_is_pad")
-            }
+            }])
         )
+        if getattr(self.algorithm, "predict_plan", None) is not None:
+            plan = self._plan_from_batch(batch)
+            start = max(0, plan.start_s)
+            times = np.arange(start, plan.end_s-1e-9, 1/self.fps)
+            return torch.tensor([plan.action_at(float(t)) for t in times])
         with self.inference_context():
             return (
                 self.execution_action(
@@ -394,13 +477,47 @@ class NativePolicy:
                 .cpu()
             )
 
-    def _observation_batch(self, snapshot):
+    @torch.no_grad()
+    def _query_language_batch(self, batch, *, kind, question=None, camera=None):
+        query = getattr(self.algorithm, "query_language", None)
+        if query is None or kind not in getattr(self.algorithm, "language_query_kinds", ()):
+            raise ValueError(f"This policy does not declare language query kind {kind!r}")
+        with self.inference_context():
+            results = query(
+                self.model, self.processor, batch, kind=kind, question=question, camera=camera,
+            )
+        if (
+            not isinstance(results, list) or len(results) != 1
+            or not isinstance(results[0], dict)
+            or not isinstance(results[0].get("text"), str) or not results[0]["text"].strip()
+        ):
+            raise ValueError("Language query must return one nonempty text response")
+        return results[0]
+
+    def query_language(self, observation, *, kind="subtask", question=None, camera=None):
+        """Query language or grounding without advancing action queues or planner state."""
+        if isinstance(observation, dict):
+            batch = collate_samples([{
+                key: value for key, value in self.fixed_input(observation).items()
+                if key not in ("action", "action_is_pad")
+            }])
+            if self.task is not None:
+                batch["task"] = [self.task]
+        else:
+            batch = self._observation_batch(
+                observation, history=False, preprocess=False, language_control=False,
+            )
+        return self._query_language_batch(batch, kind=kind, question=question, camera=camera)
+
+    def _observation_batch(
+        self, snapshot, *, history=True, preprocess=True, language_control=True,
+    ):
         """Prepare one live Host snapshot with the checkpoint's original input contract."""
         self._check_calibration(snapshot)
         observation = {}
         if getattr(self, "field_transform", None) is not None:
             observation["_action_context"] = torch.tensor(
-                [snapshot.payload[n] for n in self.field_transform.geometry.names],
+                [snapshot.payload[n] for n in self.field_transform.context_names],
                 dtype=torch.float32,
             )
         if self.selection:
@@ -434,7 +551,7 @@ class NativePolicy:
             snapshot_auxiliary(snapshot.payload, self.config.input_features, self.source)
         )
         batch = {k: v[None] for k, v in observation.items()}
-        history_spec = getattr(self.algorithm, "live_history_spec", None)
+        history_spec = getattr(self.algorithm, "live_history_spec", None) if history else None
         if history_spec is not None:
             from alohamini.learning.observation_history import ObservationHistory
 
@@ -445,109 +562,158 @@ class NativePolicy:
             batch = self._observation_history.append(batch, snapshot.received_s)
         if self.algorithm.include_task:
             batch["task"] = [self.task]
-        return self.processor(self.fixed_input(batch))
+        batch = self.fixed_input(batch)
+        controller = getattr(self, "_language_controller", None)
+        if language_control and controller is not None:
+            subtask, changed = controller.condition(
+                self.task, snapshot.request_started_s,
+                lambda _: self._query_language_batch(batch, kind="subtask")["text"],
+            )
+            if changed:
+                self.model.reset()
+                self._execution_actions.clear()
+                self._synchronous_plan = None
+            batch["task"] = [subtask]
+        return self.processor(batch) if preprocess else batch
 
-    def validate_rtc(self, config):
-        if self.manifest["kind"] not in ("pi05", "smolvla"):
-            raise ValueError("RTC currently supports pi05 and smolvla checkpoints")
-        horizon = (
-            self.config.network["action_horizon"]
-            if self.manifest["kind"] == "pi05" else self.config.chunk_size
+    @property
+    def tcp_reference_actions(self):
+        return (
+            isinstance(self.processor, FieldProcessor)
+            and self.processor.field_transform.action in ("tcp_absolute", "tcp_delta")
         )
-        config.validate_horizon(horizon)
-        if getattr(self.config, "inference_action_scale", 1.0) <= 0:
-            raise ValueError("RTC requires positive inference_action_scale")
-        return horizon
 
-    def predict_action_chunk(
-        self, snapshot, *, rtc=None, previous_actions=None, inference_delay=0, max_steps=None
-    ):
-        """Return absolute CPU targets; optionally trim before trajectory decoding."""
-        guided = rtc is not None and rtc.enabled
-        if guided:
-            self.validate_rtc(rtc)
-        # Prefix caches must be ordinary tensors for the later denoiser VJP.
+    @property
+    def plan_capabilities(self):
+        from alohamini.trajectory_execution import PlanCapabilities
+
+        if self.tcp_reference_actions:
+            return PlanCapabilities(kinds=("tcp",), default_replan_interval_s=0.25)
+        validate = getattr(self.algorithm, "validate_plan", None)
+        if validate is not None:
+            validate(self.config)
+        return getattr(self.algorithm, "plan_capabilities", PlanCapabilities())
+
+    def predict_plan(self, snapshot, *, prefix=None, continuity="none"):
+        """Return a named physical-time plan; model adapters own prefix guidance."""
+        from alohamini.trajectory_execution import ExecutionConfig
+
+        self.plan_capabilities.validate(ExecutionConfig(continuity=continuity))
+        guided = continuity in self.plan_capabilities.gradient_methods
         with torch.inference_mode(not guided), torch.no_grad():
-            return self._predict_action_chunk(
-                snapshot,
-                rtc=rtc if guided else None,
-                previous_actions=previous_actions,
-                inference_delay=inference_delay,
-                max_steps=max_steps,
-            )
-
-    def _predict_action_chunk(
-        self, snapshot, *, rtc, previous_actions, inference_delay, batch=None, max_steps=None
-    ):
-        if batch is None:
+            controller = getattr(self, "_language_controller", None)
+            generation = controller.generation if controller is not None else None
             batch = self._observation_batch(snapshot)
-        kwargs = {}
-        if rtc is not None:
-            from alohamini.policies.rtc import RTCGuidance
-
-            prefix = None
-            if previous_actions is not None:
-                previous = torch.as_tensor(
-                    previous_actions, dtype=torch.float32,
-                    device=next(self.model.parameters()).device,
-                )
-                if (
-                    previous.ndim != 2 or previous.shape[1] != len(self.names)
-                    or not torch.isfinite(previous).all()
-                ):
-                    raise ValueError("RTC requires finite absolute targets")
-                previous = scale_action(
-                    previous,
-                    getattr(self.config, "inference_action_scale_dims", ()),
-                    1 / getattr(self.config, "inference_action_scale", 1.0),
-                )
-                prefix = self.processor.action_prefix(
-                    previous[None], context=batch.get("_action_context")
-                )
-            kwargs = dict(
-                rtc_processor=RTCGuidance(rtc), prev_chunk_left_over=prefix,
-                inference_delay=inference_delay,
+            if controller is not None and generation != controller.generation:
+                prefix = None
+            return self._plan_from_batch(
+                batch, prefix=prefix, continuity=continuity, tcp_reference=True
             )
+
+    def _plan_from_batch(
+        self, batch, *, prefix=None, continuity="none", tcp_reference=False
+    ):
+        from alohamini.trajectory import DenseActionPlan
+
+        special = getattr(self.algorithm, "predict_plan", None)
         with self.inference_context():
-            action = self.model.predict_action_chunk(batch, **kwargs)
-            if (
-                not isinstance(action, torch.Tensor)
-                or action.ndim != 3
-                or action.shape[0] != 1
-                or action.shape[1] < 1
-                or action.shape[2] < 1
-            ):
-                raise ValueError("Policy returned invalid action chunk dimensions or values")
-            if max_steps is not None:
-                if type(max_steps) is not int or not 1 <= max_steps <= action.shape[1]:
-                    raise ValueError("Execution window must fit the predicted action chunk")
-                action = action[:, :max_steps]
-            raw_finite = torch.isfinite(action).all()
-            values = self.execution_action(action, context=batch.get("_action_context"))
-        if not isinstance(values, torch.Tensor) or values.shape != (
-            1, action.shape[1], len(self.names)
-        ):
+            if tcp_reference and self.tcp_reference_actions:
+                from alohamini.tcp_trajectory import TCPActionPlan
+
+                self._require_fixed_current()
+                if continuity != "none" or prefix is not None:
+                    raise ValueError(
+                        "TCP tracking supports sync/async without RTC prefixes"
+                    )
+                if (getattr(self.config, "inference_action_scale_dims", ())
+                        and getattr(self.config, "inference_action_scale", 1.0) != 1.0):
+                    raise ValueError(
+                        "TCP reference tracking cannot apply Host joint action scaling"
+                    )
+                actions = self.model.predict_action_chunk(batch)
+                if (not isinstance(actions, torch.Tensor) or actions.ndim != 3
+                        or actions.shape[0] != 1 or actions.shape[1] < 1
+                        or not torch.isfinite(actions).all()):
+                    raise ValueError("Policy returned invalid TCP action references")
+                references = self.processor.tcp_action(
+                    actions, context=batch.get("_action_context")
+                )
+                offset = getattr(self.algorithm, "action_offset", lambda config: 0)(self.config)
+                return TCPActionPlan(
+                    tuple(self.names), references[0, offset:].tolist(), 1 / self.fps,
+                    self.processor.field_transform.geometry.descriptor,
+                    fixed_targets=(self.fixed_dimensions or {}).get("targets", {}),
+                )
+            if special is not None:
+                return special(self, batch, prefix=prefix, continuity=continuity)
+            prepare = getattr(self.algorithm, "prediction_arguments", None)
+            kwargs = prepare(self, batch, prefix, continuity) if prepare else {}
+            if continuity != "none" and prepare is None:
+                raise ValueError("Policy has no adapter for the requested continuity method")
+            actions = self._physical_actions(batch, **kwargs)
+        offset = getattr(self.algorithm, "action_offset", lambda config: 0)(self.config)
+        return DenseActionPlan(tuple(self.names), actions[offset:].tolist(), 1/self.fps)
+
+    def _physical_actions(self, batch, *, max_steps=None, **kwargs):
+        action = self.model.predict_action_chunk(batch, **kwargs)
+        if (not isinstance(action, torch.Tensor) or action.ndim != 3 or action.shape[0] != 1
+                or action.shape[1] < 1 or action.shape[2] < 1):
+            raise ValueError("Policy returned invalid action chunk dimensions")
+        if max_steps is not None:
+            if type(max_steps) is not int or not 1 <= max_steps <= action.shape[1]:
+                raise ValueError("Execution window must fit the predicted action chunk")
+            action = action[:, :max_steps]
+        raw_finite = torch.isfinite(action).all()
+        values = self.execution_action(action, context=batch.get("_action_context"))
+        if values.shape != (1, action.shape[1], len(self.names)):
             raise ValueError("Policy returned invalid absolute action chunk")
-        # Transfer the absolute outputs and raw validity in one operation. PI0.5
-        # pads model coordinates beyond the Host targets; validate those too
-        # without forcing an extra CUDA synchronization before the CPU copy.
         copied = torch.cat((values.reshape(-1).float(), raw_finite.reshape(1).float())).cpu()
         if copied[-1] != 1 or not torch.isfinite(copied[:-1]).all():
             raise ValueError("Policy returned invalid absolute action chunk values")
         return copied[:-1].reshape(action.shape[1], len(self.names))
 
+    def predict_action_chunk(self, snapshot, *, max_steps=None):
+        """Sample a physical plan at the checkpoint cadence for offline consumers."""
+        if getattr(self.algorithm, "predict_plan", None) is None:
+            with torch.inference_mode(), self.inference_context():
+                return self._physical_actions(
+                    self._observation_batch(snapshot), max_steps=max_steps
+                )
+        plan = self.predict_plan(snapshot)
+        count = max(1, int(np.ceil((plan.end_s-max(0, plan.start_s))*self.fps)))
+        if max_steps is not None:
+            count = min(count, max_steps)
+        start = max(0, plan.start_s)
+        return torch.tensor([plan.action_at(start+i/self.fps) for i in range(count)])
+
     def select_action(self, snapshot):
-        batch = self._observation_batch(snapshot)
+        if getattr(self.algorithm, "predict_plan", None) is not None:
+            import time
+
+            now = time.monotonic()
+            current = getattr(self, "_synchronous_plan", None)
+            if current is None or now-current[0] >= current[1].end_s:
+                origin = getattr(snapshot, "request_started_s", now)
+                if self.tcp_reference_actions:
+                    with torch.inference_mode():
+                        plan = self._plan_from_batch(self._observation_batch(snapshot))
+                else:
+                    plan = self.predict_plan(snapshot)
+                current = (origin, plan)
+                self._synchronous_plan = current
+            elapsed = time.monotonic()-current[0]
+            if elapsed < current[1].start_s:
+                return None
+            values = current[1].action_at(elapsed)
+            return dict(zip(self.names, values, strict=True))
+        batch = self._observation_batch(
+            snapshot, history=not getattr(self.algorithm, "queues_online_observations", False)
+        )
         with torch.inference_mode(), self.inference_context():
             if getattr(self.processor, "decode_before_queue", False) is True:
                 if not self._execution_actions:
-                    actions = self._predict_action_chunk(
-                        snapshot,
-                        rtc=None,
-                        previous_actions=None,
-                        inference_delay=0,
-                        batch=batch,
-                        max_steps=self.config.n_action_steps,
+                    actions = self._physical_actions(
+                        batch, max_steps=self.config.n_action_steps,
                     )
                     self._execution_actions.extend(actions.numpy())
                 values = self._execution_actions.popleft()[None]
@@ -580,6 +746,7 @@ def evaluate_robot(
     fixed_current=None,
     calibration_mode="strict",
     robot_model=None,
+    language_replan_interval_s=None,
     **kwargs,
 ):
     """Explicit real-hardware boundary; importing/loading a model never connects."""
@@ -597,6 +764,7 @@ def evaluate_robot(
         fixed_current=fixed_current,
         calibration_mode=calibration_mode,
         robot_model=robot_model,
+        language_replan_interval_s=language_replan_interval_s,
         task=kwargs.get("task"),
     )
     return evaluate(

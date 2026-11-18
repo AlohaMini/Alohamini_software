@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alohamini-robotwin"
+version = "0.1.0.dev0"
+description = "RoboTwin robot interface using shared AlohaMini assets"
+requires-python = ">=3.10"
+dependencies = [
+    "alohamini-platform[simulation]", "sapien==3.0.0b1", "numpy>=1.26,<2", "mplib==0.2.1",
+    "torch>=2.4,<3", "toppra>=0.6.3,<0.7", "open3d>=0.18,<0.20", "trimesh>=4.4,<5",
+    "h5py>=3.11,<4", "imageio>=2.34,<3", "pyyaml>=6,<7", "packaging>=24",
+]
+
+[project.scripts]
+alohamini-robotwin = "alohamini_robotwin.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["alohamini_robotwin*"]

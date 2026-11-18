@@ -14,6 +14,7 @@ from .semantic import XiaomiFields
 
 
 class XiaomiAlgorithm(ChunkAlgorithm):
+    asset_fields = ("assets_path",)
     config_class = XiaomiConfig
     supports_field_transforms = True
     fsdp_classes = ("Qwen3VLVisionBlock", "Qwen3VLTextDecoderLayer", "DecoderLayer")

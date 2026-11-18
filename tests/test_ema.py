@@ -59,6 +59,47 @@ def test_ema_warmup_matches_diffusers():
             torch.testing.assert_close(shadow, expected)
 
 
+def test_power_law_matches_edm2_weights_and_resumes_from_update_count():
+    import numpy as np
+
+    exponent = float(np.roots([1, 7, 16 - 0.1**-2, 12 - 0.1**-2]).real.max() + 1)
+    config = EMAConfig(
+        enable=True, schedule="power_law", power=exponent, max_decay=0.9999999999999999
+    )
+    model = torch.nn.Linear(1, 1, bias=False)
+    ema = EMAManager(model, config)
+    reference = model.weight.detach().clone()
+    for iteration in range(25):
+        with torch.no_grad():
+            model.weight.add_(0.25)
+        beta = 0.0 if iteration == 0 else (1 - 1 / (iteration + 1)) ** exponent
+        reference.mul_(beta).add_(model.weight.detach(), alpha=1 - beta)
+        ema.update(model)
+        torch.testing.assert_close(ema.parameters["weight"], reference)
+        if iteration == 9:
+            restored = EMAManager(model, config)
+            restored.load_state_dict(ema.state_dict())
+            ema = restored
+    assert ema.num_updates == 25
+    old_style = EMAManager(model, EMAConfig(enable=True))
+    state = old_style.state_dict()
+    state["config"].pop("schedule")
+    EMAManager(model, EMAConfig(enable=True)).load_state_dict(state)
+
+
+def test_ema_partial_override_keeps_recipe_and_explicit_curve_replaces_it():
+    from alohamini.learning.ema import ema_settings
+
+    preset = dict(enable=True, schedule="power_law", power=8.0, max_decay=1 - 1e-15)
+    evaluation = EMAConfig.from_dict(ema_settings(preset, dict(use_for_eval=False)))
+    assert evaluation.enable and not evaluation.use_for_eval and evaluation.power == 8.0
+    fixed = EMAConfig.from_dict(ema_settings(preset, dict(decay=0.9)))
+    assert fixed.enable and fixed.decay == 0.9 and fixed.schedule == "inverse_power"
+    inverse = EMAConfig.from_dict(ema_settings(preset, dict(schedule="inverse_power")))
+    assert inverse.enable and inverse.power == 0.75 and inverse.max_decay == 0.9999
+    assert not EMAConfig.from_dict(ema_settings(preset, None)).enable
+
+
 def test_fp32_shadow_preserves_small_updates_from_bfloat16():
     model = torch.nn.Linear(1, 1, bias=False).bfloat16()
     with torch.no_grad():

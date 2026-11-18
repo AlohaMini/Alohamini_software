@@ -785,37 +785,26 @@ class StartupTests(unittest.TestCase):
         finally:
             host.close()
 
-    def test_startup_c_recalibrates_and_rebuilds_host_coordinates(self):
+    def test_startup_rezero_request_cancels_before_torque_enable(self):
         self.serials["/dev/am_arm_follower_left"].set(1, 31, 2, 999)
-
-        def ranges(bus, names):
-            self.assertFalse(any(p[5:7] == b"\x28\x01" for _, p in self.writes()))
-            return dict.fromkeys(names, 800), dict.fromkeys(names, 3200)
-
+        before = self.path.read_bytes()
         with (
             patch("sys.stdin.isatty", return_value=True),
-            patch("builtins.input", side_effect=["c", "", ""]) as prompt,
-            patch("alohamini.calibration.procedure.record_ranges_of_motion", side_effect=ranges),
+            patch("builtins.input", return_value="c"),
         ):
-            host = self.open()
-        try:
-            self.assertEqual(prompt.call_count, 3)
-            saved = load_motor_calibration(self.path, self.model.actuators)
-            for name, bus in host._arm_buses.items():
-                units = bus.position_units[name]
-                self.assertEqual(units, saved[name].position_units(units.normalization))
-            self.assertEqual(saved["arm_left_shoulder_pan"].range_min, 800)
-            self.assertEqual(saved["arm_right_elbow_flex"].range_max, 3200)
-            self.assertTrue(list(self.path.parent.glob("*.backup.json")))
-        finally:
-            host.close()
+            with self.assertRaises(InterruptedError):
+                self.open()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse(any(p[5:7] == b"\x28\x01" for _, p in self.writes()))
+        self.assertFalse(any(p[5] in (9, 11, 31) for _, p in self.writes()))
+        self.assert_closed()
 
     def test_startup_c_interruption_never_enables_or_saves(self):
         self.serials["/dev/am_arm_follower_left"].set(1, 31, 2, 999)
         before = self.path.read_bytes()
         with (
             patch("sys.stdin.isatty", return_value=True),
-            patch("builtins.input", side_effect=["c", KeyboardInterrupt()]),
+            patch("builtins.input", side_effect=KeyboardInterrupt()),
             self.assertRaises(KeyboardInterrupt),
         ):
             self.open()

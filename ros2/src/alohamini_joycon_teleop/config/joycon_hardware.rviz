@@ -22,7 +22,7 @@ Visualization Manager:
         Value: /alohamini/joycon_tcp_markers
       Value: true
   Global Options:
-    Fixed Frame: root
+    Fixed Frame: base_link
   Tools:
     - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera

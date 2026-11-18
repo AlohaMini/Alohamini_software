@@ -5,7 +5,6 @@
   <description>Hiwonder ten-axis USB IMU reader and data verification tools.</description>
   <maintainer email="anncatto@users.noreply.github.com">AlohaMini</maintainer>
   <license>BSD-3-Clause</license>
-  <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>python3-serial</exec_depend>

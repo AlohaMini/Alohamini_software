@@ -90,7 +90,7 @@ def write_evaluation(root, policy, captured, *, fps, task, num_episodes):
         "effective_policy_config": runtime,
         "deployment": {
             name: value(name)
-            for name in ("fixed_dimensions", "fixed_current", "calibration_mode", "rtc")
+            for name in ("fixed_dimensions", "fixed_current", "calibration_mode", "execution")
         },
         "fps": fps,
         "task": task,

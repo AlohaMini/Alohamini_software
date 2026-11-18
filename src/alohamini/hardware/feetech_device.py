@@ -186,6 +186,11 @@ class FeetechBusDevice(MotorsBus):
         return self._actuators
 
     @property
+    def is_open(self) -> bool:
+        """Whether the serial port opened, even if motor verification later failed."""
+        return self._serial is not None and self._serial.is_open
+
+    @property
     def velocity_limits(self) -> Mapping[str, int]:
         return MappingProxyType(self._velocities)
 
@@ -692,7 +697,9 @@ class FeetechBusDevice(MotorsBus):
         finally:
             self._calibrating = False
 
-    def configure_calibration(self, position_names: Sequence[str]) -> None:
+    def configure_calibration(
+        self, position_names: Sequence[str], *, preserve_other_motors: bool = False
+    ) -> None:
         """Source position mode and STS3215 single-turn feedback; velocity axes stay off."""
         if not self._calibrating:
             raise RuntimeError("Open a torque-off calibration session first")
@@ -700,6 +707,8 @@ class FeetechBusDevice(MotorsBus):
         if not names <= self._ids.keys():
             raise ValueError("Unknown calibration motor")
         for motor in self._actuators:
+            if preserve_other_motors and motor.name not in names:
+                continue
             settings = [(7, 1, 0), (33, 1, 0 if motor.name in names else 1)]
             if motor.motor_model == "sts3215":
                 settings.append((18, 1, self._read_register(motor.name, 18, 1) & ~0x10))

@@ -17,6 +17,17 @@ class InvalidNativeDistance(ValueError):
     """A native distance contradicts its witnesses or a separating projection."""
 
 
+def _inscribed_radius(model, geom):
+    kind, size = model.geom_type[geom], model.geom_size[geom]
+    if kind == mujoco.mjtGeom.mjGEOM_BOX or kind == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
+        return float(min(size))
+    if kind == mujoco.mjtGeom.mjGEOM_SPHERE or kind == mujoco.mjtGeom.mjGEOM_CAPSULE:
+        return float(size[0])
+    if kind == mujoco.mjtGeom.mjGEOM_CYLINDER:
+        return float(min(size[:2]))
+    return None
+
+
 def _projections(model, data, geom, directions):
     rotation = data.geom_xmat[geom].reshape(3, 3)
     local = directions @ rotation
@@ -83,6 +94,13 @@ def checked_geom_distance(model, data, first, second, maximum):
                 # upper bound on the translation needed to separate this pair.
                 if distance + tolerance < gap:
                     reason = f"projection lower bound {gap:.17g} m contradicts distance"
+    radii = [_inscribed_radius(model, geom) for geom in (first, second)]
+    if reason is None and all(radius is not None for radius in radii):
+        upper = float(np.linalg.norm(data.geom_xpos[first] - data.geom_xpos[second])) - sum(radii)
+        # Each analytic solid contains its centered inscribed sphere. Overlapping
+        # spheres prove penetration even if coincident-center GJK returns zero.
+        if upper < 0 and distance > upper + tolerance:
+            reason = f"overlapping inscribed spheres require distance <= {upper:.17g} m"
     if reason is not None:
         names = (model.geom(first).name, model.geom(second).name)
         raise InvalidNativeDistance(

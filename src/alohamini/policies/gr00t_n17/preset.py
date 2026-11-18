@@ -1,4 +1,4 @@
-"""Official N1.7 fine-tuning settings; recorded robot coordinates remain explicit."""
+"""Official N1.7 fine-tuning settings with named relative-joint robot adaptation."""
 
 from copy import deepcopy
 
@@ -9,6 +9,7 @@ def apply_preset(settings):
     cfg = deepcopy(settings)
     if cfg.get("resume") and cfg.get("paper_preset"):
         return cfg
+    cfg["data"] = {"action_representation": "joint_delta", **cfg.get("data", {})}
     for key, value in dict(
         state="auto",
         image_size=[480, 640],
@@ -28,7 +29,7 @@ def apply_preset(settings):
         **(cfg.get("scheduler") or {}),
     }
     cfg["paper_preset"] = dict(
-        name="gr00t-n17-recorded-v1",
+        name="gr00t-n17-joint-delta-v2",
         model_card="https://huggingface.co/nvidia/GR00T-N1.7-3B",
         architecture_paper="https://arxiv.org/abs/2503.14734",
         source="https://github.com/NVIDIA/Isaac-GR00T/tree/" + REVISION,
@@ -80,11 +81,13 @@ def apply_preset(settings):
             ),
             ("Per-rank batch8 is a resource adaptation, not the official fine-tune global batch64"),
             (
-                "New embodiment31 projectors reinitialized by default; recorded names "
+                "New embodiment10 (official NEW_EMBODIMENT slot) projectors reinitialized "
+                "by default; recorded names "
                 "packed into explicit slots"
             ),
             (
-                "Recorded actions by default; optional named FK, TCP deltas in base/tool "
+                "Named relative arm joints and absolute grippers/base/lift by default; "
+                "optional named FK, TCP deltas in base/tool "
                 "frame and rotvec/rotation_6d via data.*; no inferred FK or sin/cos expansion"
             ),
             (

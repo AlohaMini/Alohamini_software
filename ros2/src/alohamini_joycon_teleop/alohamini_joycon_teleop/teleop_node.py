@@ -27,6 +27,7 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from visualization_msgs.msg import Marker, MarkerArray
 
 from alohamini.model import get_robot_model
+from alohamini.model.joint_spec import ModelJointSpecification
 
 from .kinematics import (
     AlohaMiniArmKinematics,
@@ -133,6 +134,10 @@ class JoyConTeleop(Node):
             "control_rate_hz": 50.0,
             "ik_rate_hz": 20.0,
             "arm_control_mode": "differential",
+            "ik_qp_solver": "daqp",
+            "ik_max_joint_acceleration_rad_s2": 8.0,
+            "ik_endpoint": "",
+            "ik_rpc_timeout_sec": 0.05,
             "ik_timeout_sec": 0.3,
             "deadzone": 0.25,
             "tcp_speed_m_s": 0.15,
@@ -155,7 +160,6 @@ class JoyConTeleop(Node):
             "dls_damping": 0.04,
             "dls_max_joint_velocity_rad_s": 1.5,
             "dls_max_joint_step_rad": 0.10,
-            "dls_command_horizon_sec": 0.12,
             "dls_max_target_error_m": 0.025,
             "dls_joint_limit_margin_rad": 0.03,
             "avoid_collisions": True,
@@ -194,13 +198,40 @@ class JoyConTeleop(Node):
         self.callback_group = MutuallyExclusiveCallbackGroup()
 
         self.robot_model = str(self.get_parameter("robot_model").value)
-        semantic = ET.parse(get_robot_model(self.robot_model).description_path("semantic"))
-        self.positions = {
+        model = get_robot_model(self.robot_model)
+        description_name = "collision" if self.hardware_mode else "planning"
+        semantic_name = "semantic" if self.hardware_mode else "semantic_planning"
+        description = model.description_tree(description_name)
+        self.state_joint_names = tuple(
+            joint.attrib["name"]
+            for joint in description.findall("joint")
+            if joint.attrib["type"] != "fixed" and joint.find("mimic") is None
+        )
+        required = {
+            *arm_names("left"),
+            *arm_names("right"),
+            "left_gripper",
+            "right_gripper",
+            "vertical_move",
+            *(ROOT_JOINTS if not self.hardware_mode else ()),
+        }
+        missing = required - set(self.state_joint_names)
+        if missing:
+            raise ValueError(
+                f"Teleop joints absent from {description_name} model: {sorted(missing)}"
+            )
+        self.positions = dict.fromkeys(self.state_joint_names, 0.0)
+        semantic = ET.parse(model.description_path(semantic_name))
+        initial_positions = {
             joint.attrib["name"]: float(joint.attrib["value"])
             for group in semantic.findall("group_state")
             if group.attrib["name"] in ("home", "closed")
             for joint in group.findall("joint")
         }
+        unknown = initial_positions.keys() - self.positions.keys()
+        if unknown:
+            raise ValueError(f"SRDF states contain joints absent from the model: {sorted(unknown)}")
+        self.positions.update(initial_positions)
         if str(self.get_parameter("preview_home").value) == "reference":
             # Teleop rest pose: arm extended forward with the gripper level
             # (approach axis straight down), matching the MoveIt FK golden
@@ -217,23 +248,36 @@ class JoyConTeleop(Node):
             for side in ("left", "right"):
                 for joint, value in reference.items():
                     self.positions[f"{side}_{joint}"] = value
-        self.positions.update(
-            {
-                "root_x_axis_joint": 0.0,
-                "root_y_axis_joint": 0.0,
-                "root_z_rotation_joint": 0.0,
-                "vertical_move": 0.0,
-                "wheel1_joint": 0.0,
-                "wheel2_joint": 0.0,
-                "wheel3_joint": 0.0,
-            }
-        )
         self.samples: dict[str, InputSample] = {}
         self.arms = {side: ArmControl() for side in ("left", "right")}
         self.kinematics = {
             side: AlohaMiniArmKinematics.from_description(side, robot_model=self.robot_model)
             for side in ("left", "right")
         }
+        self.model_joint_margin = 0.0
+        if self.hardware_mode:
+            specification = ModelJointSpecification.from_model(self.robot_model)
+            for geometry in self.kinematics.values():
+                joints = [specification.joints[name] for name in geometry.joint_names]
+                geometry.joint_limits = tuple((joint.lower, joint.upper) for joint in joints)
+                self.model_joint_margin = max(
+                    self.model_joint_margin,
+                    max(joint.command_inset for joint in joints) + math.tau / 4096,
+                )
+        self.ik_worker = None
+        if self.get_parameter("ik_endpoint").value:
+            from alohamini.kinematics.worker import PinkWorkerClient
+
+            self.ik_worker = PinkWorkerClient(
+                str(self.get_parameter("ik_endpoint").value),
+                timeout_s=float(self.get_parameter("ik_rpc_timeout_sec").value),
+            )
+            versions = self.ik_worker.request("health", timeout_ms=10000)
+            self.get_logger().info(
+                f"IK worker ready: Pink {versions['pink']}, Pinocchio {versions['pinocchio']}"
+            )
+            for geometry in self.kinematics.values():
+                geometry.ik_client = self.ik_worker
         self.preview_base = [0.0, 0.0, 0.0]
         self.lift_target = self.positions["vertical_move"]
         self.measured_lift = self.lift_target
@@ -333,6 +377,14 @@ class JoyConTeleop(Node):
             self.update_lift(None, False, time.monotonic(), 0.0)
         self.input_socket.close()
         self.zmq_context.term()
+        if self.ik_worker is not None:
+            self.ik_worker.close()
+        # Humble's Node.destroy_node does not release action waitables. They
+        # must be closed while this node's ROS context is still alive.
+        for clients in (self.arm_clients, self.gripper_clients):
+            for client in clients.values():
+                client.destroy()
+            clients.clear()
         return super().destroy_node()
 
     def on_bridge_status(self, message: DiagnosticArray) -> None:
@@ -495,8 +547,19 @@ class JoyConTeleop(Node):
         return payload
 
     def fill_robot_state(self, state) -> None:
-        state.joint_state.name = list(self.positions)
-        state.joint_state.position = list(self.positions.values())
+        expected = set(self.state_joint_names)
+        unknown = self.positions.keys() - expected
+        missing = expected - self.positions.keys()
+        if unknown or missing:
+            raise ValueError(
+                f"Robot state differs from the selected model: "
+                f"unknown={sorted(unknown)}, missing={sorted(missing)}"
+            )
+        values = [self.positions[name] for name in self.state_joint_names]
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Robot state positions must be finite")
+        state.joint_state.name = list(self.state_joint_names)
+        state.joint_state.position = values
 
     def arm_seed(self, side: str) -> list[float] | None:
         names = arm_names(side)
@@ -629,7 +692,7 @@ class JoyConTeleop(Node):
 
     def retry_ik_mode(self, side: str, proposed_pose: dict, reason: str) -> None:
         self.get_logger().info(
-            f"[{side}] {reason}; retrying with LMA IK "
+            f"[{side}] {reason}; retrying with cached IK "
             f"pos={[round(v, 4) for v in proposed_pose['position']]} "
             f"orient={[round(v, 4) for v in proposed_pose['orientation']]} "
             f"seed={[round(v, 4) for v in self.arm_seed(side) or []]}"
@@ -921,6 +984,10 @@ class JoyConTeleop(Node):
                 self.get_logger().info(
                     f"[{side}] released; finishing the last commanded TCP target"
                 )
+        if arm.active:
+            geometry = getattr(self, "kinematics", {}).get(side)
+            if geometry is not None:
+                geometry.reset_tracking()
         arm.active = False
 
     def update_arm(
@@ -982,6 +1049,8 @@ class JoyConTeleop(Node):
             arm.fault_latched = False
             arm.hand_anchor_orientation = None
             arm.tcp_anchor_orientation = None
+            return
+        if arm.fault_latched:
             return
         if not arm.active:
             arm.active = True
@@ -1064,32 +1133,34 @@ class JoyConTeleop(Node):
         target[:3, 3] = proposed["position"]
         target[:3, :3] = quaternion_to_matrix(proposed["orientation"])
         solve_started = time.perf_counter()
-        # The control timer stays at the configured realtime rate, but a
-        # slightly longer position
-        # look-ahead prevents every command from collapsing to a few servo
-        # ticks when Bridge anchors JointJog displacements at fresh feedback.
-        # Preview needs no such look-ahead because its joint state accepts the
-        # candidate exactly and has no static friction or bus latency.
-        command_dt = (
-            max(
+        try:
+            candidate, metrics = self.kinematics[side].step(
+                seed,
+                target,
                 dt,
-                float(self.get_parameter("dls_command_horizon_sec").value),
+                position_gain=float(self.get_parameter("dls_position_gain").value),
+                orientation_gain=float(self.get_parameter("dls_orientation_gain").value),
+                orientation_weight=float(self.get_parameter("dls_orientation_weight").value),
+                damping=float(self.get_parameter("dls_damping").value),
+                max_joint_velocity=float(self.get_parameter("dls_max_joint_velocity_rad_s").value),
+                max_joint_step=float(self.get_parameter("dls_max_joint_step_rad").value),
+                joint_limit_margin=max(
+                    float(self.get_parameter("dls_joint_limit_margin_rad").value),
+                    getattr(self, "model_joint_margin", 0.0),
+                ),
+                qp_solver=str(self.get_parameter("ik_qp_solver").value),
+                max_joint_acceleration=float(
+                    self.get_parameter("ik_max_joint_acceleration_rad_s2").value
+                ),
             )
-            if self.hardware_mode
-            else dt
-        )
-        candidate, metrics = self.kinematics[side].step(
-            seed,
-            target,
-            command_dt,
-            position_gain=float(self.get_parameter("dls_position_gain").value),
-            orientation_gain=float(self.get_parameter("dls_orientation_gain").value),
-            orientation_weight=float(self.get_parameter("dls_orientation_weight").value),
-            damping=float(self.get_parameter("dls_damping").value),
-            max_joint_velocity=float(self.get_parameter("dls_max_joint_velocity_rad_s").value),
-            max_joint_step=float(self.get_parameter("dls_max_joint_step_rad").value),
-            joint_limit_margin=float(self.get_parameter("dls_joint_limit_margin_rad").value),
-        )
+        except (ValueError, RuntimeError, TimeoutError, ImportError) as exc:
+            # Both arms share the worker session. A transport reset invalidates
+            # both velocity histories, so stop both before accepting new input.
+            for stopped_side in ("left", "right"):
+                self.deactivate_arm(stopped_side, cancel_goal=True)
+                self.arms[stopped_side].fault_latched = True
+            self.warn_ik(side, f"Pink tracking failed; both arms held: {exc}")
+            return
         self.max_dls_ms[side] = max(
             self.max_dls_ms[side],
             (time.perf_counter() - solve_started) * 1.0e3,
@@ -1119,7 +1190,7 @@ class JoyConTeleop(Node):
         elif metrics["max_joint_step_rad"] < 1.0e-5 and residual > 0.005:
             self.warn_ik(
                 side,
-                f"DLS stalled with residual={residual:.3f} m; "
+                f"Pink tracking stalled with residual={residual:.3f} m; "
                 f"sigma_min={metrics['minimum_singular_value']:.4f} "
                 f"limits={limit_hits or 'none'} dq=[{delta_text}]",
             )
@@ -1136,7 +1207,7 @@ class JoyConTeleop(Node):
         if now - self.last_ik_ok.get(side, 0.0) >= 1.0:
             self.last_ik_ok[side] = now
             self.get_logger().info(
-                f"[{side}] DLS {float(self.get_parameter('control_rate_hz').value):g} Hz: "
+                f"[{side}] Pink {float(self.get_parameter('control_rate_hz').value):g} Hz: "
                 f"xyz_err={metrics['position_error_m']:.4f}m "
                 f"rot_err={metrics['orientation_error_rad']:.3f}rad "
                 f"sigma_min={metrics['minimum_singular_value']:.4f} "

@@ -1,0 +1,805 @@
+{
+  "format": "alohamini-gripper-collision-v1",
+  "coordinates": "URDF link-local metres",
+  "reference_sha256": "838e91c69848b4078b7f8dee389c70b42b5f80e5df92512e00a21d8e8e39e52b",
+  "parts": {
+    "fixed": {
+      "reference_cad_cover": {
+        "algorithm": "counterexample-guided convex-cover selection",
+        "boolean_kernel": "manifold3d",
+        "boolean_kernel_version": "3.5.4",
+        "input_candidates": 241,
+        "admissible_candidates": 541,
+        "output_pieces": 163,
+        "maximum_convex_vertices": 128,
+        "vertex_reduction": {
+          "initial_maximum_error_m": 6.882838467630677e-05,
+          "after_contact_maximum_error_m": 6.076011212331268e-06
+        },
+        "tolerance_m": 0.0005,
+        "arithmetic_guard_m": 6.828570064953965e-08,
+        "native_boolean_tolerance_m": 1.0446706827673454e-13,
+        "source_inside_expanded_collision": true,
+        "each_collider_inside_expanded_source": true,
+        "contacts": [
+          {
+            "name": "finger_pad",
+            "normal": [
+              0.9963480171671889,
+              0.0,
+              -0.08538517838015655
+            ],
+            "plane_offset_m": -0.0198385165857497,
+            "tolerance_m": 5e-05,
+            "footprint_arithmetic_inset_m": 6.828570064953965e-08,
+            "area_m2": 0.0009958390159184576,
+            "source_approach_region_clear": true,
+            "structural_setback_m": 0.0005000682857006496,
+            "contact_layer_thickness_m": 0.0005,
+            "maximum_contact_plane_error_m": 7.476184081534054e-10,
+            "piece_indices": [
+              0
+            ],
+            "approach_region_clear": true
+          }
+        ],
+        "refinement": [
+          {
+            "pieces": 154,
+            "uncovered_volume_m3": 4.368875589628358e-06
+          },
+          {
+            "pieces": 163,
+            "uncovered_volume_m3": 0.0
+          }
+        ],
+        "mesh_preparation": {
+          "backend": "sapien",
+          "version": "3.0.3",
+          "cooked_source_distance_tolerance_m": 2e-06
+        }
+      },
+      "contacts": [
+        {
+          "name": "finger_pad",
+          "normal": [
+            0.9963480171671889,
+            0.0,
+            -0.08538517838015655
+          ],
+          "plane_offset_m": -0.0198385165857497,
+          "tolerance_m": 5e-05,
+          "footprint_arithmetic_inset_m": 6.828570064953965e-08,
+          "area_m2": 0.0009958390159184576,
+          "source_approach_region_clear": true,
+          "structural_setback_m": 0.0005000682857006496,
+          "contact_layer_thickness_m": 0.0005,
+          "maximum_contact_plane_error_m": 7.476184081534054e-10,
+          "piece_indices": [
+            0
+          ],
+          "approach_region_clear": true
+        }
+      ],
+      "mesh_preparation": {
+        "backend": "sapien",
+        "version": "3.0.3",
+        "cooked_source_distance_tolerance_m": 2e-06
+      },
+      "support_envelopes": {
+        "algorithm": "adjacent support envelopes with box preference and protected volumes",
+        "input_pieces": 163,
+        "output_pieces": 13,
+        "native_boxes": 0,
+        "protected_contact_indices": [
+          0
+        ],
+        "tested_pairs": 207,
+        "accepted_merges": 150,
+        "invalid_proposals": 0,
+        "sampled_clearance_m": 0.0003647764004438589,
+        "cavity_policy": "mounting holes and support pockets may be filled",
+        "continuous_motion_certificate_required": true,
+        "material_coverage": {
+          "source_inside_expanded_collision": true,
+          "tolerance_m": 0.0005
+        },
+        "motion_proposal_angles_rad": [
+          -1.8030294104,
+          -1.67034007225,
+          -1.5376507341,
+          -1.40496139595,
+          -1.2722720578,
+          -1.13958271965,
+          -1.0068933814999999,
+          -0.87420404335,
+          -0.7415147052,
+          -0.6088253670499999,
+          -0.47613602889999984,
+          -0.34344669075,
+          -0.21075735259999995,
+          -0.07806801444999989,
+          0.054621323699999946,
+          0.18731066185,
+          0.32
+        ],
+        "continuous_motion_certified": true
+      },
+      "output_pieces": 13,
+      "pieces": [
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2.obj",
+          "sha256": "d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2",
+          "vertices": 42,
+          "triangles": 80,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "cc9159ab6a3f49fa1521a091e385e6f5854bae7fd804f62058b1cc55ff54817c"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f.obj",
+          "sha256": "c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f",
+          "vertices": 126,
+          "triangles": 248,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "c865d398c808d3bcc122d7d2988baf5c75f859b4c41dcf7a831d7d88b38db2c0"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe.obj",
+          "sha256": "54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe",
+          "vertices": 20,
+          "triangles": 36,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "7d78df52cc9922eb94a0ce183431aa853450f33816b46d398fefd7fb31c9b0b7"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9.obj",
+          "sha256": "5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9",
+          "vertices": 52,
+          "triangles": 100,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "ebad87e8ed44327c2f1334814d2b49d264516bced2f27594e79f5594bacf6e20"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549.obj",
+          "sha256": "de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549",
+          "vertices": 40,
+          "triangles": 76,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "8f1101c28f7d19b89a62bf7184244e41db714bf47e0d344f8dc0d2a1dd3d8c43"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6.obj",
+          "sha256": "e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6",
+          "vertices": 49,
+          "triangles": 94,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "0a02f5230c59b2eb1ffa01c3ef4dde025b6b49f4cbf0bdbefc47fb211f694912"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8.obj",
+          "sha256": "4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8",
+          "vertices": 31,
+          "triangles": 58,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "93363a961bf51b576028866a207a08c317d914eaa5ebed735588fa2ed448aefa"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57.obj",
+          "sha256": "6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57",
+          "vertices": 19,
+          "triangles": 34,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "e9ef3216cdd0e7582440d4914f88aacd7dc707e8f8e4d0c6d398af6a6bee8083"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3.obj",
+          "sha256": "bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3",
+          "vertices": 21,
+          "triangles": 38,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "a406ef15552ef2422503525a3b3c15210fb839564f3c327b0e94dcc3f8067659"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46.obj",
+          "sha256": "30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46",
+          "vertices": 111,
+          "triangles": 218,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "4ed9e87154bb44d4018493e715a8d72b29d1c848b1ee6d0def88e3eb9368ef9d"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461.obj",
+          "sha256": "723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461",
+          "vertices": 35,
+          "triangles": 66,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "d3c4c67a56f467b154489d30a41649f9b2dc77dae59d01068c4adcd3860c09c1"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8.obj",
+          "sha256": "19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8",
+          "vertices": 40,
+          "triangles": 76,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "87a0c41b73a5d1fab322e5026d1e480ff2121c48c064b61217391ef9885acb36"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338.obj",
+          "sha256": "3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338",
+          "vertices": 58,
+          "triangles": 112,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "b18f6e6c5baee2541e8c9a67bfc55d6c7aef275cd875153b78f9029f25964a56"
+        }
+      ]
+    },
+    "moving": {
+      "reference_cad_cover": {
+        "algorithm": "counterexample-guided convex-cover selection",
+        "boolean_kernel": "manifold3d",
+        "boolean_kernel_version": "3.5.4",
+        "input_candidates": 620,
+        "admissible_candidates": 1322,
+        "output_pieces": 121,
+        "maximum_convex_vertices": 128,
+        "vertex_reduction": {
+          "initial_maximum_error_m": 1.1457097684830372e-06,
+          "after_contact_maximum_error_m": 5.395835619473299e-06
+        },
+        "tolerance_m": 0.0005,
+        "arithmetic_guard_m": 6.188916756855178e-08,
+        "native_boolean_tolerance_m": 8.649443025211543e-14,
+        "source_inside_expanded_collision": true,
+        "each_collider_inside_expanded_source": true,
+        "contacts": [
+          {
+            "name": "finger_pad",
+            "normal": [
+              0.9985314474388258,
+              -0.05417516475031219,
+              0.0
+            ],
+            "plane_offset_m": 0.006325062860973353,
+            "tolerance_m": 5e-05,
+            "footprint_arithmetic_inset_m": 6.188916756855178e-08,
+            "area_m2": 0.0009958390159184513,
+            "source_approach_region_clear": true,
+            "structural_setback_m": 0.0005000618891675686,
+            "contact_layer_thickness_m": 0.0005,
+            "maximum_contact_plane_error_m": 1.6003327916319643e-10,
+            "piece_indices": [
+              0
+            ],
+            "approach_region_clear": true
+          }
+        ],
+        "refinement": [
+          {
+            "pieces": 104,
+            "uncovered_volume_m3": 7.357423805271107e-08
+          },
+          {
+            "pieces": 121,
+            "uncovered_volume_m3": 0.0
+          }
+        ],
+        "mesh_preparation": {
+          "backend": "sapien",
+          "version": "3.0.3",
+          "cooked_source_distance_tolerance_m": 2e-06
+        }
+      },
+      "contacts": [
+        {
+          "name": "finger_pad",
+          "normal": [
+            0.9985314474388258,
+            -0.05417516475031219,
+            0.0
+          ],
+          "plane_offset_m": 0.006325062860973353,
+          "tolerance_m": 5e-05,
+          "footprint_arithmetic_inset_m": 6.188916756855178e-08,
+          "area_m2": 0.0009958390159184513,
+          "source_approach_region_clear": true,
+          "structural_setback_m": 0.0005000618891675686,
+          "contact_layer_thickness_m": 0.0005,
+          "maximum_contact_plane_error_m": 1.6003327916319643e-10,
+          "piece_indices": [
+            0
+          ],
+          "approach_region_clear": true
+        }
+      ],
+      "mesh_preparation": {
+        "backend": "sapien",
+        "version": "3.0.3",
+        "cooked_source_distance_tolerance_m": 2e-06
+      },
+      "support_envelopes": {
+        "algorithm": "adjacent support envelopes with box preference and protected volumes",
+        "input_pieces": 121,
+        "output_pieces": 16,
+        "native_boxes": 1,
+        "protected_contact_indices": [
+          0
+        ],
+        "tested_pairs": 216,
+        "accepted_merges": 105,
+        "invalid_proposals": 0,
+        "sampled_clearance_m": 0.0003647764004438589,
+        "cavity_policy": "mounting holes and support pockets may be filled",
+        "continuous_motion_certificate_required": true,
+        "material_coverage": {
+          "source_inside_expanded_collision": true,
+          "tolerance_m": 0.0005
+        },
+        "motion_proposal_angles_rad": [
+          -1.8030294104,
+          -1.67034007225,
+          -1.5376507341,
+          -1.40496139595,
+          -1.2722720578,
+          -1.13958271965,
+          -1.0068933814999999,
+          -0.87420404335,
+          -0.7415147052,
+          -0.6088253670499999,
+          -0.47613602889999984,
+          -0.34344669075,
+          -0.21075735259999995,
+          -0.07806801444999989,
+          0.054621323699999946,
+          0.18731066185,
+          0.32
+        ],
+        "continuous_motion_certified": true
+      },
+      "output_pieces": 16,
+      "pieces": [
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b.obj",
+          "sha256": "ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b",
+          "vertices": 41,
+          "triangles": 78,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "01c0dd6c3b50db0a68b04852f8c28b2de44c6dcbad2a5ee287b621efc266b6e2"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c.obj",
+          "sha256": "644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c",
+          "vertices": 25,
+          "triangles": 46,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "ed1701595fa69b90455456d52124c6bb70065c58229cfbb039cf96f8ce71ce94"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c.obj",
+          "sha256": "805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c",
+          "vertices": 53,
+          "triangles": 102,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "729c6c6ab00469d60cd3cedb3f5fb2a5041f51ae0ea526293ce8a3463d5e3562"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954.obj",
+          "sha256": "4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954",
+          "vertices": 57,
+          "triangles": 110,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "c69618ec2f5ffa725910e845eb909410018b98860994dec13056940213a306e9"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749.obj",
+          "sha256": "b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749",
+          "vertices": 13,
+          "triangles": 22,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "0ce5ad5de9cdf7cae44a497b18575bd1cee28f268e4912249d0fabff58c04458"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0.obj",
+          "sha256": "ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0",
+          "vertices": 15,
+          "triangles": 26,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "349c350155d91f04bf5b825423280ce8cfd49e8c21c4da2d26803e5e540435f6"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf.obj",
+          "sha256": "73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf",
+          "vertices": 22,
+          "triangles": 40,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "2c46dd1efb3a05d67ba73eca9b058564c99dd3d77ef3ad6caf7f4d324da1c05c"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165.obj",
+          "sha256": "d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165",
+          "vertices": 58,
+          "triangles": 112,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "87d38b38436696f4a08d6e288ccf3bf15057f4a323824d9eee159b8b39747154"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50.obj",
+          "sha256": "3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50",
+          "vertices": 42,
+          "triangles": 80,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "e91ae9fee27316949e540462e068edb49ab9dce96186976b8c31bc9c15ee216c"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f.obj",
+          "sha256": "7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f",
+          "vertices": 23,
+          "triangles": 42,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "43da4052ae44a6883b29708e91462325b775b5ead82a85728b009e2d2b48fb2b"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f.obj",
+          "sha256": "b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f",
+          "vertices": 53,
+          "triangles": 102,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "d6eb6bc6f03bb3d57329b550cda039fa28ab524aa0ab47566ca827f089e1ab46"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0.obj",
+          "sha256": "ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0",
+          "vertices": 41,
+          "triangles": 78,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "b5dde548c0e4a2ae19b349f3a3f1aa5100cd27e3a01cb1d68b95ff04374a2e40"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b.obj",
+          "sha256": "fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b",
+          "vertices": 41,
+          "triangles": 78,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "0d0aa3906264bd35a7b63476c794d45b95de07552530afc12e7b6f07bcb8d0cf"
+        },
+        {
+          "type": "box",
+          "parameters": {
+            "size": [
+              0.015056589618325233,
+              0.018600717186927795,
+              0.00224946066737175
+            ]
+          },
+          "T_link_geometry": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              -0.002588191069662571
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0008148993365466595
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.029806004837155342
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28.obj",
+          "sha256": "176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28",
+          "vertices": 27,
+          "triangles": 50,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "ddb4fd99b8aa250abd5b699d22f4ae2bc20815171e7ac0d510ad85452316b454"
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb.obj",
+          "sha256": "74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb",
+          "vertices": 38,
+          "triangles": 72,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "msh_sha256": "2e73ef51229214ee7c877a5d5c0e836b54a1fc848746e0927d978bce1390276d"
+        }
+      ]
+    }
+  },
+  "articulation_clearance": {
+    "left": {
+      "algorithm": "rotational Hausdorff interval bound",
+      "q_range_rad": [
+        -1.8030294104,
+        0.32
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "T_fixed_moving_zero": [
+        [
+          -1.0,
+          1.1281287467401296e-29,
+          -3.2310891488651735e-15,
+          0.02021444438295
+        ],
+        [
+          3.2310891488651735e-15,
+          3.4914813388431334e-15,
+          -1.0,
+          0.0033063194616967
+        ],
+        [
+          -0.0,
+          -1.0,
+          -3.4914813388431334e-15,
+          0.021614179864005
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "rotation_radius_bound_m": 0.08603585786144607,
+      "sample_count": 4096,
+      "interval_count": 2048,
+      "minimum_sampled_gap_m": 0.00037662770965254553,
+      "minimum_at_q_rad": -1.8030294104,
+      "certified_gap_lower_bound_m": 0.00033686060737038415,
+      "distance_uncertainty_m": 5e-05,
+      "native_boolean_tolerance_m": 1.0396707057952881e-13,
+      "passed": true,
+      "scope": "continuous printed-jaw clearance; hardware proxies are retained separately"
+    },
+    "right": {
+      "algorithm": "rotational Hausdorff interval bound",
+      "q_range_rad": [
+        -1.8030294104,
+        0.32
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "T_fixed_moving_zero": [
+        [
+          -1.0,
+          1.1281287467401296e-29,
+          -3.2310891488651735e-15,
+          0.02021444438295
+        ],
+        [
+          3.2310891488651735e-15,
+          3.4914813388431334e-15,
+          -1.0,
+          0.0033063194616967
+        ],
+        [
+          -0.0,
+          -1.0,
+          -3.4914813388431334e-15,
+          0.021614179864005
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "rotation_radius_bound_m": 0.08603585786144607,
+      "sample_count": 4096,
+      "interval_count": 2048,
+      "minimum_sampled_gap_m": 0.00037662770965254553,
+      "minimum_at_q_rad": -1.8030294104,
+      "certified_gap_lower_bound_m": 0.00033686060737038415,
+      "distance_uncertainty_m": 5e-05,
+      "native_boolean_tolerance_m": 1.0396707057952881e-13,
+      "passed": true,
+      "scope": "continuous printed-jaw clearance; hardware proxies are retained separately"
+    }
+  },
+  "reference_articulation_clearance": {
+    "algorithm": "rotational Hausdorff interval bound",
+    "q_range_rad": [
+      -1.8030294104,
+      0.32
+    ],
+    "axis": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "T_fixed_moving_zero": [
+      [
+        -1.0,
+        1.1281287467401296e-29,
+        -3.2310891488651735e-15,
+        0.02021444438295
+      ],
+      [
+        3.2310891488651735e-15,
+        3.4914813388431334e-15,
+        -1.0,
+        0.0033063194616967
+      ],
+      [
+        -0.0,
+        -1.0,
+        -3.4914813388431334e-15,
+        0.021614179864005
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "rotation_radius_bound_m": 0.08603585786144607,
+    "sample_count": 4096,
+    "interval_count": 2048,
+    "minimum_sampled_gap_m": 0.0004093700524311475,
+    "minimum_at_q_rad": -1.758454085865234,
+    "certified_gap_lower_bound_m": 0.0003647764004438589,
+    "distance_uncertainty_m": 5e-05,
+    "native_boolean_tolerance_m": 1.0396707057952881e-13,
+    "passed": true,
+    "scope": "continuous printed-jaw clearance; hardware proxies are retained separately"
+  }
+}

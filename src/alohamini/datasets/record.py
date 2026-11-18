@@ -3,6 +3,7 @@
 # Feedback schema copied from AlohaMini motor_feedback.py.
 """Local v3 recording and dataset fields for motor feedback."""
 
+import hashlib
 import json
 import logging
 import math
@@ -350,19 +351,36 @@ class _EpisodeWriter:
         resume=False,
         fixed_dimensions=None,
         video_encoding_workers=None,
+        video_encoder="cpu",
+        background_video_encoding=False,
+        video_encoding_memory_mib=2048,
+        profile_timing=False,
         _source_info=None,
         _discard_interrupted=False,
     ):
         import fcntl
 
+        from alohamini.datasets.recording_video import validate_video_options
+
+        validate_video_options(video_encoder, background_video_encoding, video_encoding_memory_mib)
+
         if type(fps) is not int or not 1 <= fps <= 30:
             raise ValueError("Dataset fps must be an integer in [1, 30]")
+        if type(profile_timing) is not bool:
+            raise ValueError("profile_timing must be a bool")
         if video_encoding_workers is not None and (
             type(video_encoding_workers) is not int or video_encoding_workers < 1
         ):
             raise ValueError("Video encoding workers must be a positive integer")
         self.video_encoding_workers = video_encoding_workers
+        self.video_encoder = video_encoder
+        self.background_video_encoding = background_video_encoding
+        self.video_encoding_memory_mib = video_encoding_memory_mib
+        self._video_encoder = None
+        self._video_references = {}
+        self.profile_timing = profile_timing
         self.last_save_timings = {}
+        self.last_video_timings = {}
         if not isinstance(task, str) or not task.strip():
             raise ValueError("A nonempty task description is required")
         self.root = Path(root).expanduser()
@@ -496,6 +514,9 @@ class _EpisodeWriter:
             raise RuntimeError("Finish the current episode before starting another")
         self._pending = self.root / "episodes" / f"episode_{self.num_episodes:06d}.pending"
         self._pending.mkdir(exist_ok=False)
+        self._video_references = {camera: hashlib.sha256() for camera in self.cameras}
+        if self.background_video_encoding:
+            self._start_video_encoder()
         self._error = None
         self._closing.clear()
         self.submitted = self.saved = self.rejected_images = self.queue_overflows = 0
@@ -503,6 +524,30 @@ class _EpisodeWriter:
             target=self._write_loop, daemon=True, name="AlohaMiniDataset"
         )
         self._thread.start()
+
+    def _start_video_encoder(self):
+        if self.cameras and self._video_encoder is None:
+            from alohamini.datasets.recording_video import RecordingVideoEncoder
+
+            try:
+                self._video_encoder = RecordingVideoEncoder(
+                    self._pending,
+                    self.fps,
+                    self.cameras,
+                    encoder=self.video_encoder,
+                    workers=self.video_encoding_workers,
+                    memory_mib=self.video_encoding_memory_mib,
+                    profile=self.profile_timing,
+                )
+            except OSError as exc:
+                logging.warning(
+                    "Video encoder could not start (%s); using CPU encoding at save.", exc
+                )
+
+    def _stop_video_encoder(self):
+        if self._video_encoder is not None:
+            self._video_encoder.cancel()
+            self._video_encoder = None
 
     def check_writer(self):
         if self._error is not None:
@@ -662,6 +707,8 @@ class _EpisodeWriter:
                             + record.rstrip("\n")
                             + "}\n"
                         )
+                        for name, reference in references.items():
+                            self._video_references[name].update((reference + "\n").encode())
                         self.saved += 1
                     finally:
                         with self._mutex:
@@ -689,6 +736,7 @@ class _EpisodeWriter:
             return
         try:
             self.last_save_timings = {}
+            self.last_video_timings = {}
             started = time.perf_counter()
             self._finish_writer()
             self.last_save_timings["queue_drain"] = time.perf_counter() - started
@@ -749,6 +797,20 @@ class _EpisodeWriter:
             from alohamini.datasets.video import finalize_recording_video
 
             self.last_save_timings["journal_to_parquet"] = time.perf_counter() - started
+            if self.video_encoder != "cpu" and not self.background_video_encoding:
+                self._start_video_encoder()
+            preencoded = None
+            if self._video_encoder is not None:
+                started = time.perf_counter()
+                preencoded = self._video_encoder.finish(
+                    self.saved,
+                    {
+                        camera: digest.hexdigest()
+                        for camera, digest in self._video_references.items()
+                    },
+                )
+                self._video_encoder = None
+                self.last_save_timings["background_video_wait"] = time.perf_counter() - started
             finalize_recording_video(
                 self._pending,
                 self.fps,
@@ -756,7 +818,11 @@ class _EpisodeWriter:
                 self.cameras,
                 workers=self.video_encoding_workers,
                 timings=self.last_save_timings,
+                camera_timings=self.last_video_timings if self.profile_timing else None,
+                **({"preencoded": preencoded} if preencoded is not None else {}),
             )
+            if (self._pending / ".video").exists():
+                shutil.rmtree(self._pending / ".video")
             destination = self.root / "episodes" / f"episode_{self.num_episodes:06d}"
             if destination.exists():
                 raise FileExistsError(destination)
@@ -774,6 +840,7 @@ class _EpisodeWriter:
                 logging.warning("Temporary images retained at %s", destination)
             self.last_save_timings["temporary_cleanup"] = time.perf_counter() - started
         except BaseException:
+            self._stop_video_encoder()
             self.save_failed = True
             raise
 
@@ -783,9 +850,11 @@ class _EpisodeWriter:
             return
         try:
             self._finish_writer()
+            self._stop_video_encoder()
             shutil.rmtree(self._pending)
         except BaseException:
             # Never save a rejected or partially deleted episode during close.
+            self._stop_video_encoder()
             self.save_failed = True
             raise
         self._pending = None
@@ -795,6 +864,7 @@ class _EpisodeWriter:
             if self._pending is not None and not self.save_failed:
                 self.save_episode()
         finally:
+            self._stop_video_encoder()
             # A timed-out live writer retains the exclusive lock until process exit.
             if self._thread is None or not self._thread.is_alive():
                 self._file_lock.close()
@@ -803,8 +873,8 @@ class _EpisodeWriter:
 class LocalDataset:
     """Record complete local LeRobot v3 datasets, including raw motor feedback.
 
-    As in record_bi.py, PC-decoded RGB frames are buffered on disk, then encoded
-    and published by save_episode. Only MP4, Parquet and metadata remain on success.
+    Original JPEGs are buffered on disk. Optional isolated encoders consume them
+    during capture; save_episode finalizes and publishes a complete episode.
     """
 
     def __init__(
@@ -817,12 +887,22 @@ class LocalDataset:
         resume=False,
         fixed_dimensions=None,
         video_encoding_workers=None,
+        video_encoder="cpu",
+        background_video_encoding=False,
+        video_encoding_memory_mib=2048,
+        profile_timing=False,
         discard_interrupted=True,
     ):
         import fcntl
 
+        from alohamini.datasets.recording_video import validate_video_options
+
+        validate_video_options(video_encoder, background_video_encoding, video_encoding_memory_mib)
+
         if type(discard_interrupted) is not bool:
             raise ValueError("discard_interrupted must be a bool")
+        if type(profile_timing) is not bool:
+            raise ValueError("profile_timing must be a bool")
         if video_encoding_workers is not None and (
             type(video_encoding_workers) is not int or video_encoding_workers < 1
         ):
@@ -869,6 +949,10 @@ class LocalDataset:
                 resume=staging.exists(),
                 fixed_dimensions=fixed_dimensions,
                 video_encoding_workers=video_encoding_workers,
+                video_encoder=video_encoder,
+                background_video_encoding=background_video_encoding,
+                video_encoding_memory_mib=video_encoding_memory_mib,
+                profile_timing=profile_timing,
                 _source_info=source_info,
                 _discard_interrupted=resume and discard_interrupted,
             )

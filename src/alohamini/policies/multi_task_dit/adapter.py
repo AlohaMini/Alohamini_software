@@ -17,6 +17,7 @@ CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
 
 class MultiTaskDiTAlgorithm:
+    asset_fields = ("vision_encoder_name", "text_encoder_name")
     include_task = True
     fsdp_classes = ("TransformerBlock", "CLIPEncoderLayer")
 

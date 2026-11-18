@@ -6,11 +6,37 @@ import os
 from dataclasses import fields
 from pathlib import Path
 
+from alohamini._validation import finite_number
 from alohamini.learning.checkpoint import resolve_pretrained
 from alohamini.learning.ema import EMAConfig, validate_ema_setup
 from alohamini.learning.loading import resolve_data_pipeline
-from alohamini.learning.precision import TRAINABLE_DTYPES, validate_trainable_dtype
+from alohamini.learning.precision import TRAINABLE_DTYPES, resolve_tf32, validate_trainable_dtype
 from alohamini.policies.registry import ALGORITHMS, algorithm
+
+
+def resolve_dataset_options(cfg):
+    """Validate flat local-dataset options, including defaults for old runs."""
+    cfg = dict(cfg)
+    for name, default in (
+        ("dataset_streaming", False),
+        ("dataset_cache_size_mb", 64),
+        ("dataset_cache_dir", None),
+        ("streaming_episode_pool_size", 8),
+        ("dataset_cache_block_rows", 128),
+    ):
+        cfg.setdefault(name, default)
+    if type(cfg["dataset_streaming"]) is not bool:
+        raise ValueError("dataset_streaming must be a boolean")
+    finite_number(cfg["dataset_cache_size_mb"], "dataset_cache_size_mb")
+    if cfg["dataset_cache_size_mb"] <= 0:
+        raise ValueError("dataset_cache_size_mb must be positive")
+    cache_dir = cfg["dataset_cache_dir"]
+    if cache_dir is not None and (not isinstance(cache_dir, str) or not cache_dir.strip()):
+        raise ValueError("dataset_cache_dir must be a nonempty path string or null")
+    for name in ("streaming_episode_pool_size", "dataset_cache_block_rows"):
+        if type(cfg[name]) is not int or cfg[name] < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    return cfg
 
 
 def boolean(value):
@@ -32,6 +58,27 @@ def parse_training_args(argv=None):
     )
     parser.add_argument("--config", "--config_path", type=Path)
     parser.add_argument("--dataset.root", dest="dataset")
+    parser.add_argument(
+        "--dataset.streaming",
+        dest="dataset_streaming",
+        type=boolean,
+        help="Use bounded episode-pool sampling for local file-backed training data",
+    )
+    parser.add_argument(
+        "--dataset.cache_size_mb",
+        dest="dataset_cache_size_mb",
+        type=float,
+        help="Decoded numeric/diagnostic cache in MiB per Dataset per process (default: 64)",
+    )
+    parser.add_argument(
+        "--dataset.cache_dir",
+        dest="dataset_cache_dir",
+        help="Temporary dataset cache directory (default: workspace/cache/datasets)",
+    )
+    parser.add_argument(
+        "--dataset.streaming_episode_pool_size", dest="streaming_episode_pool_size", type=int
+    )
+    parser.add_argument("--dataset.cache_block_rows", dest="dataset_cache_block_rows", type=int)
     parser.add_argument(
         "--dataset.allow_unannotated",
         dest="allow_unannotated",
@@ -61,12 +108,13 @@ def parse_training_args(argv=None):
     )
     parser.add_argument(
         "--data.action_representation",
-        choices=("recorded", "tcp_absolute", "tcp_delta"),
+        choices=("recorded", "joint_delta", "tcp_absolute", "tcp_delta"),
         default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--data.tcp_delta_frame", choices=("base", "tool"), default=argparse.SUPPRESS
     )
+    parser.add_argument("--data.joint_delta_fields", type=json.loads, default=argparse.SUPPRESS)
     for name in ("reference_pose", "path", "spec"):
         parser.add_argument(f"--data.kinematics.{name}", default=argparse.SUPPRESS)
     parser.add_argument(
@@ -79,10 +127,11 @@ def parse_training_args(argv=None):
     )
     parser.add_argument("--normalization", choices=("dataset", "checkpoint"))
     parser.add_argument("--mixed_precision", choices=("none", "bfloat16", "float16"))
+    parser.add_argument("--tf32", type=boolean, help="TF32 for FP32 CUDA matmul and convolution")
     parser.add_argument(
         "--trainable_dtype",
         choices=TRAINABLE_DTYPES,
-        help="Trainable weight storage, independent of mixed_precision (default: preserve)",
+        help="Trainable storage, independent of mixed_precision (default: policy preset)",
     )
     parser.add_argument("--distributed_backend", choices=("ddp", "fsdp2"))
     parser.add_argument("--drop_last", type=boolean)
@@ -129,7 +178,7 @@ def parse_training_args(argv=None):
         "nesterov",
     ):
         parser.add_argument(f"--optimizer.{name}", type=value, default=argparse.SUPPRESS)
-    for name in ("type", "warmup_steps", "decay_steps", "decay_lr"):
+    for name in ("type", "warmup_steps", "decay_steps", "decay_lr", "start_step", "before_start"):
         parser.add_argument(f"--scheduler.{name}", type=value, default=argparse.SUPPRESS)
     for field in fields(EMAConfig):
         parser.add_argument(f"--ema.{field.name}", type=value, default=argparse.SUPPRESS)
@@ -189,8 +238,10 @@ def parse_training_args(argv=None):
             cfg[name] = setting
     cfg["model"] = model
     cfg = resolve_pretrained(cfg)
-    validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
+    validate_trainable_dtype(cfg.get("trainable_dtype", "preserve"))
     cfg = algorithm(cfg.get("policy", "act")).apply_preset(cfg)
+    validate_trainable_dtype(cfg.setdefault("trainable_dtype", "preserve"))
+    cfg["tf32"] = resolve_tf32(cfg)
     validate_ema_setup(cfg)
     defaults = dict(
         policy="act",
@@ -207,6 +258,10 @@ def parse_training_args(argv=None):
     )
     for name, setting in defaults.items():
         cfg.setdefault(name, setting)
+    try:
+        cfg = resolve_dataset_options(cfg)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not cfg.get("dataset"):
         parser.error("--dataset.root (or dataset in --config) is required")
     if not cfg.get("output_dir") and not cfg.get("run_name"):

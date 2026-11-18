@@ -9,6 +9,17 @@
     "Deliver status callbacks through the panel GUI context.",
     "Bound service discovery and response waits, including missing or disappearing servers.",
     "Own and join lifecycle request workers; cancel goals and stop timers on the GUI thread.",
-    "Add panel lifetime and service deadline regression tests."
-  ]
+    "Add panel lifetime and service deadline regression tests.",
+    "Use the current service QoS API on Jazzy and retain the Humble API.",
+    "Bundle the ROS package schema for offline validation."
+  ],
+  "package_schema": {
+    "repository": "https://github.com/ros-infrastructure/rep",
+    "revision": "11ca24a41f31480dfb9562ba99f2a5b93d3ebda5",
+    "files": [
+      "xsd/package_format3.xsd",
+      "xsd/package_common.xsd"
+    ],
+    "license": "Public domain (REP-149 copyright section)"
+  }
 }

@@ -11,7 +11,7 @@ import numpy as np
 
 from .collision import collision_sources, visual_sources
 from .frames import points_in_frame
-from .meshes import binary_stl
+from .meshes import read_mesh
 from .shapes import Primitive
 
 
@@ -37,7 +37,7 @@ def fit_primitives(description, links, output):
         vertices = []
         for visual in visuals:
             path = description.robot_model.directory / visual["path"]
-            raw = binary_stl(path.read_bytes())
+            raw = read_mesh(path.read_bytes(), path)
             vertices.append(
                 points_in_frame(visual["T_link_visual"], raw.vertices * np.asarray(visual["scale"]))
             )

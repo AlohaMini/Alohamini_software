@@ -1,0 +1,45 @@
+name: alohamini_ros
+channels:
+  - robostack-humble
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - numpy=1.26.4
+  - pip
+  - setuptools=70.3.0
+  - cmake>=3.16,<4
+  - make
+  - c-compiler
+  - cxx-compiler
+  - colcon-common-extensions
+  - colcon-notification
+  - pytest>=8,<9
+  - pyyaml
+  - pyzmq
+  - pillow
+  - opencv>=4.10,<5
+  - rsync
+  - ros-humble-desktop
+  - ros-humble-moveit
+  - ros-humble-ros-gz
+  - ros-humble-gz-ros2-control
+  - ros-humble-ros2-controllers
+  - ros-humble-ament-cmake-python
+  - ros-humble-ament-cmake-pytest
+  - ros-humble-control-msgs
+  - ros-humble-diagnostic-msgs
+  - ros-humble-joint-state-publisher
+  - ros-humble-tf2-ros
+  - pyserial
+  - ros-humble-nav2-bringup
+  - ros-humble-slam-toolbox
+  - ros-humble-robot-localization
+  - ros-humble-rosbag2-py
+  - ros-humble-rosbag2-transport
+  - ros-humble-ros2bag
+  - ros-humble-rosbag2-storage-default-plugins
+  - ros-humble-compressed-image-transport
+  - ros-humble-rmw-cyclonedds-cpp
+  - python-xlib
+  - ros-humble-ament-cmake-google-benchmark

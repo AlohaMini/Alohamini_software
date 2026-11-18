@@ -48,7 +48,14 @@ def validate_model(robot, *, samples=16, seed=0):
     for sample in range(samples):
         values = dict(robot.initial_positions)
         if sample:
-            values.update({j.name: rng.uniform(j.lower, j.upper) for j in active})
+            values.update(
+                {
+                    j.name: rng.uniform(j.lower, j.upper)
+                    if j.lower is not None
+                    else rng.uniform(-np.pi, np.pi)
+                    for j in active
+                }
+            )
         data = robot.data(values)
         poses = description.forward(values, robot.profile.T_world_root)
         for name, pose in poses.items():

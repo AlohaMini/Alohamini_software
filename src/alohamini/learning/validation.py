@@ -5,7 +5,8 @@ import math
 import time
 
 import torch
-from torch.utils.data import default_collate
+
+from alohamini.learning.loading import collate_samples
 
 logger = logging.getLogger(__name__)
 
@@ -105,10 +106,10 @@ def timed_batches(loader, *, device="cpu", label="Evaluation", log_freq=50, acti
 
 
 def loss_denominators(samples, reduction):
-    """Count selected numeric targets without loading images or fitting statistics."""
+    """Count requested supervision without loading images or fitting statistics."""
     totals = {}
     for start in range(0, len(samples), 128):
-        batch = default_collate(
+        batch = collate_samples(
             [samples.action_metadata(i) for i in range(start, min(start + 128, len(samples)))]
         )
         counts = reduction(batch)

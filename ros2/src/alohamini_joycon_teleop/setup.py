@@ -13,7 +13,6 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (f"share/{package_name}/config", glob("config/*.yaml") + glob("config/*.rviz")),
         (f"share/{package_name}/launch", glob("launch/*.launch.py")),
-        (f"share/{package_name}/scripts", glob("scripts/*.py")),
     ],
     install_requires=["setuptools"],
     tests_require=["pytest"],
@@ -25,7 +24,7 @@ setup(
     entry_points={
         "console_scripts": [
             "teleop_node = alohamini_joycon_teleop.teleop_node:main",
-            "joycon_input_log = alohamini_joycon_teleop.input_log:main",
+            "joycon_input_log = alohamini.inputs.joycon_log:main",
         ]
     },
 )

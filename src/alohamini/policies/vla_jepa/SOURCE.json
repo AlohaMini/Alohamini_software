@@ -1,0 +1,33 @@
+{
+  "repository": "https://github.com/ginwind/VLA-JEPA",
+  "revision": "ec907778b4af46a45742baf5ebfb2e055560346e",
+  "paper": "https://arxiv.org/abs/2602.10098",
+  "reference": "scripts/configs/vlajepa_libero_ft.yaml",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/vla_jepa"
+  },
+  "base": {
+    "repository": "https://huggingface.co/lerobot/VLA-JEPA-Pretrain",
+    "revision": "e946c3e5b538d760f4b4ff239d1b1c12090c041d",
+    "qwen": "Qwen/Qwen3-VL-2B-Instruct@89644892e4d85e24eaac8bacfd4f463576704203",
+    "teacher": "facebook/vjepa2-vitl-fpc64-256@b3c1679b7c34d3255ef3547f27c7b226aefab26f",
+    "validation": "All1617 tensor names/shapes match a full meta model, including the four frozen unused published predictor projections; full contents and full-scale convergence not tested"
+  },
+  "adaptations": [
+    "Native platform dataset, optimizer groups, independent loss denominators, shared safetensors preflight and checkpoints; no LeRobot or starVLA runtime",
+    "Qwen readouts capture last decoder block before final RMSNorm, matching original Transformers4.57 hidden_states collection; full-vocabulary logits are never computed",
+    "Selected ordered cameras all reach Qwen; explicit world_model_cameras determine predictor input/output widths; no automatic duplication or truncation",
+    "World teacher uses actual crop/patch/tubelet config, remains frozen/eval; correct view-fastest batch merge",
+    "Causal prefix teacher context default prevents bidirectional future leakage; explicit shared protocol retains original full-video context",
+    "Current images only enter the action branch; training video uses8 future rows and excludes virtual target tubelets",
+    "Named recorded state/actions replace LIBERO delta end-effector convention; MEAN_STD state,MIN_MAX action; no guessed gripper flips or relative coordinates",
+    "New robot input/output/state projections reset by default; changed world camera count requires explicit input/output projection reset",
+    "Non-reentrant checkpointing for Qwen, action DiT and latent predictor; FP32 flow/predictor math, platform-managed global TF32/AMP",
+    "Published policy configs select legacy world RoPE and retain frozen unused projections; new backbone training defaults corrected RoPE",
+    "Disabled world-model source modules may be explicitly excluded using shared strict loader; remaining schema still preflighted",
+    "LoRA, language CE, RTC, optional FlashAttention and human-video co-training are not integrated"
+  ],
+  "pretrained_weights_included": false
+}

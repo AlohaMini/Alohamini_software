@@ -44,8 +44,6 @@ alohamini_lerobot_bridge:
     # Resolve nominal geometry from expected_robot_model.
     wheel_radius: 0.0
     base_radius: 0.0
-    # Empty uses the workspace calibration/hardware directory.
-    arm_mapping_dir: ""
     # Receipt time keeps MoveIt freshness checks on the ROS computer's clock.
     # Select host_wall explicitly for timestamp-matched camera/TF calibration,
     # after synchronizing the Pi and ROS computer clocks with chrony/NTP.

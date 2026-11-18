@@ -1,4 +1,4 @@
-"""Cloud flow-policy inference over bounded JSON and unchanged Host JPEGs."""
+"""Cloud trajectory inference over bounded JSON and unchanged Host JPEGs."""
 
 from __future__ import annotations
 
@@ -21,12 +21,18 @@ from alohamini.remote.protocol import (
 )
 
 
-class NativeChunkPolicy:
+class NativePlanPolicy:
     """Load only the cloud model; never connect to a Host or open hardware."""
 
     def __init__(
-        self, checkpoint, *, device="cuda", chunk_size=None, overrides=None, fixed_current=None,
-        rtc=None,
+        self,
+        checkpoint,
+        *,
+        device="cuda",
+        chunk_size=None,
+        overrides=None,
+        fixed_current=None,
+        execution=None,
     ):
         from alohamini.learning.checkpoint import read_checkpoint
         from alohamini.policies.registry import algorithm
@@ -34,9 +40,7 @@ class NativeChunkPolicy:
         _, manifest = read_checkpoint(checkpoint)
         component = algorithm(manifest["kind"])
         if not getattr(component, "supports_remote_chunks", False):
-            raise ValueError(
-                f"{manifest['kind']} does not declare remote action-chunk support"
-            )
+            raise ValueError(f"{manifest['kind']} does not declare remote action-chunk support")
         if chunk_size is not None and (type(chunk_size) is not int or not 1 <= chunk_size <= 512):
             raise ValueError("chunk_size must be an integer in [1, 512]")
         options = dict(overrides or {})
@@ -47,20 +51,20 @@ class NativeChunkPolicy:
         self.policy = NativePolicy(
             checkpoint, device=device, fixed_current=fixed_current, **options
         )
-        from alohamini.rtc import RTCConfig
+        from alohamini.trajectory_execution import ExecutionConfig
 
-        self.rtc_config = rtc or RTCConfig()
-        self.rtc = self.rtc_config.to_dict() if self.rtc_config.enabled else None
-        horizon = component.action_horizon(self.policy.config)
-        available = horizon if self.rtc else min(horizon, self.policy.config.n_action_steps)
-        self.chunk_size = available if chunk_size is None else chunk_size
-        if not 1 <= self.chunk_size <= 512:
-            raise ValueError("Remote chunk_size must be an integer in [1, 512]")
-        if self.chunk_size > available:
-            raise ValueError("Remote chunk_size exceeds the policy execution horizon")
-        if self.rtc:
-            self.policy.validate_rtc(self.rtc_config)
-            self.rtc_config.validate_horizon(self.chunk_size)
+        self.plan_capabilities = self.policy.plan_capabilities
+        requested = execution or ExecutionConfig(enabled=True, continuity="auto")
+        self.execution_config = self.plan_capabilities.resolve(requested)
+        if not requested.enabled and self.plan_capabilities.kinds != ("tcp",):
+            raise ValueError("Remote sync currently requires a TCP action checkpoint")
+        self.execution = self.execution_config.to_dict()
+        self.chunk_size = chunk_size
+        if chunk_size is not None:
+            if self.plan_capabilities.kinds not in (("dense",), ("tcp",)):
+                raise ValueError("--chunk-size only applies to sampled action plans")
+            if chunk_size > component.action_horizon(self.policy.config):
+                raise ValueError("Remote chunk_size exceeds the policy execution horizon")
         self.names = tuple(self.policy.names)
         self.cameras = tuple(self.policy.manifest["cameras"])
         self.fps = self.policy.fps
@@ -74,8 +78,7 @@ class NativeChunkPolicy:
         from alohamini.datasets.record import state_names
         from alohamini.fixed import VELOCITIES, validate
 
-        if fps != self.fps:
-            raise ValueError("Remote control fps must exactly match the checkpoint")
+        self.fps = fps  # Control cadence is separate from the checkpoint's data FPS.
         if list(self.names) != state_names(snapshot.robot_model):
             raise ValueError("Remote action names differ from the complete Host action contract")
         if ready_units(snapshot, snapshot.robot_model, client_id) is None:
@@ -114,22 +117,33 @@ class NativeChunkPolicy:
             self.policy._fixed_current_bound = True
         self._initialized = True
 
-    def predict(self, snapshot):
+    def predict_plan(self, snapshot, prefix=None):
         if not self._initialized:
             raise RuntimeError("Remote policy has not been initialized")
-        chunk = self.policy.predict_action_chunk(snapshot, max_steps=self.chunk_size)
-        if chunk.shape[0] < self.chunk_size:
-            raise ValueError("Policy returned fewer actions than the configured remote chunk")
-        return chunk[: self.chunk_size]
-
-    def predict_rtc(self, snapshot, previous_actions, inference_delay):
-        if not self._initialized or not self.rtc:
-            raise RuntimeError("Remote RTC policy has not been initialized")
-        chunk = self.policy.predict_action_chunk(
-            snapshot, rtc=self.rtc_config, previous_actions=previous_actions,
-            inference_delay=inference_delay,
+        plan = self.policy.predict_plan(
+            snapshot,
+            prefix=prefix,
+            continuity=self.execution_config.continuity,
         )
-        return chunk[: self.chunk_size]
+        count = self.chunk_size
+        if not self.execution_config.enabled:
+            steps = getattr(self.policy.config, "n_action_steps", None)
+            if steps is not None:
+                count = steps if count is None else min(count, steps)
+        if count is not None:
+            from alohamini.trajectory import DenseActionPlan
+
+            if getattr(plan, "kind", None) == "tcp":
+                from dataclasses import replace
+
+                plan = replace(plan, actions=plan.actions[:count])
+            elif isinstance(plan, DenseActionPlan):
+                plan = DenseActionPlan(
+                    plan.names, plan.actions[:count], plan.period_s, plan.start_s
+                )
+            else:
+                raise ValueError("--chunk-size only applies to sampled action plans")
+        return plan
 
     def reset(self):
         self._initialized = False
@@ -239,15 +253,26 @@ class _Service:
                 self.backend.reset()
                 raise
             self.session = _Session(
-                route, token, context, client_id, fps, request_id, tick,
-                snapshot.received_s, time.monotonic(),
+                route,
+                token,
+                context,
+                client_id,
+                fps,
+                request_id,
+                tick,
+                snapshot.received_s,
+                time.monotonic(),
             )
             return "ready", {
-                "session": token, "id": request_id, "context": context, "fps": fps,
-                "names": list(self.backend.names), "cameras": list(self.backend.cameras),
-                "chunk_size": self.backend.chunk_size,
+                "session": token,
+                "id": request_id,
+                "context": context,
+                "fps": fps,
+                "names": list(self.backend.names),
+                "cameras": list(self.backend.cameras),
                 "fixed_current": list(getattr(self.backend, "fixed_current", ())),
-                **({"rtc": self.backend.rtc} if getattr(self.backend, "rtc", None) else {}),
+                "plan_kinds": list(self.backend.plan_capabilities.kinds),
+                "execution": self.backend.execution,
             }
         if current is None or (route, token) != (current.route, current.token):
             raise ProtocolError("No matching active remote session")
@@ -270,8 +295,11 @@ class _Service:
             self.end()
             raise
         if (
-            context != current.context or client_id != current.client_id or fps != current.fps
-            or tick < current.tick or snapshot.received_s < current.received_s
+            context != current.context
+            or client_id != current.client_id
+            or fps != current.fps
+            or tick < current.tick
+            or snapshot.received_s < current.received_s
         ):
             self.end()
             raise ProtocolError("Remote Host context, control rate or observation order changed")
@@ -279,54 +307,48 @@ class _Service:
         current.received_s, current.last_seen_s = snapshot.received_s, time.monotonic()
         started = time.monotonic()
         try:
-            if getattr(self.backend, "rtc", None):
-                rtc = body.get("rtc")
-                if not isinstance(rtc, dict) or set(rtc) != {"plan_id", "inference_delay"}:
-                    raise ProtocolError("RTC observations require plan_id and inference_delay")
-                plan_id, delay = rtc["plan_id"], rtc["inference_delay"]
-                if type(delay) is not int or not 0 <= delay < self.backend.chunk_size:
-                    raise ProtocolError("Invalid RTC inference delay")
-                previous = None
-                if plan_id is not None:
-                    if type(plan_id) is not int or plan_id not in self.plans:
-                        raise ProtocolError("RTC prefix refers to an unknown action plan")
-                    previous_tick, plan = self.plans[plan_id]
-                    offset = tick - previous_tick
-                    if not 0 < offset < len(plan) or delay >= len(plan) - offset:
-                        raise ProtocolError("RTC delay exceeds the remaining action overlap")
-                    previous = plan[offset:]
-                elif self.plans:
-                    raise ProtocolError("RTC must identify the accepted previous action plan")
-                actions = self.backend.predict_rtc(snapshot, previous, delay)
-            else:
-                if "rtc" in body:
-                    raise ProtocolError("RTC was not enabled by the server")
-                actions = self.backend.predict(snapshot)
+            from alohamini.trajectory import committed_prefix, plan_from_dict
+
+            plan_id = body.get("plan_id")
+            delay = _number(body.get("inference_delay_s", 0.0), "inference delay")
+            if delay < 0:
+                raise ProtocolError("Inference delay must be nonnegative")
+            prefix = None
+            if plan_id is not None:
+                if type(plan_id) is not int or plan_id not in self.plans:
+                    raise ProtocolError("Prefix refers to an unknown accepted trajectory plan")
+                previous_time, previous = self.plans[plan_id]
+                offset = snapshot.request_started_s - previous_time
+                if offset <= 0 or offset + delay >= previous.end_s:
+                    raise ProtocolError("Inference delay exceeds the remaining trajectory overlap")
+                prefix = committed_prefix(previous, offset, fps, delay)
+            elif self.plans and self.backend.execution.get("continuity", "none") != "none":
+                raise ProtocolError("Continuity requires the accepted previous trajectory plan")
+            plan = self.backend.predict_plan(snapshot, prefix)
+            plan = plan_from_dict(plan.to_dict(), names=self.backend.names)
+            if plan.to_dict()["kind"] not in self.backend.plan_capabilities.kinds:
+                raise ValueError("Policy returned an undeclared trajectory kind")
             inference_s = time.monotonic() - started
             if inference_s > self.timeout_s:
                 raise TimeoutError("Remote inference exceeded the request time budget")
-            actions = actions.tolist() if hasattr(actions, "tolist") else actions
-            if not isinstance(actions, list) or len(actions) != self.backend.chunk_size:
-                raise ValueError("Remote policy returned an invalid chunk length")
-            for row in actions:
-                if not isinstance(row, list) or len(row) != len(self.backend.names):
-                    raise ValueError("Remote policy returned invalid action dimensions")
-                for value in row:
-                    _number(value, "absolute action")
         except KeyError as exc:
             self.end()
             raise ProtocolError(f"Host observation is missing a policy input: {exc}") from exc
         except (ProtocolError, ValueError, TypeError, RuntimeError, TimeoutError):
             self.end()
             raise
-        if getattr(self.backend, "rtc", None):
-            self.plans[request_id] = (tick, actions)
-            while len(self.plans) > 16:
-                del self.plans[next(iter(self.plans))]
-        return "actions", {
-            "session": token, "id": request_id, "tick": tick, "fps": fps,
-            "context": context, "names": list(self.backend.names),
-            "actions": actions, "inference_s": inference_s,
+        self.plans[request_id] = (snapshot.request_started_s, plan)
+        while len(self.plans) > 16:
+            del self.plans[next(iter(self.plans))]
+        return "plan", {
+            "session": token,
+            "id": request_id,
+            "tick": tick,
+            "fps": fps,
+            "context": context,
+            "names": list(self.backend.names),
+            "plan": plan.to_dict(),
+            "inference_s": inference_s,
         }
 
 
@@ -388,10 +410,14 @@ def serve(endpoint, backend, stop_event, *, request_timeout_s=10.0, poll_timeout
                 kind, body, images = decode_message(parts)
                 kind, response = service.handle(route, kind, body, images)
             except (ProtocolError, ValueError, TypeError, RuntimeError, TimeoutError) as exc:
-                kind, response = "error", {
-                    "session": body.get("session"), "id": body.get("id"),
-                    "message": str(exc)[:4096],
-                }
+                kind, response = (
+                    "error",
+                    {
+                        "session": body.get("session"),
+                        "id": body.get("id"),
+                        "message": str(exc)[:4096],
+                    },
+                )
             if stop_event.is_set():
                 break
             try:

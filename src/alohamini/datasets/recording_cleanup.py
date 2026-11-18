@@ -112,6 +112,19 @@ def _transaction(root, cameras):
         "episode.json.tmp",
         "image_stats.json.tmp",
         "publish.json.tmp",
+        *(
+            f".video/{name}"
+            for name in (
+                "config.json",
+                "config.tmp",
+                "finished.json",
+                "finished.tmp",
+                "result.json",
+                "result.tmp",
+                "probe.mp4",
+                "worker.log",
+            )
+        ),
         *(f"videos/{camera}.mp4" for camera in cameras),
         *(f"v3/{name}" for name in new_files | _GLOBALS),
         *(f"v3/{name}.tmp" for name in _GLOBALS if name.endswith(".json")),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
@@ -13,6 +14,8 @@ from alohamini.calibration.encoder import (
     JointPositionDecoder,
 )
 from alohamini.calibration.lift import LiftCalibration
+from alohamini.calibration.reference import reference_coordinates
+from alohamini.model.joint_spec import ModelJointSpecification
 
 ARM_JOINTS = (
     "shoulder_pan",
@@ -33,7 +36,15 @@ def finite_number(value: Any, field: str) -> float:
 class JointMapper:
     """Convert between Host motor normalization and authoritative URDF space."""
 
-    def __init__(self, calibration: dict[str, Any], lift_calibration: dict[str, Any]) -> None:
+    def __init__(self, calibration=None, lift_calibration=None) -> None:
+        self._host_binding = None
+        self._automatic = calibration is None and lift_calibration is None
+        self.decoder = None
+        if self._automatic:
+            return
+        self._configure(calibration, lift_calibration)
+
+    def _configure(self, calibration, lift_calibration):
         if set(calibration) != {"left", "right"}:
             raise ValueError("Provide independent left and right arm mappings")
         self.period = 4096
@@ -67,7 +78,8 @@ class JointMapper:
         )
 
     def reset(self) -> None:
-        self.decoder.reset()
+        if self.decoder is not None:
+            self.decoder.reset()
 
     def _entry(self, side: str, joint: str) -> dict[str, Any]:
         try:
@@ -97,7 +109,54 @@ class JointMapper:
             }
         ).from_tick(tick)
 
+    def validate_host(self, metadata):
+        """Use this Host's verified Home binding, pinned for the process lifetime."""
+        if self._automatic:
+            binding = {
+                key: metadata.get(key)
+                for key in (
+                    "schema_version",
+                    "robot_model",
+                    "motors",
+                    "lift_axis",
+                    "reference_calibration",
+                )
+            }
+            if self._host_binding is None:
+                reference_coordinates(metadata)
+                spec = ModelJointSpecification.from_model(metadata["robot_model"])
+                lift = spec.joints["vertical_move"]
+                # Host height is measured from lift Home in millimetres. It
+                # shares the model's SI scale; soft limits never rescale it.
+                travel_mm = (lift.upper - lift.lower) * 1000
+                limits = metadata["lift_axis"]
+                if not 0 <= limits["soft_min_mm"] < limits["soft_max_mm"] <= travel_mm + 1e-6:
+                    raise ValueError("Host lift limits exceed the model's lift travel")
+                self._configure(
+                    metadata["reference_calibration"]["arms"],
+                    dict(
+                        mechanism=dict(physical_min_mm=0.0, physical_max_mm=travel_mm),
+                        urdf=dict(q_at_physical_min_m=lift.lower, q_at_physical_max_m=lift.upper),
+                    ),
+                )
+                self._host_binding = deepcopy(binding)
+            elif binding != self._host_binding:
+                raise ValueError("Host calibration changed; restart the bridge")
+        for side in ("left", "right"):
+            for joint, entry in self.joints_by_side[side].items():
+                captured = entry.get("motor_calibration")
+                if captured is None:
+                    continue
+                name = f"arm_{side}_{joint}"
+                motor = metadata["motors"][name]
+                if any(entry[key] != motor[key] for key in ("id", "model")) or any(
+                    captured[key] != motor[key]
+                    for key in ("homing_offset", "drive_mode", "range_min", "range_max")
+                ):
+                    raise ValueError(f"Arm mapping differs from installed Host calibration: {name}")
+
     def urdf_to_host(self, name: str, position: float, metadata: dict) -> tuple[str, float]:
+        self.validate_host(metadata)
         side, _, suffix = name.partition("_")
         joint = "wrist_yaw" if suffix == "wrist_yaw_joint" else suffix
         entry = self._entry(side, joint)
@@ -120,14 +179,38 @@ class JointMapper:
     def observation_to_joint_positions(
         self, observation: dict[str, Any], metadata: dict[str, Any]
     ) -> dict[str, float]:
+        self.validate_host(metadata)
+        feedback = observation.get("_motor_feedback")
+        if feedback is not None and (
+            not isinstance(feedback, dict)
+            or type(feedback.get("version")) is not int
+            or feedback["version"] != 1
+        ):
+            raise ValueError("Invalid raw motor feedback version")
         ticks = {}
         for side in ("left", "right"):
             for joint in ARM_JOINTS:
                 motor_name = f"arm_{side}_{joint}"
                 suffix = "wrist_yaw_joint" if joint == "wrist_yaw" else joint
-                ticks[f"{side}_{suffix}"] = self.host_to_tick(
-                    observation[f"{motor_name}.pos"], metadata["motors"][motor_name]
-                )
+                if feedback is None:
+                    tick = self.host_to_tick(
+                        observation[f"{motor_name}.pos"], metadata["motors"][motor_name]
+                    )
+                else:
+                    measured = feedback["motors"][motor_name]
+                    if not isinstance(measured, dict) or not isinstance(
+                        measured.get("field_errors", {}), dict
+                    ):
+                        raise ValueError(f"Invalid raw encoder feedback: {motor_name}")
+                    tick = measured.get("position_raw")
+                    if (
+                        type(tick) is not int
+                        or not 0 <= tick < self.period
+                        or measured.get("packet_error")
+                        or measured.get("field_errors", {}).get("position_raw")
+                    ):
+                        raise ValueError(f"Invalid raw encoder feedback: {motor_name}")
+                ticks[f"{side}_{suffix}"] = tick
         height = finite_number(observation["lift_axis.height_mm"], "lift_axis.height_mm")
         lift = self.lift_height_to_urdf(height)
         positions = self.decoder.decode(ticks)

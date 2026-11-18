@@ -4,10 +4,14 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from alohamini.model import get_robot_model
+from alohamini.model.joint_spec import ModelJointSpecification
 
 
 def robot_description(robot_model="alohamini2pro", description="collision"):
-    return get_robot_model(robot_model).description_xml(description)
+    model = get_robot_model(robot_model)
+    if not model.descriptions:
+        model = ModelJointSpecification.from_model(model).geometry_model
+    return model.description_xml(description)
 
 
 def _nodes(context):

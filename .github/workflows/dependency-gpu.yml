@@ -11,6 +11,11 @@ on:
         description: Absolute path to checkpoint cases JSON on the runner
         required: true
         type: string
+      checkpoint_backend:
+        description: Use two-GPU FSDP2 when checkpoint weights do not fit one GPU
+        type: choice
+        default: single
+        options: [single, fsdp2]
 
 permissions:
   contents: read
@@ -26,6 +31,7 @@ jobs:
     env:
       CUDA_VISIBLE_DEVICES: ${{ inputs.gpu_ids }}
       CHECKPOINT_CASES: ${{ inputs.cases }}
+      CHECKPOINT_BACKEND: ${{ inputs.checkpoint_backend }}
       HF_HUB_OFFLINE: "1"
       TOKENIZERS_PARALLELISM: "false"
       OMP_NUM_THREADS: "2"
@@ -70,12 +76,17 @@ jobs:
           python3 env/gpu_preflight.py
           conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python env/verify_pc.py
           conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python -m pytest -q --tb=short --junitxml=reports/gpu.xml \
-            tests/test_distributed_validation.py tests/test_gr00t_lewm_distributed.py tests/test_training_precision.py \
-            tests/test_xiaomi_lingbot.py tests/test_xiaomi_lingbot_distributed.py
+            tests/test_distributed_validation.py tests/test_gr00t_lewm_distributed.py tests/test_training_precision.py tests/test_policy_sharding.py \
+            tests/test_xiaomi_lingbot.py tests/test_xiaomi_lingbot_distributed.py \
+            tests/test_checkpoint_analysis.py tests/test_evaluation_analysis.py
       - name: Compare existing checkpoints on identical inputs
         run: |
           for variant in baseline candidate; do
-            conda run --no-capture-output -p "$DEPENDENCY_ENVS/$variant/alohamini" python env/checkpoint_probe.py capture \
+            command=(python env/checkpoint_probe.py capture)
+            if [ "$CHECKPOINT_BACKEND" = fsdp2 ]; then
+              command=(python -m torch.distributed.run --standalone --nproc-per-node=2 env/checkpoint_probe.py capture --distributed-backend fsdp2)
+            fi
+            conda run --no-capture-output -p "$DEPENDENCY_ENVS/$variant/alohamini" "${command[@]}" \
               --cases "$CHECKPOINT_CASES" --device cuda:0 --output "reports/$variant-checkpoints.json"
           done
           conda run --no-capture-output -p "$DEPENDENCY_ENVS/candidate/alohamini" python env/checkpoint_probe.py compare \

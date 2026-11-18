@@ -2,11 +2,13 @@
 
 import json
 from copy import deepcopy
+from itertools import islice
 from pathlib import Path
 
 import torch
-from safetensors.torch import load_file
 
+from alohamini.datasets.statistics import ExactQuantileStats
+from alohamini.learning.data_index import ordered_indices
 from alohamini.learning.metrics import MetricSpec, loss_count
 from alohamini.learning.processor import limits_statistics
 from alohamini.paths import WorkspacePaths
@@ -17,6 +19,7 @@ from .preset import apply_preset
 
 
 class GR00TN17Algorithm(ChunkAlgorithm):
+    asset_fields = ("assets_path",)
     config_class = GR00TN17Config
     apply_preset = staticmethod(apply_preset)
     supports_field_transforms = True
@@ -108,12 +111,13 @@ class GR00TN17Algorithm(ChunkAlgorithm):
                 if "q01" in stats[key] and "q99" in stats[key]:
                     stats[key].update(min=stats[key]["q01"], max=stats[key]["q99"])
                     continue
-                values = torch.stack(
-                    [samples._value(i, key).double() for i in sorted(samples._used_rows[key])]
-                )
-                low, high = torch.quantile(
-                    values, torch.tensor([0.01, 0.99], dtype=torch.float64), dim=0
-                )
+                tracker = ExactQuantileStats()
+                rows = iter(ordered_indices(samples._used_rows[key]))
+                while indices := list(islice(rows, 1024)):
+                    values = torch.stack([samples._value(i, key).double() for i in indices])
+                    tracker.update(values.detach().cpu().numpy())
+                percentiles = tracker.get_statistics()
+                low, high = percentiles["q01"], percentiles["q99"]
                 stats[key].update(
                     min=low.tolist(), max=high.tolist(), q01=low.tolist(), q99=high.tolist()
                 )
@@ -150,25 +154,9 @@ class GR00TN17Algorithm(ChunkAlgorithm):
         root = Path(
             settings.get("pretrained_path") or WorkspacePaths().pretrained / "gr00t_n17"
         ).expanduser()
-        index = root / "model.safetensors.index.json"
-        files = (
-            sorted(set(json.loads(index.read_text())["weight_map"].values()))
-            if index.exists()
-            else ["model.safetensors"]
-        )
-        expected, loaded = model.state_dict(), set()
-        for name in files:
-            values = load_file(root / name)
-            unknown = values.keys() - expected.keys()
-            if unknown:
-                raise ValueError(f"Unexpected official GR00T tensors: {sorted(unknown)[:5]}")
-            for key, tensor in values.items():
-                if key in loaded or expected[key].shape != tensor.shape:
-                    raise ValueError(f"GR00T tensor shape/name mismatch: {key}")
-            model.load_state_dict(values, strict=False)
-            loaded.update(values)
-        if loaded != expected.keys():
-            raise ValueError(f"Incomplete GR00T weights: {sorted(expected.keys() - loaded)[:5]}")
+        from alohamini.learning.weights import load_weights
+
+        load_weights(model, root)
         if model.config.reinitialize_embodiment:
             from ._vendor.embodiment_conditioned_mlp import CategorySpecificLinear
 

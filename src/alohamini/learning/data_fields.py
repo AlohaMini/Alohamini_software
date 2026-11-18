@@ -10,6 +10,8 @@ import torch
 from alohamini.datasets.field_transforms import FieldTransforms
 from alohamini.datasets.kinematic_fields import descriptor_from_dataset
 from alohamini.datasets.statistics import ExactQuantileStats
+from alohamini.learning.data_index import ordered_indices
+from alohamini.learning.fixed import _batches, _summarize_batches
 from alohamini.policies.configuration import PolicyFeature
 
 
@@ -25,7 +27,8 @@ def prepare_fields(samples, settings, components, *, options=None):
     configuration = deepcopy(settings.get("data", {}))
     if not active(configuration):
         FieldTransforms(configuration)
-        return samples
+        prepare = getattr(components, "prepare_dataset", None)
+        return prepare(samples, options or {}) if prepare else samples
     if not getattr(components, "supports_field_transforms", False):
         raise ValueError("This algorithm has not registered the common numeric-field adapter")
     if (
@@ -33,7 +36,7 @@ def prepare_fields(samples, settings, components, *, options=None):
         and options
         and options.get("temporal_ensemble_coeff") is not None
     ):
-        raise ValueError("TCP actions require chunk execution without ACT temporal blending")
+        raise ValueError("Transformed actions require chunk execution without temporal blending")
     configuration.setdefault("version", 1)
     kinematics = configuration.pop("kinematics", {})
     unknown = set(kinematics) - {"reference_pose", "path", "spec"}
@@ -41,7 +44,10 @@ def prepare_fields(samples, settings, components, *, options=None):
         raise ValueError(f"Unknown data.kinematics options: {sorted(unknown)}")
     if kinematics and configuration.get("kinematic_fields"):
         raise ValueError("Choose either a frozen kinematic descriptor or a new kinematics source")
-    if not configuration.get("kinematic_fields"):
+    needs_geometry = configuration.get("state_representation") == "tcp" or configuration.get(
+        "action_representation"
+    ) in ("tcp_absolute", "tcp_delta")
+    if needs_geometry and not configuration.get("kinematic_fields"):
         choices = [name for name in ("reference_pose", "path", "spec") if kinematics.get(name)]
         if len(choices) > 1:
             raise ValueError("Choose one data.kinematics.reference_pose, path or spec")
@@ -67,6 +73,27 @@ def prepare_fields(samples, settings, components, *, options=None):
         if key in configuration and configuration[key] != value:
             raise ValueError(f"Data field-transform source selection mismatch: {key}")
         configuration[key] = deepcopy(value)
+    if configuration.get("action_representation") == "joint_delta":
+        action_names = samples.info["features"]["action"]["names"]
+        if configuration.get("source_action_names", action_names) != action_names:
+            raise ValueError("joint_delta source action fields/order changed")
+        configuration["source_action_names"] = list(action_names)
+        if "joint_delta_fields" not in configuration:
+            from alohamini.model import get_robot_model
+
+            metadata = samples.info.get("robot_metadata")
+            if not metadata:
+                raise ValueError(
+                    "joint_delta needs recorded robot metadata or explicit data.joint_delta_fields"
+                )
+            model = get_robot_model(metadata["robot_model"])
+            configuration["joint_delta_fields"] = {
+                f"{motor.name}.pos": f"{motor.name}.pos"
+                for motor in model.actuators
+                if motor.name.startswith("arm_")
+                and not motor.name.endswith("_gripper")
+                and f"{motor.name}.pos" in action_names
+            }
     transform = FieldTransforms(configuration)
     transform.validate_source(
         samples.info, samples.selection.feature if samples.selection else None
@@ -135,44 +162,44 @@ class FieldDataset(torch.utils.data.Dataset):
     def action_metadata(self, index):
         raw = self.source.action_metadata(index)
         row = self.sample_indices[index]
-        state = self.selection.frame(self.rows[row]) if self.selection else None
-        _, actions = self.field_transform.encode(
+        state = raw["observation.state"].numpy() if "observation.state" in raw else (
+            self.selection.frame(self.rows[row]) if self.selection else None
+        )
+        encoded_state, actions = self.field_transform.encode(
             state, raw["action"].numpy(), anchor=self.field_transform.context(self.rows[row])
         )
-        return {**raw, "action": torch.as_tensor(actions, dtype=torch.float32)}
+        result = {**raw, "action": torch.as_tensor(actions, dtype=torch.float32)}
+        if "observation.state" in raw and encoded_state is not None:
+            result["observation.state"] = torch.as_tensor(encoded_state, dtype=torch.float32)
+        return result
+
+    def numeric_sample(self, index, keys=None):
+        return self._convert(self.source.numeric_sample(index, keys), index)
 
     def numeric_statistics(self, *, action_windows=True):
         """Fit transformed values using the algorithm's action sampling population."""
         fields = self.field_transform
-        anchors = (
-            fields.geometry.absolute(
-                np.asarray([fields.context(self.rows[i]) for i in self.sample_indices])
-            )
-            if fields.action == "tcp_delta"
-            else None
-        )
-        rows = sorted(self.source._used_rows["action"])
-        actions = np.asarray([self.rows[i]["action"] for i in rows])
-        if fields.action != "recorded":
-            actions = fields.geometry.absolute(actions)
-        lookup = dict(zip(rows, actions, strict=True))
         trackers = {"action": ExactQuantileStats()}
         if self.selection:
-            state_rows = sorted(self.source._used_rows["observation.state"])
-            states = np.asarray([self.selection.frame(self.rows[i]) for i in state_rows])
-            context = np.asarray([fields.context(self.rows[i]) for i in state_rows])
-            state_values, _ = fields.encode(states, anchor=context)
             trackers["observation.state"] = ExactQuantileStats()
-            trackers["observation.state"].update(state_values)
-        if action_windows or anchors is not None:
-            for number, row in enumerate(self.sample_indices):
+            for batch in _batches(ordered_indices(self.source._used_rows["observation.state"])):
+                rows = [self.rows[i] for i in batch]
+                states = np.asarray([self.selection.frame(row) for row in rows])
+                context = np.asarray([fields.context(row) for row in rows])
+                state_values, _ = fields.encode(states, anchor=context)
+                trackers["observation.state"].update(state_values)
+        if action_windows or fields.action in ("tcp_delta", "joint_delta"):
+            for row in self.sample_indices:
                 indices, _ = self._get_query_indices(row)
-                targets = np.asarray([lookup[i] for i in indices["action"]])
-                if anchors is not None:
-                    targets = fields.relative.encode(anchors[number], targets)
+                targets = np.asarray([self.rows[i]["action"] for i in indices["action"]])
+                targets = fields.encode_actions(fields.context(self.rows[row]), targets)
                 trackers["action"].update(targets)
         else:
-            trackers["action"].update(actions)
+            for batch in _batches(ordered_indices(self.source._used_rows["action"])):
+                actions = np.asarray([self.rows[i]["action"] for i in batch])
+                if fields.action == "tcp_absolute":
+                    actions = fields.geometry.absolute(actions)
+                trackers["action"].update(actions)
         return {
             key: {name: value.tolist() for name, value in tracker.get_statistics().items()}
             for key, tracker in trackers.items()
@@ -183,14 +210,16 @@ class FieldDataset(torch.utils.data.Dataset):
         if self.selection is None:
             return None
         if "_recorded_state_statistics" not in self.__dict__:
-            rows = sorted(self.source._used_rows["observation.state"])
-            values = np.asarray(
-                [self.selection.frame(self.rows[i]) for i in rows], dtype=np.float64
+            summary = _summarize_batches(
+                (
+                    [self.selection.frame(self.rows[i]) for i in batch]
+                    for batch in _batches(
+                        ordered_indices(self.source._used_rows["observation.state"])
+                    )
+                ),
+                self.selection.feature["names"],
             )
-            self._recorded_state_statistics = {
-                "mean": values.mean(0).tolist(),
-                "std": values.std(0).tolist(),
-            }
+            self._recorded_state_statistics = {key: summary[key] for key in ("mean", "std")}
         return self._recorded_state_statistics
 
     def statistics(self, *, keys=None):
@@ -207,7 +236,9 @@ class FieldProcessor:
 
     def __init__(self, processor, transform, device):
         self.processor, self.field_transform, self.device = processor, transform, device
-        self.decode_before_queue = transform.action != "recorded"
+        self.decode_before_queue = (
+            transform.action != "recorded" or getattr(processor, "decode_before_queue", False)
+        )
 
     def __getattr__(self, name):
         return getattr(self.processor, name)
@@ -226,11 +257,11 @@ class FieldProcessor:
                 and observed is not None
                 and observed.ndim == 2
                 and self.field_transform.selected is not None
-                and self.field_transform.selected["names"] == self.field_transform.geometry.names
+                and self.field_transform.selected["names"] == self.field_transform.context_names
             ):
                 anchor = observed
             if anchor is None:
-                raise ValueError("TCP transforms require the original joint observation context")
+                raise ValueError("Field transforms require the original joint observation context")
             state, actions = self.field_transform.encode(
                 batch["observation.state"].detach().cpu().numpy()
                 if "observation.state" in batch
@@ -252,7 +283,7 @@ class FieldProcessor:
         if self.field_transform.action == "recorded":
             return values
         if context is None:
-            raise ValueError("TCP decoding requires the original numeric observation anchor")
+            raise ValueError("Action decoding requires the original numeric observation anchor")
         single = values.ndim == 2
         actions = values[:, None] if single else values
         restored = self.field_transform.decode(
@@ -260,3 +291,16 @@ class FieldProcessor:
         )
         result = torch.as_tensor(restored, dtype=torch.float32, device=values.device)
         return result[:, 0] if single else result
+
+    def tcp_action(self, tensor, *, context):
+        """Unnormalize to absolute TCP references, without any inverse kinematics."""
+        transform = self.field_transform
+        if transform.action not in ("tcp_absolute", "tcp_delta"):
+            raise ValueError("TCP references require TCP action fields")
+        values = self.processor.action(tensor, context=context).detach().float().cpu().numpy()
+        if transform.action == "tcp_delta":
+            if context is None:
+                raise ValueError("TCP deltas require the original observation anchor")
+            anchor = transform.geometry.absolute(context.detach().float().cpu().numpy())
+            values = transform.relative.decode(anchor, values)
+        return values

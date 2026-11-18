@@ -1,0 +1,501 @@
+{
+  "format": "alohamini-structural-primitives-v1",
+  "coordinates": "URDF link-local metres",
+  "arm_bases": {
+    "left_Base": {
+      "source": "meshes/visual/left_Base.STL",
+      "sha256": "e434f4998e44e8ba1ffa2b90f97a3811e8be025dea779a66a5c7f365f46f6913",
+      "shaft_joint": "left_shoulder_pan",
+      "bearing_component_index": 1,
+      "bearing_triangles": 6870,
+      "mount_component_index": 2,
+      "foot_partition_plane_m": 0.01995048299431801,
+      "foot_partition_basis": "upper bound of the existing low mounting-ear collision region",
+      "scope": "exterior housing envelope; mounting holes and interior cavities are filled",
+      "pieces": [
+        {
+          "type": "cylinder",
+          "parameters": {
+            "radius": 0.04001677408814448,
+            "length": 0.042611103504896164
+          },
+          "T_link_geometry": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.04125594533979893
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8.obj",
+          "sha256": "bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8",
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "T_link_geometry": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "vertices": 74,
+          "triangles": 144
+        },
+        {
+          "type": "box",
+          "parameters": {
+            "size": [
+              0.04200018011033535,
+              0.02648900022085242,
+              0.06725495215505362
+            ]
+          },
+          "T_link_geometry": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              9.632669389247894e-06
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.04730230038376782
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.04227361502125859
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "qualification": {
+        "surface_coverage": {
+          "algorithm": "triangle-polyhedron subtraction and convex cylinder distance bound",
+          "source_triangles": 93504,
+          "residual_polygons_checked": 48490,
+          "maximum_source_outside_distance_bound_m": 5.684944643282145e-14,
+          "tolerance_m": 1e-06,
+          "arithmetic_guard_m": 5.684341886080802e-14,
+          "passed": true
+        },
+        "prepared_surface_error_bound_m": 0.00010305720861948566,
+        "tolerance_m": 0.0005,
+        "source_encoding_guard_m": 8.940696716308594e-08
+      },
+      "tolerance_m": 0.0005
+    },
+    "right_Base": {
+      "source": "meshes/visual/right_Base.STL",
+      "sha256": "e434f4998e44e8ba1ffa2b90f97a3811e8be025dea779a66a5c7f365f46f6913",
+      "shaft_joint": "right_shoulder_pan",
+      "bearing_component_index": 1,
+      "bearing_triangles": 6870,
+      "mount_component_index": 2,
+      "foot_partition_plane_m": 0.01995048299431801,
+      "foot_partition_basis": "upper bound of the existing low mounting-ear collision region",
+      "scope": "exterior housing envelope; mounting holes and interior cavities are filled",
+      "pieces": [
+        {
+          "type": "cylinder",
+          "parameters": {
+            "radius": 0.04001677408814448,
+            "length": 0.042611103504896164
+          },
+          "T_link_geometry": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.04125594533979893
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "type": "mesh",
+          "mesh": "meshes/collision/structural/bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8.obj",
+          "sha256": "bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8",
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "T_link_geometry": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "vertices": 74,
+          "triangles": 144
+        },
+        {
+          "type": "box",
+          "parameters": {
+            "size": [
+              0.04200018011033535,
+              0.02648900022085242,
+              0.06725495215505362
+            ]
+          },
+          "T_link_geometry": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              9.632669389247894e-06
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.04730230038376782
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.04227361502125859
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "qualification": {
+        "surface_coverage": {
+          "algorithm": "triangle-polyhedron subtraction and convex cylinder distance bound",
+          "source_triangles": 93504,
+          "residual_polygons_checked": 48490,
+          "maximum_source_outside_distance_bound_m": 5.684944643282145e-14,
+          "tolerance_m": 1e-06,
+          "arithmetic_guard_m": 5.684341886080802e-14,
+          "passed": true
+        },
+        "prepared_surface_error_bound_m": 0.00010305720861948566,
+        "tolerance_m": 0.0005,
+        "source_encoding_guard_m": 8.940696716308594e-08
+      },
+      "tolerance_m": 0.0005
+    }
+  },
+  "lift_body": {
+    "source": "meshes/visual/vertical_link.STL",
+    "sha256": "ca0df2d2b789b805c808a7550d2974bf005571db91b2ac3bb929df770011da66",
+    "link": "vertical_link",
+    "housing_component_index": 0,
+    "housing_face_counts": [
+      1876,
+      1878,
+      2876
+    ],
+    "beam_component_index": 1,
+    "internal_contact_pair": [
+      "base_cad_link",
+      "vertical_link"
+    ],
+    "scope": "closed exterior envelopes; servo access windows and structural pockets filled",
+    "pieces": [
+      {
+        "type": "box",
+        "parameters": {
+          "size": [
+            0.14168239384889603,
+            0.06322334753349423,
+            0.14360052347183228
+          ]
+        },
+        "T_link_geometry": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            5.437806248664856e-05
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            -0.03728730953298509
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.3992372155189514
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "type": "box",
+        "parameters": {
+          "size": [
+            0.23999999463558197,
+            0.019815001636743546,
+            0.039805829524993896
+          ]
+        },
+        "T_link_geometry": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            4.830211400985718e-05
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            -0.04472643695771694
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.44782501459121704
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "type": "box",
+        "parameters": {
+          "size": [
+            0.04064766317605972,
+            0.007971413433551788,
+            0.03957172350051413
+          ]
+        },
+        "T_link_geometry": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            3.016553819179535e-05
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            -0.0728846900165081
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.445900569935453
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      {
+        "type": "mesh",
+        "mesh": "meshes/collision/structural/424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35.obj",
+        "sha256": "424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35",
+        "scale": [
+          0.001,
+          0.001,
+          0.001
+        ],
+        "T_link_geometry": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "vertices": 78,
+        "triangles": 152
+      },
+      {
+        "type": "mesh",
+        "mesh": "meshes/collision/structural/ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908.obj",
+        "sha256": "ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908",
+        "scale": [
+          0.001,
+          0.001,
+          0.001
+        ],
+        "T_link_geometry": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "vertices": 78,
+        "triangles": 152
+      }
+    ],
+    "qualification": {
+      "algorithm": "major-housing convex envelopes and accessory triangle-box subtraction",
+      "source_triangles": 57479,
+      "surface_coverage_passed": true,
+      "surface_coverage_error_bound_m": 9.071627359529005e-05,
+      "tolerance_m": 0.0005,
+      "convex_shell_vertices": [
+        78,
+        78
+      ],
+      "box_count": 3,
+      "internal_contact_pair": [
+        "base_cad_link",
+        "vertical_link"
+      ],
+      "lift_range_m": [
+        -0.3,
+        0.3
+      ],
+      "scope": "external T-carriage envelope; internal guide and drive contact use the joint model"
+    },
+    "tolerance_m": 0.0005
+  }
+}

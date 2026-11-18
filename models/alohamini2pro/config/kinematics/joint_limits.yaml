@@ -12,14 +12,11 @@ units:
 # An entry marked calibrated: false must not be treated as a physical safety
 # limit.
 joints:
-  root_x_axis_joint: {type: prismatic, lower: -20.0, upper: 20.0, velocity: 1.0, effort: 500.0, calibrated: false}
-  root_y_axis_joint: {type: prismatic, lower: -20.0, upper: 20.0, velocity: 1.0, effort: 500.0, calibrated: false}
-  root_z_rotation_joint: {type: revolute, lower: -6.28, upper: 6.28, velocity: 1.0, effort: 500.0, calibrated: false}
-  vertical_move: {type: prismatic, lower: -0.3, upper: 0.3, velocity: 0.05, effort: 74.2, calibrated: provisional_from_sts3095_c002_rating_and_screw_lead}
+  vertical_move: {type: prismatic, lower: -0.3, upper: 0.3, velocity: 0.05, effort: 74.2, calibrated: accepted_lift_endpoint_mapping, effort_source: nominal_sts3095_rating_and_lead}
 
-  wheel1_joint: {type: continuous, calibrated: derived_from_realized_base_motion}
-  wheel2_joint: {type: continuous, calibrated: derived_from_realized_base_motion}
-  wheel3_joint: {type: continuous, calibrated: derived_from_realized_base_motion}
+  wheel1_joint: {type: continuous, velocity: 4.2, effort: 1.57, calibrated: nominal_sts3250_rating}
+  wheel2_joint: {type: continuous, velocity: 4.2, effort: 1.57, calibrated: nominal_sts3250_rating}
+  wheel3_joint: {type: continuous, velocity: 4.2, effort: 1.57, calibrated: nominal_sts3250_rating}
 
   left_shoulder_pan: {type: revolute, lower: -2.196660488252487, upper: 2.208932334555513, velocity: 4.2, effort: 1.57, calibrated: accepted_hardware_joint_map}
   left_shoulder_lift: {type: revolute, lower: -3.505146100318774, upper: 0.018407769454226, velocity: 2.48, effort: 2.21, calibrated: accepted_hardware_joint_map}

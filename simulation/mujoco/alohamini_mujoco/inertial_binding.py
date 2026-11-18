@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from .inertia import MassProperties, combine
-from .organization import description_hashes
+from .organization import matches_description_hashes
 
 
 def load_inertial_bundle(description, path, locked_positions):
@@ -25,7 +25,7 @@ def load_inertial_bundle(description, path, locked_positions):
         definition.get("schema_version") != 1
         or definition.get("robot_model") != description.robot_model.model_id
         or definition.get("units") != "kg, m, kg*m^2"
-        or definition.get("source_description_sha256") != description_hashes(description)
+        or not matches_description_hashes(description, definition.get("source_description_sha256"))
     ):
         raise ValueError("Inertial binding requires the current robot description and SI units")
     required_locks = definition["required_locked_positions"]

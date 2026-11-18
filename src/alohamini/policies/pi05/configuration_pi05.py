@@ -41,17 +41,18 @@ class PI05Config:
     def __post_init__(self):
         if not self.pi05 or not self.discrete_state_input:
             raise ValueError("PI0.5 requires discrete state input and timestep adaRMSNorm")
-        if self.dtype not in ("float32", "bfloat16"):
-            raise ValueError("dtype must be float32 or bfloat16")
-        if min(self.action_dim, self.action_horizon, self.max_token_len) < 1:
-            raise ValueError("Model dimensions must be positive")
-        get_config(self.paligemma_variant)
-        get_config(self.action_expert_variant)
-        if self.pytorch_compile_mode not in (
-            None,
-            "default",
-            "reduce-overhead",
-            "max-autotune",
-            "max-autotune-no-cudagraphs",
-        ):
-            raise ValueError("Unsupported PyTorch compile mode")
+        validate_dimensions(self)
+
+
+def validate_dimensions(config):
+    """Shared Pi family geometry and compute options; state encoding stays explicit."""
+    if config.dtype not in ("float32", "bfloat16"):
+        raise ValueError("dtype must be float32 or bfloat16")
+    if min(config.action_dim, config.action_horizon, config.max_token_len) < 1:
+        raise ValueError("Model dimensions must be positive")
+    get_config(config.paligemma_variant)
+    get_config(config.action_expert_variant)
+    if config.pytorch_compile_mode not in (
+        None, "default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs",
+    ):
+        raise ValueError("Unsupported PyTorch compile mode")

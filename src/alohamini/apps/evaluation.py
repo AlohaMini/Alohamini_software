@@ -120,7 +120,11 @@ class EvaluationGuard:
 
 
 def _bind_calibration(policy, snapshot):
-    if getattr(policy, "calibration_mode", None) not in ("normalized", "legacy_normalized"):
+    if getattr(policy, "calibration_mode", None) not in (
+        "strict",
+        "normalized",
+        "legacy_normalized",
+    ):
         return
     report = policy.bind_robot(snapshot)
     if report is None:
@@ -129,7 +133,9 @@ def _bind_calibration(policy, snapshot):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"calibration-transfer-{time.time_ns()}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
-    if report.get("mode") == "legacy_normalized":
+    if report.get("mode") == "model_coordinates":
+        logging.info("已核对相同型号坐标，绑定当前设备标定：%s", path)
+    elif report.get("mode") == "legacy_normalized":
         logging.warning(
             "旧数据归一化部署：按声明的动作单位使用当前 Host 标定；原始标定仍未知。部署记录：%s",
             path,
@@ -399,8 +405,8 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                         **({"fixed_dimensions": fixed_config} if fixed_targets else {}),
                         "policy_action": {name: float(value[name]) for name in names},
                         **(
-                            {"rtc_timing": deepcopy(policy.rtc_timing)}
-                            if isinstance(getattr(policy, "rtc_timing", None), dict) else {}
+                            {"execution_timing": deepcopy(policy.execution_timing)}
+                            if isinstance(getattr(policy, "execution_timing", None), dict) else {}
                         ),
                         "issued_command": asdict(identity),
                         "host_timing": timing,
@@ -453,6 +459,10 @@ def evaluate(
     if not callable(factory):
         raise ValueError("Policy factory is not callable")
     policy = factory()
+    if getattr(policy, "tcp_reference_actions", False) is True:
+        from alohamini.learning.trajectory_execution import prepare_execution
+
+        policy = prepare_execution(policy, control_fps=fps)
     if not all(callable(getattr(policy, name, None)) for name in ("reset", "select_action")):
         raise ValueError("Policy must provide reset() and select_action(snapshot)")
     if not isinstance(getattr(policy, "robot_metadata", None), Mapping):

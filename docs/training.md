@@ -2,7 +2,7 @@
 
 ## 1. 准备
 
-完成 [PC 安装](install.md)，在仓库根目录执行：
+完成 [PC 安装](install.md)，按需安装[策略与功能扩展](install.md#3-可选扩展)，在仓库根目录执行：
 
 ```bash
 cd ~/Alohamini
@@ -74,39 +74,6 @@ alohamini dataset check /path/to/dataset_repaired --decode-images --decode-video
 缺少平台标定和安全记录的外部 v3 数据，训练时加 `--dataset.allow_unannotated=true`。
 有 state 时可用 `--state=recorded` 读取原向量，保留字段顺序和数值；纯视觉任务使用 `--state=none`。
 
-### MuJoCo 仿真数据
-
-支持读取已收录的 `alohamini-sim-v1` 回合或完成的 `alohamini-sim-batch-v1` 批次，无需转换为 LeRobot。`--dataset.root` 指向含 `dataset.json` 或 `index.json` 的目录；批次中的拒收回合及评估组不参与训练。回合按收录顺序从 0 编号，原任务与初态保存在 `episode_groups`，同组不能跨训练与验证。
-
-关节位置和动作保持具名的 rad/m，使用 `--state=recorded` 或默认 `auto`；图像与动作读取同一控制周期。仿真数据不需要 `--dataset.allow_unannotated`。当前支持检查、训练与仿真评测，不支持 `dataset edit`，不能直接与 Host 归一化动作混训或下发真机。
-
-```bash
-python -m pip install -e '.[learning]' -e './simulation/mujoco[collection]'
-alohamini dataset check "$DATASET" --decode-images
-python -m alohamini.learning.train --config examples/learning/act_simulation.json \
-  --dataset.root="$DATASET" --run_name=act_spatial_01 --background
-```
-
-示例使用三路 128×128 图像、100 帧动作块、20 Hz 控制和 ACT 时间融合。需要离线验证时，通过 `--dataset.eval_episodes='[1,5]' --eval_steps=5000` 留出收录回合；评估组初态 40–49 始终不进入训练或归一化统计。日志与 PID 保存在 `logs/training/`，checkpoint 保存输入单位、数据指纹、归一化和完整配置。
-
-使用匹配采集时模型、初态和场景配置进行闭环评测：
-
-```bash
-MUJOCO_GL=egl alohamini-mujoco evaluate \
-  ~/Alohamini_workspace/runs/act_spatial_01/checkpoint \
-  --libero-bundle "$LIBERO_BUNDLE" \
-  --scene-config examples/simulation/libero_spatial_near.json --task-index 8 \
-  --collision-bundle "$COLLISION_BUNDLE" --inertial-bundle "$INERTIAL_BUNDLE" \
-  --reset-indices {40..49} --horizon-s 60 --device cuda \
-  --output "${EVALUATION_OUTPUT:?请设置新评测目录}"
-```
-
-`benchmark.json` 保存各初态的原始任务结果、稳定释放、物理限制与回放结果，以及策略权重指纹。控制按 20 Hz 执行，目标投影到 URDF 位置范围并记录投影量；实际关节速度、限位或穿透超限时，该次评测失败。成功要求原始 `On` 条件满足且释放后保持至少 0.5 s，不代表原 Panda LIBERO 得分。
-
-初态落稳碰撞或初始目标已满足时，记录 `scene_reset_rejected`，继续后续初态；拒绝项保留在成功率分母。`complete` 为真表示全部指定初态均已处理，`reset_failures` 单独记录初始化失败数。
-
-交互查看时改为 `MUJOCO_GL=glfw`，增加 `--view --window-egl-device 0 --reset-indices 40`，只选择一个初态；空格播放，关闭窗口结束，未完成记为中断。评测仅支持当前帧观测和绝对 SI 关节动作；结果不作为训练数据收录。场景、数采与回放用法见 [MuJoCo 手册](simulation.md)。
-
 ### 导出与纯视觉副本
 
 需要另存或移除数值观测时：
@@ -136,26 +103,24 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 
 ### 关节、TCP 与相对目标
 
-`--state` 选择模型输入字段；以下参数选择 state/action 的表示。转换后计算统计与归一化，原数据不变。
+`--state` 选择输入字段，以下参数选择输入和动作的表示；原数据不变。
 
 | 参数 | 选项与用途 |
 | --- | --- |
-| `--data.state_representation` | `recorded` 保留记录值；`tcp` 将臂关节位置替换为末端位姿，保留其他所选字段 |
-| `--data.action_representation` | `recorded` 保留控制目标；`tcp_absolute` 绝对末端目标；`tcp_delta` 相对当前观测的末端目标 |
-| `--data.rotation_representation` | TCP 旋转编码：`rotvec`（默认，3 维）；`rotation_6d`（6 维，旋转矩阵前两行）；同时作用于所选 TCP state/action |
-| `--data.tcp_delta_frame` | 仅用于 `tcp_delta`：`base`（默认）在各臂基座系表达增量；`tool` 在当前末端系表达相对位姿，夹爪等其他字段保持绝对目标 |
-| `--data.kinematics.reference_pose` | 覆盖自动选择，使用指定型号预设，如 `upright_forward` |
-| `--data.kinematics.spec` | 自定义坐标与几何 JSON，见[弧度坐标示例](../examples/datasets/kinematics-radians.json) |
-| `--data.kinematics.path` | 复用已解析的转换描述 JSON |
+| `--data.state_representation` | `recorded`：原始输入；`tcp`：将臂关节位置改为末端位姿 |
+| `--data.action_representation` | `recorded`：原始控制目标；`joint_delta`：相对关节目标；`tcp_absolute`：绝对末端目标；`tcp_delta`：相对末端目标 |
+| `--data.joint_delta_fields` | 外部数据的动作字段到观测字段 JSON 映射；平台关节自动匹配，双方坐标与单位须一致 |
+| `--data.rotation_representation` | `rotvec`（默认，3 维）或 `rotation_6d`（6 维） |
+| `--data.tcp_delta_frame` | TCP 增量坐标系：`base`（默认，各臂基座）或 `tool`（当前末端） |
+| `--data.kinematics.reference_pose` | 型号标定预设，如 `upright_forward` |
+| `--data.kinematics.spec` / `--data.kinematics.path` | 自定义映射 JSON / 映射文件路径，见[示例](../examples/datasets/kinematics-radians.json) |
 
-`kinematics` 可省略：复用配置/checkpoint 中的描述，否则读取数据集 `meta/kinematics.json`，再使用型号默认预设；`alohamini2pro` 默认 `upright_forward`，绑定采集期标定。显式指定时三种来源选一。
-ACT 默认保留记录表示；Spirit 默认使用 TCP state 和 TCP 增量动作。
-GR00T、HyVLA 可按需选择表示；LeWM 动作仅支持 `recorded`、`tcp_absolute`。
+输入和动作可独立选择；未指定时沿用[策略预设](#策略选择)。相对动作均以当前观测为基准，整段共用同一基准；夹爪等其他字段仍为绝对目标。
+TCP 位置单位为 m，旋转向量单位为 rad；左右臂分别使用 `left_Base`、`right_Base`。
 
-对按 `upright_forward` 姿态完成半圈归零的 `alohamini2pro` 数据：
+TCP 训练示例：
 
 ```bash
-pip install -e '.[kinematics]'
 alohamini train --policy.type=act \
   --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
   --state=joint_position \
@@ -164,20 +129,8 @@ alohamini train --policy.type=act \
   --run_name=act_tcp_01 --background
 ```
 
-该标定姿态要求大臂竖直向上、小臂及夹爪向前、夹爪开合平面水平，肩部转向与腕部偏转居中。
-预设读取采集期的编码器范围、方向及归零参数；选择预设不会移动机器人或重新归零。
-Host 归一化值、编码器 tick 不能直接标为模型关节角 `rad`／`deg`；自定义数据须声明参考角、参考编码器值、方向、传动比和几何。
-
-state 与 action 可独立选择：只转换动作时使用 `--data.state_representation=recorded`。
-ACT 使用 `--state=none` 预测 TCP 动作时，原数据仍须保留关节观测供转换及 IK 使用。
-TCP 动作不支持 ACT 时间融合。
-
-每臂输出位置 3 维（m）及旋转向量 3 维（rad）或 6D 旋转；夹爪按配置追加，底盘速度和升降高度透传。
-内置双臂分别使用 `left_Base`、`right_Base`，不隐含世界坐标。
-`tcp_delta` 的整段动作共用当前观测锚点，不是相邻帧差或逐步累积；旋转按矩阵组合。
-推理还原目标后连续求 IK，不可达、越界或不收敛时报错。
-
-需要复用转换描述时，可先导出，再用 `--data.kinematics.path` 加载：
+标定默认读取数据集 `meta/kinematics.json`，缺省使用型号预设。主从臂标定见 [使用手册](alohamini.md#2-主从臂标定)；非标准标定或外部数据须指定实际映射。
+映射随 checkpoint 保存，部署时须与机器人标定一致。需要导出映射时：
 
 ```bash
 mkdir -p "$HOME/Alohamini_workspace/configs"
@@ -186,18 +139,53 @@ python -m alohamini.datasets.kinematic_fields \
   --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
 ```
 
-非标准中位数据须用 `--data.kinematics.spec/path` 指定实际映射；缺少 Host 标定的外部数据也须提供描述。
-导出自定义 JSON 时增加 `--spec`。已有双六关节臂 Host YAML 时，也可使用
-`--left-map /path/left.yaml --right-map /path/right.yaml`；每关节须包含匹配采集期的
-`motor_calibration`（`homing_offset`、`range_min`、`range_max`、`drive_mode`）。
-导出文件须尚不存在；命令只生成转换描述，不改写数据。
-
-字段、单位、几何、编码器映射与统计量随 checkpoint 保存；续训不依赖原配置文件。
-部署须匹配来源坐标，关节比例迁移不能替代 TCP 映射。动作转换始终使用记录的控制目标，不替换为未来实测反馈。
+导出文件须尚不存在；自定义映射加 `--spec`，使用 Host 标定文件加 `--left-map /path/left.yaml --right-map /path/right.yaml`。
+训练时通过 `--data.kinematics.path` 加载；`reference_pose`、`spec`、`path` 三选一。
+TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理设置见[推理模式](#推理模式)。
 
 ## 4. 训练
 
-以下命令留出 episode 1 做验证，其余回合训练。数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+### 策略选择
+
+各策略的训练命令、权重准备和专用参数见对应目录：
+
+| 策略 | `policy.type` |
+| --- | --- |
+| <a id="act"></a>[ACT](../src/alohamini/policies/act/README.md) | `act` |
+| <a id="am-act"></a><a id="条件-cvae"></a>[AM-ACT](../src/alohamini/policies/am_act/README.md)（[条件 CVAE](../src/alohamini/policies/am_act/README.md#条件-cvae)） | `am_act` |
+| <a id="diffusion-policy"></a>[Diffusion Policy](../src/alohamini/policies/diffusion/README.md) | `diffusion` |
+| <a id="b-spline-policy"></a>[B-spline Policy](../src/alohamini/policies/bspline/README.md) | `bspline` |
+| <a id="cdp"></a>[CDP](../src/alohamini/policies/cdp/README.md) | `cdp` |
+| <a id="dit-policydit-block"></a>[dit-policy（DiT-Block）](../src/alohamini/policies/dit_policy/README.md) | `dit_policy` |
+| <a id="multi-task-dit"></a>[Multi-Task DiT](../src/alohamini/policies/multi_task_dit/README.md) | `multi_task_dit` |
+| <a id="fastwam"></a>[FastWAM](../src/alohamini/policies/fastwam/README.md) | `fastwam` |
+| [Long-WAM](../src/alohamini/policies/longwam/README.md) | `longwam` |
+| [VQ-BeT](../src/alohamini/policies/vqbet/README.md) | `vqbet` |
+| <a id="ac-dit"></a>[AC-DiT](../src/alohamini/policies/acdit/README.md) | `acdit` |
+| <a id="gr00t-n17"></a>[GR00T N1.7](../src/alohamini/policies/gr00t_n17/README.md) | `gr00t_n17` |
+| <a id="leworldmodel"></a>[LeWorldModel](../src/alohamini/policies/lewm/README.md) | `lewm` |
+| <a id="smolvla"></a>[SmolVLA](../src/alohamini/policies/smolvla/README.md) | `smolvla` |
+| <a id="π05"></a>[π0.5](../src/alohamini/policies/pi05/README.md) | `pi05` |
+| [π0](../src/alohamini/policies/pi0/README.md) | `pi0` |
+| [π0-FAST](../src/alohamini/policies/pi0_fast/README.md) | `pi0_fast` |
+| [EO-1](../src/alohamini/policies/eo1/README.md) | `eo1` |
+| [EVO1](../src/alohamini/policies/evo1/README.md) | `evo1` |
+| [X-VLA](../src/alohamini/policies/xvla/README.md) | `xvla` |
+| [DM0.5](../src/alohamini/policies/dm05/README.md) | `dm05` |
+| [FineART-VLA](../src/alohamini/policies/fineart_vla/README.md) | `fineart_vla` |
+| [WALL-OSS-0.5](../src/alohamini/policies/wall_oss_05/README.md) | `wall_oss_05` |
+| [VLA-JEPA](../src/alohamini/policies/vla_jepa/README.md) | `vla_jepa` |
+| [LingBot-VA](../src/alohamini/policies/lingbot_va/README.md) | `lingbot_va` |
+| [Cosmos3 Nano](../src/alohamini/policies/cosmos3/README.md) | `cosmos3_nano` |
+| [Cosmos3 Edge](../src/alohamini/policies/cosmos3/README.md) | `cosmos3_edge` |
+| [G0.5](../src/alohamini/policies/g05/README.md) | `g05` |
+| <a id="hyvla-05"></a>[HyVLA-0.5](../src/alohamini/policies/hyvla05/README.md) | `hyvla05` |
+| <a id="openwam-α"></a>[OpenWAM-α](../src/alohamini/policies/openwam/README.md) | `openwam` |
+| <a id="xiaomi-robotics-1"></a>[Xiaomi-Robotics-1](../src/alohamini/policies/xiaomi_robotics1/README.md) | `xiaomi_robotics1` |
+| <a id="lingbot-vla-20"></a>[LingBot-VLA 2.0](../src/alohamini/policies/lingbot_vla_v2/README.md) | `lingbot_vla_v2` |
+| <a id="spirit-v15"></a>[Spirit v1.5](../src/alohamini/policies/spirit/README.md) | `spirit` |
+
+各策略示例保留 episode 1 做验证，其余回合训练。数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
 
 ### 统计准备（可选）
 
@@ -223,653 +211,6 @@ python -m alohamini.learning.train --config /path/to/train.json \
 `--stats` 只接受带 `--config` 生成的统计；数据或样本配置不匹配时须重新生成。
 省略 `--stats` 时训练自动计算。新训练均保存 `runs/<名称>/statistics.json`，checkpoint 保留实际使用的统计；恢复训练沿用 checkpoint。
 
-### ACT
-
-```bash
-python -m alohamini.learning.train \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' \
-  --policy.type=act --policy.device=cuda --policy.chunk_size=100 \
-  --output_dir="$HOME/Alohamini_workspace/runs/act_01" \
-  --steps=100000 --batch_size=2 --save_freq=10000 --log_freq=100 \
-  --eval_steps=1000 --background
-```
-
-`--state=none` 使用纯视觉；`--image_size='[480,640]'` 设置高、宽。
-ResNet18 默认加载 ImageNet 权重，首次下载缓存到工作区 `pretrained/`。
-离线使用须提前准备；`--policy.pretrained_backbone_weights=null` 改为随机初始化。
-
-ACT 和 AM-ACT 新训练默认启用相机身份编码，将前视、左腕、右腕等图像与其来源对应。
-训练和推理使用同一组编码，相机名称及顺序随 checkpoint 保存；采集和部署时须保持相机命名一致。
-`--policy.use_camera_embeddings=false` 可关闭，保留原 ACT 的视觉融合方式。
-旧 checkpoint 的推理、续训及默认微调保留原配置；为旧模型补上编码时，在
-`--policy.path=<旧 checkpoint>` 微调命令中增加 `--policy.use_camera_embeddings=true`，
-使用新的输出目录，不使用 `--resume=true`。新增编码从零开始学习，需要微调后才具有区分能力。
-
-### AM-ACT
-
-```bash
-python -m alohamini.learning.train \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_vision" \
-  --dataset.eval_episodes='[1]' \
-  --policy.type=am_act --policy.device=cuda --policy.chunk_size=100 \
-  --output_dir="$HOME/Alohamini_workspace/runs/am_act_vision_01" \
-  --steps=100000 --batch_size=2 --save_freq=10000 --log_freq=100 \
-  --eval_steps=1000 --background
-```
-
-也支持含 state 的数据。速度/电流实验改用保留反馈的数据目录，并加 `--state=joint_velocity,joint_current`。
-新 AM-ACT 训练默认把 `action.names` 中的 `x.vel`、`y.vel`、`theta.vel` 分别设为三分类：
-
-| 字段 | 类别顺序：负向、停止、正向 | 单位 |
-| --- | --- | --- |
-| `x.vel` | `[-0.15, 0, 0.15]` | m/s |
-| `y.vel` | `[-0.15, 0, 0.15]` | m/s |
-| `theta.vel` | `[-45, 0, 45]` | deg/s |
-
-可通过 `--policy.discrete_action_weighting=none|inverse_frequency|sqrt_inverse_frequency`
-选择权重策略，`--policy.discrete_action_max_weight_ratio` 调整上限。
-
-常用选项：
-
-| 参数 | 用途 |
-| --- | --- |
-| `--policy.base_classification=false` | 新训练关闭默认底盘分类，改为连续回归 |
-| `--policy.discrete_action_mask_absent_classes=true` | 屏蔽训练集中完全没有出现的类别；默认关闭 |
-| `--policy.discrete_action_values='[[-0.15,0,0.15]]'` | 自定义分类值，须配合 `discrete_action_dims` 设置 |
-
-自定义维度须按数据的 `action.names` 核对。屏蔽缺类后仍保留三输出头，
-两类有数据时等效二分类；把缺类权重设为零不会禁止模型输出该类别。
-补录新方向后，用 `--policy.path=<旧 checkpoint>` 微调，重新统计并启用新增类别。
-数据变化不能使用 `--resume=true`。启用 `action_loss_groups` 时须覆盖全部需要回归的连续维度。
-
-#### 条件 CVAE
-
-默认 AM-ACT 使用动作及可选 state 后验、标准高斯先验，推理时 `z=0`。
-启用图像条件后验和先验可使用通用示例：
-
-```bash
-python -m alohamini.learning.train \
-  --config=examples/learning/am_act_cvae.json \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_vision" \
-  --dataset.eval_episodes='[1]' --eval_steps=1000 --background
-```
-
-该示例是机器人适配配置：ResNet-18、30 步 Chunk、执行 10 步、纯视觉、
-4 Query Attention Pooling、Image+Action 后验、图像条件高斯先验、KL 权重 1、
-5000 个优化步 warmup。动作主干 decoder 为 7 层，主干 encoder 和后验 encoder 各 4 层。
-图像使用 RGB/ImageNet 归一化，动作使用训练统计和原始目标单位，不使用语言。
-
-| 配置项 | 可选值 |
-| --- | --- |
-| `posterior_condition` | `image_action` / `action` |
-| `prior_type` | `conditional_gaussian` / `standard_normal` |
-| `latent_visual_pooling` | `multi_query_attention` / `gap` |
-| `latent_inference_mode` | `sample` / `mean` / `zero` |
-| `latent_refresh_mode` | `phase` / `chunk` |
-
-示例按阶段缓存 z：首次根据图像采样，后续预测使用新图像并复用 z。
-任务执行器调用 `policy.refresh_latent()` 切换阶段；新 episode 的 `reset()` 也会清空缓存。
-模型不会自动识别阶段。刷新 z 同时清空动作队列和时序融合，避免混合不同潜变量的预测。
-
-### Diffusion Policy
-
-```bash
-python -m alohamini.learning.train \
-  --policy.type=diffusion --policy.device=cuda \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' \
-  --cameras='["forward","wrist_right"]' \
-  --output_dir="$HOME/Alohamini_workspace/runs/diffusion_01" \
-  --batch_size=2 --save_freq=10000 --log_freq=100 --background
-```
-
-默认 2 帧观测、64 步预测、执行 32 步，DDPM 100 步；视觉配置参考
-[LeRobot PR #3202](https://github.com/huggingface/lerobot/pull/3202)。
-RGB 使用 ImageNet `MEAN_STD`，state/action 使用训练集 `MIN_MAX`。
-`--policy.n_action_steps` 调整执行步数，`--policy.num_inference_steps` 调整去噪步数。
-
-尾部排除数默认按 `horizon - n_action_steps - n_obs_steps + 1` 计算，为 **31**；
-`--policy.drop_n_last_frames` 可显式覆盖，设为 `0` 保留所有采样起点。
-EMA 默认关闭，使用 `--ema.enable=true` 开启。
-
-### CDP
-
-```bash
-python -m alohamini.learning.train \
-  --policy.type=cdp --policy.device=cuda \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --batch_size=2 \
-  --output_dir="$HOME/Alohamini_workspace/runs/cdp_01" --background
-```
-
-采用 [CDP2 RGB 配置](https://github.com/GaavaMa/Causal-Diffusion-Policy/tree/58b23af1e9ac246a11001d7d5388a1de4f53daa5)：
-32 帧历史、总窗口 40 步、每次执行 8 步；DDPM 100 步，预测干净动作。
-在线保留动作缓冲区和 KV 缓存，episode 开始须调用 `reset()`。
-历史动作只取当前帧之前的数据；图像和 state 历史包含当前帧。
-RGB 缩放至 84×84、裁剪 76×76，ImageNet `MEAN_STD`；state/action 使用训练集 `MIN_MAX`。
-ResNet18 使用 GroupNorm，无预训练权重；训练器 EMA 默认开启，尾部排除数为 0。
-默认训练 100000 步、预热 1000 步，可通过 `--steps` 和 `--scheduler.warmup_steps` 调整。
-仅支持 RGB CDP2；不含点云 CDP3。动作块大小属于模型结构，加载 checkpoint 时不可更改；
-去噪步数必须等于训练扩散步数。离线评估使用示范历史动作，结果不代表闭环成功率。
-
-### dit-policy（DiT-Block）
-
-```bash
-python -m alohamini.learning.train \
-  --policy.type=dit_policy --policy.device=cuda \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --batch_size=2 \
-  --output_dir="$HOME/Alohamini_workspace/runs/dit_policy_01" --background
-```
-
-采用 [SudeepDasari/dit-policy](https://github.com/SudeepDasari/dit-policy/tree/ba22ee3ff455f0423fc9cfa5658a1a1cdddc6e73)
-的独立 DiT 编码器／解码器：默认 1 帧观测、100 步动作、6 层、隐藏维度 512；
-训练扩散 100 步，DDIM 推理 8 步。`--policy.n_action_steps` 可缩短执行窗口。
-RGB 缩放至 256×256，训练随机缩放裁剪至 224×224 并模糊，推理缩放至 224×224；
-采用 ImageNet `MEAN_STD`、ResNet18 GroupNorm 和空间 token。
-`--policy.pooled_vision=true` 改用每帧单 token。
-state 保留原值；本地 action 使用训练集 `MIN_MAX`，上游数据需预先归一化。
-默认使用 torchvision ImageNet V1 权重初始化，不含作者另行分发的 GN 权重。
-默认训练 150000 步、预热 2000 步；EMA 关闭，尾部保留并屏蔽填充动作。不使用语言输入。
-
-### Multi-Task DiT
-
-```bash
-conda activate alohamini
-python -m alohamini.learning.train \
-  --policy.type=multi_task_dit --policy.device=cuda \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --eval_steps=1000 \
-  --cameras='["forward","wrist_right"]' \
-  --output_dir="$HOME/Alohamini_workspace/runs/multi_task_dit_01" \
-  --batch_size=2 --gradient_accumulation_steps=8 --steps=100000 \
-  --ema.enable=true --save_freq=10000 --log_freq=100 --background
-```
-
-| 项目 | 默认配置 |
-| --- | --- |
-| 观测／预测／执行 | 2 帧／32 步／24 步；排除最后 7 个采样起点 |
-| DiT | 隐藏维度 512、6 层、8 heads、AdaLN-Zero、RoPE |
-| 视觉 | CLIP ViT-B/16，共享相机编码器；缩放 256×256，训练随机／推理中心裁剪至 224×224 |
-| 语言 | 必需的非空 `task`，最长 77 tokens；文本编码器冻结，投影层训练 |
-| 归一化 | RGB：CLIP `MEAN_STD`；state/action：训练集 `MIN_MAX`，保留原字段与单位 |
-| 优化 | Adam `2e-5`，视觉学习率 ×0.1；cosine，无 warmup |
-| 生成目标 | diffusion，DDPM 100 步 |
-
-state 必须存在。CLIP 权重与 tokenizer 默认读取工作区 `pretrained/clip-vit-base-patch16/`
-（默认 `~/Alohamini_workspace/`，支持 `ALOHAMINI_WORKSPACE`），须提前下载 `openai/clip-vit-base-patch16`。
-`--policy.vision_encoder_name`、`--policy.text_encoder_name` 可指定本地目录或在线模型 ID；本地目录缺文件时报错。设置 `HF_HUB_OFFLINE=1` 可禁止模型 ID 联网加载。
-尾部排除数按同一时序公式计算；`--policy.do_mask_loss_for_padding=true` 可屏蔽补齐动作的损失。
-
-```bash
-# DDIM
---policy.noise_scheduler_type=DDIM --policy.num_inference_steps=10
-
-# Flow matching；integration_method 也支持 rk4
---policy.objective=flow_matching --policy.num_integration_steps=10 \
-  --policy.integration_method=euler --policy.timestep_sampling_strategy=beta
-```
-
-支持单设备、DDP、FSDP2 和训练器 EMA。
-checkpoint 打包权重、CLIP 配置和 tokenizer；EMA 部署使用 `checkpoint-ema`，续训使用在线 checkpoint。
-
-### FastWAM
-
-准备本地基座、Wan VAE／UMT5 和 tokenizer；下载只需执行一次：
-
-```bash
-hf download lerobot/fastwam_base \
-  --revision 0a868ec1dcf6ff00bcdfa9b7196d6e211ed7e616 \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/fastwam_base"
-hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include 'vae/*' 'text_encoder/*' \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/wan22_assets"
-hf download google/umt5-xxl --include '*.json' '*.model' \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/umt5_tokenizer"
-
-python -m alohamini.learning.train \
-  --policy.type=fastwam --policy.device=cuda \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/fastwam_base" \
-  --policy.vae_model_id="$HOME/Alohamini_workspace/pretrained/wan22_assets" \
-  --policy.text_encoder_model_id="$HOME/Alohamini_workspace/pretrained/wan22_assets" \
-  --policy.tokenizer_model_id="$HOME/Alohamini_workspace/pretrained/umt5_tokenizer" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --cameras='["forward","wrist_right"]' \
-  --output_dir="$HOME/Alohamini_workspace/runs/fastwam_01" \
-  --batch_size=1 --policy.use_gradient_checkpointing=true \
-  --save_freq=1000 --log_freq=100 --background
-```
-
-训练使用任务文本、当前 state、32 步动作和间隔 4 行的 9 帧视频；两路图像按名称排序，
-各缩放至 224×224 后横向拼接。推理只用当前图像，不需要未来视频。
-state/action 使用训练集 min/max，动作仍是记录的关节目标、底盘速度和升降高度，
-不套用 LIBERO 的末端／夹爪变换。缺少未来帧时使用边界 padding 及对应损失掩码。
-
-此入口读取转换后的 FastWAM `model.safetensors`，不直接读取作者的 `.pt`；
-采用该发布基座的 flow shift=5。基座中的机器人输入／输出层缺失或维度不匹配时重新初始化。
-checkpoint 不重复打包冻结的 Wan／UMT5 文件，迁移机器时须保留配置中的资产路径；
-微调时也可用上述三个资源参数指定新路径。从平台 checkpoint 微调会恢复全部机器人输入／输出层。
-完整基座需要较大显存，示例 batch 不保证适用于所有 GPU。
-
-### AC-DiT
-
-安装依赖并下载冻结的 SigLIP 图像／语言编码器：
-
-```bash
-python -m pip install -e '.[acdit]'
-hf download google/siglip-so400m-patch14-384 \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/siglip-so400m-patch14-384"
-
-alohamini train --policy.type=acdit --policy.stage=mobility \
-  --policy.use_pointcloud=false \
-  --policy.assets_path="$HOME/Alohamini_workspace/pretrained/siglip-so400m-patch14-384" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --run_name=acdit_mobility --background
-```
-
-底盘阶段完成后，新建全身训练任务：
-
-```bash
-alohamini train \
-  --policy.path="$HOME/Alohamini_workspace/runs/acdit_mobility/checkpoint" \
-  --policy.stage=full \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --run_name=acdit_full --background
-```
-
-默认底盘阶段 20000 步、学习率 `1e-4`；全身阶段 30000 步、`1e-5`，冻结底盘分支。
-每进程 batch 16，AdamW、恒定学习率、BF16、FP32 可训练参数、EMA 关闭。
-显存不足时使用通用 FSDP2、减小 batch 并增加梯度累积。
-
-需要非空任务文本与命名的 state/action；保留记录字段及单位，训练集均值／标准差归一化。
-图像等比例补边至 384×384，再映射至 `[-1,1]`；图像取前一帧和当前帧，state 取当前帧，动作块为 2 行。
-默认随机初始化动作头；外部 RDT 初始化使用 `mobility_pretrained_path`／`body_pretrained_path`，须显式提供命名槽位映射。
-
-无点云数据时使用上例的 RGB 模式；点云模式须在第一阶段启用 `--policy.use_pointcloud=true`，
-提供 `observation.point_cloud`（N×3 或 N×6）及真实坐标系、米制单位声明，不能生成占位点云。
-第二阶段继承第一阶段相机、输入模式及统计量。底盘 checkpoint 不可直接部署全身控制；当前未接入远程动作块服务。
-来源与预设见 [SOURCE.json](../src/alohamini/policies/acdit/SOURCE.json)。
-
-### GR00T N1.7
-
-下载本地基座与 Cosmos 处理器资源；Cosmos 仓库须先取得访问权限并登录 Hugging Face：
-
-```bash
-python -m pip install -e '.[gr00t_n17]'
-hf download nvidia/GR00T-N1.7-3B \
-  --include 'config.json' 'model*.safetensors' 'model*.index.json' 'embodiment_id.json' \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/gr00t_n17"
-hf download nvidia/Cosmos-Reason2-2B \
-  --include '*.json' '*.txt' '*.model' '*.jinja' \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/gr00t_n17/backbone"
-
-CUDA_VISIBLE_DEVICES=0,1 alohamini train --policy.type=gr00t_n17 \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/gr00t_n17" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --eval_steps=1000 \
-  --distributed_backend=fsdp2 --num_processes=2 --batch_size=2 \
-  --gradient_accumulation_steps=4 --run_name=gr00t_task --background
-```
-
-默认冻结 LLM、视觉编码器，训练动作头、投影与 VL 适配层；
-`--policy.tune_llm=true`、`--policy.tune_visual=true` 分别解冻，`--policy.tune_top_llm_layers=4` 仅解冻最后四层 LLM。
-默认 10000 步、AdamW `1e-4`、5% 预热与余弦下降，BF16 计算、FP32 可训练参数、重计算开启、EMA 关闭。
-上例有效 batch 为 16；资源预设为每进程 8，按显存调整。
-
-使用选中相机当前帧、非空任务文本、命名 state 与 40 行动作；默认保留记录坐标和单位。
-选择相对末端动作时，增加 `--data.state_representation=tcp --data.action_representation=tcp_delta --data.rotation_representation=rotation_6d --data.tcp_delta_frame=tool`；标准中位数据自动解析运动学。
-图像先裁剪再缩放短边至 256，交给 Qwen3-VL 处理器；state/action 使用训练集 q01/q99 映射至 `[-1,1]` 并裁剪。
-默认新 embodiment 31，重新初始化其状态／动作投影；复用已有 embodiment 须指定 `state_slot_map`、`action_slot_map` 并关闭 `reinitialize_embodiment`。
-运行时只读本地资源，checkpoint 可独立迁移；支持通用推理和远程动作块，未接入 RTC。
-来源与预设见 [SOURCE.json](../src/alohamini/policies/gr00t_n17/SOURCE.json)。
-
-### LeWorldModel
-
-从零训练，无需下载基座；需要至少一路 RGB 与命名动作字段，不输入 state 或语言：
-
-```bash
-python -m pip install -e '.[lewm]'
-alohamini train --policy.type=lewm \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' --eval_steps=1000 \
-  --batch_size=32 --run_name=lewm_task --background
-```
-
-图像为 224×224、ImageNet mean/std；多相机共享编码器并平均特征。
-动作保留记录坐标与单位，使用训练集 z-score；支持 `recorded`、`tcp_absolute`，不支持 `tcp_delta`。
-默认 3 个历史观测、每 5 行一个动作块；预测损失为特征 MSE 加 `0.09 × SIGReg`，验证不自动生成动作 MAE。
-默认 30000 步、AdamW `5e-5`、恒定学习率、BF16、EMA 关闭；支持 DDP/FSDP2。
-多卡 SIGReg 汇集单次 forward 的全局 batch，梯度累积不合并多次 forward 的统计。
-
-推理须显式提供全部相机的目标图片，CEM 默认规划 25 行动作：
-
-```bash
-alohamini evaluate --host 192.168.77.2 --robot_model alohamini2pro \
-  --policy.path "$HOME/Alohamini_workspace/runs/lewm_task/checkpoint" \
-  --device cuda --fps 30 --goal-images '{"forward":"/path/to/goal.png"}'
-```
-
-多相机目标使用同一 JSON 增加相机项。离线评估同样使用 `--goal-images`；
-Python 接口为 `NativePolicy.set_goal({"forward": "/path/to/goal.png"})`，目标不写入权重，`reset()` 保留目标。
-官方 `weights.pt` 可通过 `--policy.path` 导入，须匹配结构和动作块维度；PushT 权重不能直接用于不同动作维度。
-当前未接入远程目标传递与 RTC。来源与预设见 [SOURCE.json](../src/alohamini/policies/lewm/SOURCE.json)。
-
-### SmolVLA
-
-准备基座及视觉语言模型的配置、tokenizer 文件：
-
-```bash
-hf download lerobot/smolvla_base --local-dir "$HOME/Alohamini_workspace/pretrained/smolvla_base"
-hf download HuggingFaceTB/SmolVLM2-500M-Video-Instruct \
-  --include '*.json' '*.jinja' '*.model' '*.txt' \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/smolvlm_assets"
-
-python -m alohamini.learning.train \
-  --policy.type=smolvla --policy.device=cuda \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/smolvla_base" \
-  --policy.vlm_model_name="$HOME/Alohamini_workspace/pretrained/smolvlm_assets" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' \
-  --output_dir="$HOME/Alohamini_workspace/runs/smolvla_01" \
-  --batch_size=2 --policy.compile_model=false \
-  --save_freq=10000 --log_freq=100 --background
-```
-
-自动预设 `smolvla-realworld-alohamini-v1`：位置 state、任务文本、512×512 等比例补边、
-50 步动作块、10 步流匹配采样、冻结 VLM、BF16、AdamW 与 warmup/cosine。
-训练步数默认 200000；来源及覆盖参数保存在 `paper_preset` 和训练配置中。
-checkpoint 自带 tokenizer 和骨干配置。不支持纯视觉、PEFT 或 ACT 时间融合。
-
-### π0.5
-
-准备转换后的 OpenPI PyTorch `model.safetensors` 和 PaliGemma SentencePiece tokenizer。
-不支持直接读取 Orbax/JAX checkpoint。
-
-```bash
-python -m alohamini.learning.train \
-  --policy.type=pi05 --policy.device=cuda \
-  --policy.path=/path/to/pi05_pytorch \
-  --policy.tokenizer_path=/path/to/paligemma_tokenizer.model \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --dataset.eval_episodes='[1]' \
-  --cameras='["forward","wrist_right"]' \
-  --output_dir="$HOME/Alohamini_workspace/runs/pi05_01" \
-  --batch_size=1 --save_freq=1000 --background
-```
-
-自动预设 `openpi-pi05-alohamini-v1`：位置 state、任务文本、224×224 等比例补边、
-50 步动作块、q01/q99 归一化、AdamW 与 warmup/cosine。
-相机自动采用数据集声明的视角，可用 `--cameras` 选择子集；至少选择一路，名称沿用数据集。
-相机顺序自动保存到 checkpoint；推理须提供训练时选定的全部视角。
-state 保留完整 18 维原始位置、底盘速度和升降高度，包括数据集中声明的固定维度。
-双臂各 6 个关节预测相对当前 state 的增量，执行前还原为绝对目标；夹爪、底盘速度、升降高度保持原义。
-网络参数用 `--policy.network='{"action_horizon":30}'` 覆盖；checkpoint 自带 tokenizer。
-
-先选择训练方案，再选择参数更新方式：
-
-- `--policy.training_recipe=flow`（默认）：OpenPI 公开的流匹配微调，保留动作损失到 VLM 的梯度。
-- `--policy.training_recipe=ki`：FAST 交叉熵与流匹配联合训练；逐层隔离动作专家到 VLM 的 K/V 梯度，两种动作分支互不可见。推理仍使用连续动作专家。
-
-| `--policy.finetuning_mode` | 视觉编码器及投影 | LLM | 动作专家 Transformer |
-| --- | --- | --- | --- |
-| `a` | 冻结；`--policy.a_vision_mode=full` 可全量训练 | LoRA | LoRA |
-| `b` | 冻结 | 冻结 | 全量 |
-| `c` | 全量 | LoRA | 全量 |
-| `d` | LoRA | LoRA | 全量 |
-| `full`（默认） | 全量 | 全量 | 全量 |
-
-四份配置见 [`examples/learning/pi05/`](../examples/learning/pi05/)。`ki + b` 不支持：冻结整个 VLM 不属于双目标 KI。
-LoRA 作用于注意力和 MLP 投影；D 还包含视觉投影。动作输入/输出及时间 MLP 全量训练。
-LLM/视觉默认 rank=16、alpha=16；动作专家 rank=32、alpha=32，分别用 `lora_rank/lora_alpha`、`expert_lora_rank/expert_lora_alpha` 覆盖。
-这些微调组合是平台配置，不是官方发布的四组实验。
-
-下载小型 tokenizer 资源（不包含完整基座）：
-
-```bash
-python -m alohamini.policies.pi05.assets
-python -m alohamini.learning.train \
-  --config=examples/learning/pi05/a.json \
-  --policy.training_recipe=ki --policy.a_vision_mode=frozen \
-  --policy.path=/path/to/pi05_pytorch \
-  --dataset.root=/path/to/dataset --dataset.eval_episodes='[1]' \
-  --run_name=pi05_ki_a --background
-```
-
-资源默认位于工作区 `pretrained/pi05_tokenizers/`；KI 的 FAST 默认读取其中的 `fast/`，可用 `--policy.fast_tokenizer_path` 覆盖。
-FAST 编码补零前的 18 维归一化动作，沿用 π0.5 的 task/state/Action 提示词；目标超出 `--policy.fast_max_tokens=256` 时须增大上限，不截断动作。
-KI checkpoint 包含完整网络、LoRA、两种 tokenizer 和训练方案；推理不需要原始基座目录。续训不允许更换方案或微调方式。
-
-默认采用公开 OpenPI 的 BF16 主干并保留部分 FP32 模块（平台 `mixed_precision=none`）、完整梯度检查点、30000 步、AdamW `2.5e-5`、betas `(0.9,0.95)`、weight decay `1e-10`、梯度裁剪 `1`、1000 步预热及余弦衰减至 `2.5e-6`；每 100 步日志、1000 步保存。EMA 默认关闭。
-示例使用 batch=1、累积 32 次，单卡有效 batch=32。可关闭 `--policy.gradient_checkpointing=false`；`network.pytorch_compile_mode` 默认 `max-autotune`，只编译采样，首次推理较慢，设为 `null` 可关闭。
-
-KI 可通过 `--policy.vlm_data_path=/path/to/train.jsonl` 混入图文或规划数据，每个机器人样本配一个独立抽样的 VLM 样本：
-
-```json
-{"images":{"forward":"images/001.jpg"},"prompt":"下一步做什么？","answer":"抓起红色方块。"}
-```
-
-图像路径相对 JSONL，相机集合从清单自动读取，缺少的视角用 mask 屏蔽；只对 answer 计算语言损失，不计算动作损失。
-默认三项损失权重均为 1；`flow_loss_weight/fast_loss_weight/vlm_loss_weight` 可覆盖。token 损失先按每条样本有效 token 平均，再按样本平均。
-联合数据仅用于训练，保存清单 SHA256 并在续训时核验；无该数据时运行机器人数据 KI。官方通用预训练数据混合未复现。
-方法见 [KI 论文 §5](https://www.pi.website/download/pi05_KI.pdf)；训练默认值见 [OpenPI](https://github.com/Physical-Intelligence/openpi/tree/15a9616a00943ada6c20a0f158e3adb39df2ccac)。
-
-SmolVLA／π0.5 的完整基座须按可用显存调整 batch 和精度。
-
-### HyVLA-0.5
-
-```bash
-python -m pip install -e '.[hyvla05]'
-hf download tencent/Hy-Embodied-0.5-VLA-RoboTwin \
-  --revision bd7bba6f5934ad62293a2a34f74760c6a3ef2ff8 \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/hyvla05"
-
-alohamini train --policy.type=hyvla05 \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/hyvla05" \
-  --run_name=hyvla05_task --batch_size=1 --steps=60000 --background
-```
-
-需要非空任务文本与 state，相机按 `--cameras` 或数据集顺序输入；图像等比例补边至 224×224。
-默认 6 帧历史、间隔 15 行，动作块 20 行、流匹配采样 10 步、BF16；state/action 使用训练集均值／标准差。
-动作是连续 20 行原始记录目标，不套用 RoboTwin 的相对／绝对姿态拼接，不自动执行 FK/IK。
-在线历史按客户端时间戳读取过去观测，`reset()` 清空历史和动作队列。
-
-`--policy.network='{"freeze_vision_encoder":true}'` 可冻结视觉，图像特征仍参与训练。
-运行时只读本地资源，checkpoint 自带 tokenizer 与权重；支持 DDP/FSDP2、训练器 EMA、普通远程动作块。
-未接入 RTC、FlowPRO 或 Bézier 拼接。来源与预设见 [SOURCE.json](../src/alohamini/policies/hyvla05/SOURCE.json)。
-
-### OpenWAM-α
-
-```bash
-python -m pip install -e '.[openwam]'
-hf download OpenWAM/OpenWAM-Alpha-Pretrain-Foundation-Model \
-  --revision 52df4e66c82c5c8b480adcc8d01f4db7415dfb56 \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/openwam"
-
-alohamini train --policy.type=openwam \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/openwam" \
-  --run_name=openwam_task --batch_size=1 --steps=30000 \
-  --keep_last_checkpoints=1 --background
-```
-
-基座须含 `checkpoint_step_*.safetensors` 和 `tokenizer/google/umt5-xxl/`，无需另下载 Wan 基座。
-最多三路相机，按顺序组成 384×320 画布：上方主视角、左下与右下，缺失位置填黑；
-`--policy.camera_layout='["observation.images.head","observation.images.left",null]'` 可显式指定，须覆盖全部所选相机。
-
-默认动作块 32 行、视频取 0、4、…、32 行；`chunk_size` 须为 `4 × video_stride` 的整数倍。
-默认 `--policy.action_representation=recorded`，保留记录 state/action 字段和单位，使用训练集 min/max；
-从官方基座导入时重新初始化动作输入、动作输出和状态投影。
-视频与动作联合流匹配，VAE、umT5 冻结；未来图像仅作训练监督，推理使用当前图像，默认同步去噪 10 步、shift 5。
-默认 BF16、重计算开启；显存不足时使用通用 FSDP2。支持训练器 EMA 和普通远程动作块，未接入 RTC。
-
-运行时只读本地资源，checkpoint 含冻结编码器及 tokenizer，可独立迁移。
-保存时须预留两份完整 checkpoint 的空间；新文件写入成功后才清理旧文件。
-来源与预设见 [SOURCE.json](../src/alohamini/policies/openwam/SOURCE.json)。
-
-要保留官方 80 维末端语义，使用可选的 `alpha80` 模式：
-
-```bash
-alohamini train --policy.type=openwam \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/openwam" \
-  --policy.action_representation=alpha80 \
-  --state=joint_position,base_velocity,lift_height \
-  --run_name=openwam_tcp80 --batch_size=1 --steps=30000 \
-  --keep_last_checkpoints=1 --background
-```
-
-该模式自动设置 TCP state、绝对 TCP action 和 `rotation_6d_columns`，保留官方三个 80 维投影层。
-FK 使用数据集的运动学描述；标准 AlohaMini 数据可由记录的标定信息和机型参考姿态解析。
-非标准标定须用 `--data.kinematics.spec=/path/to/coordinates.json` 声明，
-参见[关节、TCP 与相对目标](#关节tcp-与相对目标)。缺少标定或字段不匹配时拒绝训练。
-双臂必须明确命名为 `left`、`right`，且所选 state 包含每臂完整关节位置与夹爪。
-
-| 内容 | 80 维槽位（从 0 开始，含两端） | 编码／单位 |
-| --- | --- | --- |
-| 左臂位置、旋转、夹爪 | 0–2、3–8、9 | m、旋转矩阵前两列、闭合 −1／张开 +1 |
-| 右臂位置、旋转、夹爪 | 34–36、37–42、43 | 同上 |
-| 底盘 x、y、yaw 速度 | 68、69、70 | m/s、m/s、deg/s；平台预留槽扩展 |
-| 升降高度 | 71 | mm；平台预留槽扩展 |
-| 未使用的手部及预留通道 | 10–33、44–67、72–79 | 不计入动作损失 |
-
-每臂末端仍为 6 自由度，但数值表示为位置 3＋旋转 6，共 9 个通道；加夹爪后每臂 10 个。
-18 维关节记录经 FK 得到 **24 个有效通道**，进入网络前按名称填入 **80 维接口**。
-夹爪保留官方专用槽，底盘和升降占用的 68–71 是本平台约定，官方未规定这些预留槽的含义。
-位姿遵循标定描述保存的参考系，例如 `left_Base`、`right_Base`，不会自动改成世界坐标。
-
-旋转 6D 保持原值；夹爪按标定的闭合／张开端点映射；其余通道使用训练集 min/max，输入截断到 [−1,1]。
-使用训练集 min/max 的动作通道若上下界相同，解码时还原为训练常数；
-例如底盘标签全零时，去噪残差不会转换成底盘速度。
-checkpoint 保存槽位、统计量、标定和 FK/IK 几何；部署时自动反归一化，并以当前关节反馈为起点连续求解 IK，
-恢复原 Host 动作顺序和单位，底盘／升降直接还原。退化旋转、不可达位姿或超出关节限位时拒绝该动作块。
-原 18 维 `recorded` checkpoint 不能通过改开关变成 `alpha80`，须从官方基座重新微调。
-
-### Xiaomi-Robotics-1
-
-使用 `xiaomi_robotics1`，本地基座目录包含官方 `model_states.pt`；`assets_path` 指向
-Qwen3-VL-4B-Instruct 的配置、tokenizer 和图像处理文件。
-
-```bash
-pip install -e '.[xiaomi_robotics1]'
-alohamini train --policy.type=xiaomi_robotics1 \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/xiaomi-robotics1" \
-  --policy.assets_path="$HOME/Alohamini_workspace/pretrained/qwen3-vl-4b-assets" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --batch_size=1 --gradient_accumulation_steps=8 \
-  --distributed_backend=fsdp2 --num_processes=4 \
-  --output_dir="$HOME/Alohamini_workspace/runs/xiaomi_01" --background
-```
-
-默认读取 `forward,wrist_left,wrist_right` 三路 RGB 和任务文本；使用 30 步动作块、BF16、同步执行。
-关节观测保留，动作经保存的标定转换为工具坐标系末端增量；旋转采用旋转向量，夹爪采用开度增量。
-统计量按训练集拟合，动作逐时间步计算 mean/std，状态使用 q01/q99。
-缺少运动学描述时，按[关节、TCP 与相对目标](#关节tcp-与相对目标)补充来源。
-升降轴保持当前高度，底盘使用数据中的速度标签。尚不支持官方异步动作前缀执行。
-
-### LingBot-VLA 2.0
-
-使用 `lingbot_vla_v2`，本地基座包含官方 LeRobot 格式 `config.json`、`model.safetensors`，
-以及 Qwen 配置、tokenizer、图像处理资源。教师目录包含 `moge/model.pt`、`depth/model.pt`、
-`dino_video/teacher_step_10000.pth` 和 `dino_video/config.yaml`。
-
-```bash
-pip install -e '.[lingbot_vla_v2]'
-alohamini train --policy.type=lingbot_vla_v2 \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/lingbot_vla_v2_base" \
-  --policy.teacher_root="$HOME/Alohamini_workspace/pretrained/lingbot_vla_v2_teachers" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --batch_size=1 --gradient_accumulation_steps=8 \
-  --distributed_backend=fsdp2 --num_processes=4 \
-  --output_dir="$HOME/Alohamini_workspace/runs/lingbot_01" --background
-```
-
-默认读取 `forward,wrist_left,wrist_right` 三路 RGB、完整 18 维状态与任务文本，映射到 55 维语义槽。
-关节动作相对当前观测，夹爪和底盘速度保留绝对值；动作转换后计算训练集 mean/std。
-升降轴默认保持当前高度；显式设置 `--policy.lift_mode=reserved` 时使用平台扩展槽训练升降动作。
-训练使用未来帧计算教师损失，推理只读取当前帧，部署无需教师权重。
-优化器采用平台 AdamW 并保留 MoE 专家学习率倍率；尚不支持 Muon 和 RTC 执行。
-显卡数和 batch 按模型显存需求调整。
-
-### Spirit v1.5
-
-使用本地 Spirit 基座及 Qwen 配置、tokenizer 和图像处理资源：
-
-```bash
-pip install -e '.[spirit]'
-hf download Spirit-AI-robotics/Spirit-v1.5 \
-  --revision 9886fa7552de70b097c4214b7e40e66ff937a6fd \
-  --local-dir "$HOME/Alohamini_workspace/pretrained/spirit-v1.5"
-python -m alohamini.policies.spirit.assets \
-  --revision ebb281ec70b05090aa6165b016eac8ec08e71b17 \
-  --output "$HOME/Alohamini_workspace/pretrained/spirit-qwen-assets"
-```
-
-Qwen 权重已包含在 Spirit 基座中，此资源命令只下载配置和处理器文件，记录版本及文件摘要；
-输出目录须为空。训练和 checkpoint 加载只读取本地资源。
-
-按[关节、TCP 与相对目标](#关节tcp-与相对目标)选择数据表示。以下命令适用于标准中位标定数据：
-
-```bash
-alohamini train \
-  --policy.type=spirit \
-  --policy.path="$HOME/Alohamini_workspace/pretrained/spirit-v1.5" \
-  --policy.backbone_path="$HOME/Alohamini_workspace/pretrained/spirit-qwen-assets" \
-  --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \
-  --state=joint_position,base_velocity,lift_height \
-  --data.state_representation=tcp \
-  --data.action_representation=tcp_delta \
-  --dataset.eval_episodes='[1]' \
-  --cameras='["forward","wrist_left","wrist_right"]' \
-  --distributed_backend=fsdp2 --num_processes=4 \
-  --mixed_precision=bfloat16 --batch_size=1 --gradient_accumulation_steps=8 \
-  --steps=40000 --save_freq=5000 --log_freq=100 \
-  --output_dir="$HOME/Alohamini_workspace/runs/spirit_01" --background
-```
-
-`num_processes`、batch 和累积次数按可用显卡与显存调整。
-默认采用 16 层、1536 宽、32 头 DiT，交替自注意力与跨注意力；生成 60 步动作，推理执行 10 步 Euler 采样。
-训练采用 Flow Matching、全参 AdamW `2.5e-5`、betas `(0.9,0.95)`、weight decay `1e-10`、
-梯度裁剪 `1`、1000 步预热，调度器默认到 50000 步衰减至 `2.5e-6`。
-训练预设为 40000 步、每卡 batch=32、BF16；上例显式使用较小 batch 和梯度累积。
-梯度检查点默认开启，可用 `--policy.gradient_checkpointing=false` 关闭。
-
-| 数据表示 | 输入与执行 |
-| --- | --- |
-| state=`tcp`、action=`tcp_delta`（默认） | 共享数据层转换关节 state/action；预测相对当前 TCP 的位姿目标，执行前用 IK 恢复 Host 目标 |
-| state=`recorded`、action=`recorded` | 保留所选 state 和原 action；无需运动学配置 |
-
-保留记录表示时，将上例两个表示参数均改为 `recorded`。
-Spirit 需要数值 state 和非空任务文本，不支持 `--state=none`。
-原 action 的名称与顺序须匹配转换描述；所选 state 单独记录，FK 所需的完整关节观测由读取器提供。
-底盘和升降动作保持完整，不自动固定这些自由度。
-转换后的 state/action 宽度最多各 32 维，原始关节数与派生 TCP 维度分别记录。
-填充通道和 episode 尾部补齐目标不计入动作损失。
-归一化分别在转换后的训练 state/action 上计算 p1/p99 并映射到 `[-1,1]`，不复用基座机器人的统计。
-
-最多选择三路 RGB，相机映射须覆盖全部选中视角：
-
-| 记录相机 | Spirit 槽位 |
-| --- | --- |
-| `forward` | `cam_high` |
-| `wrist_left` | `cam_left_wrist` |
-| `wrist_right` | `cam_right_wrist` |
-
-其他名称通过 `--policy.camera_mapping='{"cam_high":"top","cam_left_wrist":"left","cam_right_wrist":"right"}'`
-显式映射，并用 `--cameras` 选择对应视角。未使用的槽位填黑图。
-图像先读取为 RGB 240×320，再由 Qwen processor 处理；训练使用 ColorJitter，验证和推理关闭增强。
-每行 `task` 用作任务文本，机器人提示类型默认为 `aloha`，用 `--policy.robot_type` 覆盖。
-
-预设参考实现固定到 [6d67377](https://github.com/Spirit-AI-Team/spirit-v1.5/tree/6d67377f16f67d6575447a1f29fdd83a2e0099d9)，
-基座固定到 [9886fa7](https://huggingface.co/Spirit-AI-robotics/Spirit-v1.5/tree/9886fa7552de70b097c4214b7e40e66ff937a6fd)。
-参考 Franka 数据使用前一帧末端状态及未来实测位姿；平台保留记录的观测／动作配对和数据 FPS，
-不重采样时间戳，使用共享训练调度器和完整训练窗口统计。这些协议差异、显式覆盖值和几何快照保存在 checkpoint 中。
-官方说明见 [Finetune Guide](https://github.com/Spirit-AI-Team/spirit-v1.5#finetune-guide)。
-
-原生 checkpoint 包含完整模型及 Qwen 配置、tokenizer、图像处理资源，可脱离原资源目录加载。
-`preprocessing.json` 列出原始执行字段、派生统计字段的名称／单位和转换顺序。
-支持单设备、DDP、FSDP2、离线评估和云端动作块推理；Spirit 不支持 RTC 前缀引导。
-
 ### 日志与配置
 
 ```bash
@@ -894,6 +235,11 @@ tail -f ~/Alohamini_workspace/runs/act_01/metrics.jsonl
 
 ### 验证与视频加载
 
+本地数据的数值与诊断记录使用磁盘缓存，默认每个数据集、每个进程缓存 64 MiB。
+`--dataset.cache_size_mb=64` 设置缓存预算；`--dataset.cache_dir=/路径/cache` 指定源数据目录之外的缓存位置，默认位于工作区 `cache/datasets/`。总内存还包括图像解码、DataLoader 预取和 batch 张量。
+
+`--dataset.streaming=true` 启用有限回合池混合采样，适合长回合数据；`--dataset.streaming_episode_pool_size=8` 设置回合池大小。此方式改变样本混合顺序，验证集仍按序读取；续训沿用原采样方式与回合池大小。
+
 `--eval_steps` 设置验证间隔，`--eval_batch_size` 设置验证 batch；
 `--eval_num_workers`、`--eval_prefetch_factor` 可独立配置验证加载。
 未指定时沿用对应训练设置，worker 为 0 时关闭多进程预取。
@@ -908,7 +254,7 @@ ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比�
 `--video_cache_size`；增大 worker、预取与缓存会增加主机内存占用。
 图像按各策略的尺寸、裁剪和归一化规则处理，配置随 checkpoint 保存。
 
-### 优化器、精度与多卡
+### 优化器与调度
 
 在训练命令后追加所需参数：
 
@@ -916,29 +262,47 @@ ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比�
 --optimizer.type=adamw --optimizer.lr=0.0001
 --optimizer.weight_decay=0.0001 --optimizer.betas='[0.9,0.999]'
 --optimizer.eps=1e-8 --optimizer.grad_clip_norm=10
---gradient_accumulation_steps=4 --mixed_precision=bfloat16
 ```
 
 优化器支持 `adamw`、`adam`、`sgd`，默认沿用策略配置。
 ACT／AM-ACT 默认无调度，SmolVLA 使用 `cosine`，π0.5／Spirit 使用 `warmup_cosine`，
 Diffusion／FastWAM 使用 `diffusers_cosine`；
 `--scheduler.type=none` 禁用调度。可覆盖 `warmup_steps`、`decay_steps`、`decay_lr`。
+`warmup_linear` 在预热后线性衰减；它与 `staged_cosine`、`constant_with_warmup`
+均支持 `--scheduler.start_step`；
+`--scheduler.before_start` 接收“参数组名到学习率倍率”的 JSON 对象，设置阶段开始前各组的倍率。
+组名由策略声明；不在对象中的组默认倍率为 1，未知组名会报错。阶段按成功优化器更新计数。
 
-`--mixed_precision=none|bfloat16|float16` 控制 autocast 计算精度；
-`--trainable_dtype=preserve|float32` 独立控制可训练参数的存储类型。
-默认 `preserve` 沿用模型类型；`float32` 在加载权重、创建优化器前将可训练参数设为 FP32，
-冻结参数与 buffer 保留原类型。Adam／AdamW 的动量随参数采用 FP32。
-需要保留低于 BF16 间距的小更新时，追加：
+### 数值精度
+
+不指定时沿用策略预设；三项设置分别控制计算、参数存储和 FP32 加速：
+
+| 设置 | 参数 | 默认 |
+| --- | --- | --- |
+| 自动混合精度计算 | `--mixed_precision=none\|bfloat16\|float16` | 策略预设，未配置时为 `none` |
+| 可训练参数的存储与更新 | `--trainable_dtype=preserve\|float32` | 策略预设，未配置时为 `preserve` |
+| 允许 FP32 矩阵乘法、卷积使用 TF32 | `--tf32=true\|false` | `true` |
+
+常用组合，追加到训练命令：
 
 ```text
+# FP32 可训练参数，BF16 混合精度计算
 --trainable_dtype=float32 --mixed_precision=bfloat16
+
+# 关闭自动混合精度和 TF32
+--mixed_precision=none --tf32=false
 ```
 
-该组合采用 FP32 权重更新与 BF16 混合精度计算，实现
-[FP32 主权重方案](https://arxiv.org/html/2610.31859#S6)，适用于各原生策略及单设备、DDP、FSDP2。
-相较 BF16 参数，FP32 参数与优化器动量占用更多内存；已有配置的学习率可能需要重新调整。
-选项随 checkpoint 保存并在加载时恢复，从原生 checkpoint 微调时默认继承，显式参数可覆盖。
-精确续训须保持原值；旧 checkpoint 按 `preserve` 处理。改变存储类型时，使用 `--policy.path` 开始新训练。
+`none` 关闭自动混合精度，不会把模型已有的 BF16 权重改成 FP32。
+`trainable_dtype=float32` 只转换可训练参数，冻结参数和 buffer 保持原类型；显存占用会增加。
+TF32 不改变参数存储类型，只影响 FP32 运算，可与 BF16/FP16 混合精度并用。
+`--cudnn_deterministic=true` 时 TF32 默认关闭；显式 `--tf32` 优先。
+
+设置随 checkpoint 保存，推理沿用已保存的设置。
+`--policy.path` 开始新微调时，只默认继承 `trainable_dtype`；混合精度、TF32 使用本次配置或策略默认值。
+显式参数优先；`--resume=true` 续训须保持原设置。模型内部必须使用 FP32 的算子保留其数值保护。
+
+### 多卡与梯度累积
 
 | 配置 | 追加参数 |
 | --- | --- |
@@ -964,9 +328,11 @@ FastWAM 的外置冻结 VAE／文本编码器仍在每张卡保留一份。
 
 ### 训练器 EMA
 
-EMA 默认关闭，使用 `--ema.enable=true` 开启。
+EMA 使用策略预设，未配置时关闭；使用 `--ema.enable=true` 开启。
 默认衰减参数为 `inv_gamma=1.0`、`power=0.75`、`min_decay=0`、`max_decay=0.9999`、`update_after_step=0`。
 固定衰减可设 `--ema.decay=0.99`，与自定义 `min_decay/max_decay` 互斥。
+`--ema.schedule=power_law` 使用 `(1-1/n)^power`，`n` 为预热后的成功更新次数；
+默认 `inverse_power` 使用 `1-(1+(n-1)/inv_gamma)^(-power)`。策略可提供各自的指数与上限。
 
 EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
 验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
@@ -1152,36 +518,54 @@ SmolVLA／π0.5／FastWAM／Spirit 评估须增加 `--task "拿起物体"`。Dif
 自定义策略接口见 [客户端接口](host-protocol.md#python-策略评估)，示例为 `examples/learning/custom_policy.py`。
 Notebook 入口见 [Notebook](notebook.md)，LeRobot 权重使用见 [LeRobot](lerobot.md)。
 
-### RTC 异步推理
+### 推理模式
 
-π0.5（flow／KI）和 SmolVLA 支持推理期引导 RTC，无需重新训练；默认关闭。
-在评估命令中增加：
+在本地评估命令中增加：
 
 ```bash
---rtc --rtc.replan_steps 10 --rtc.inference_delay_steps 3
+--inference.type=rtc
 ```
 
-RTC 使用完整预测块，重规划间隔由 `rtc.replan_steps` 控制，覆盖 `n_action_steps` 的执行节奏。
-旧块在后台生成新块时继续执行；π0.5 的旧绝对目标会按新 state 重编码。
-动作按观测时间对齐，跳过过期前缀；队列耗尽或预测过期时停止，复位清空旧计划。
+| `--inference.type` | 行为 |
+|---|---|
+| `sync`（本地默认） | 执行当前动作块后再预测；TCP 块间制动保持 |
+| `async` | 后台预测；ACT／DP 默认按时间切换，BSP 默认相位对齐 |
+| `rtc` | 后台预测并进行去噪前缀引导；目前支持 π0.5／SmolVLA |
 
-| 参数 | 默认值 | 含义 |
-|---|---:|---|
-| `rtc.replan_steps` | 10 | 两次预测起点的最小间隔，单位为控制步 |
-| `rtc.inference_delay_steps` | 3 | 延迟估计下限；运行中结合实测延迟加一控制步更新 |
-| `rtc.max_guidance_weight` | 10 | 引导强度上限 |
-| `rtc.prefix_attention_schedule` | `linear` | 重叠区权重，可选 `linear/exp/ones/zeros` |
-| `rtc.max_prediction_age_s` | 1.0 | 动作源观测的最大允许年龄，单位秒 |
+`async` 可用 `--inference.continuity=none` 关闭策略默认衔接；
+`--inference.continuity=phase` 仅适用于 BSP。`rtc` 无需另选连续性方法。
+ACT 异步执行时须关闭时间融合：`--policy.temporal_ensemble_coeff none`。
 
-预测块长度须大于重规划间隔加延迟，实测延迟也须小于剩余重叠区。
-RTC 需要对动作输入求梯度，使用 eager 采样，会增加计算和显存开销；不与 ACT 时间融合组合。
-评估数据的 `meta/evaluation.json` 保存 RTC 参数，帧元数据保存预测来源时间。
+支持语言规划的策略可在本地 `evaluate` 或云端 `inference serve` 中追加
+`--language-replan-interval-s=2 --task='任务指令'`。默认关闭；按观测时间更新子任务，切换时清空旧动作队列，每个回合重置。
 
-云端推理时，在 GPU 服务端的 `alohamini inference serve` 命令后追加 `--rtc`；
-Pi 根据握手配置执行，连接步骤见[云端推理](#云端推理)。
-RTC 模式的 `--chunk-size` 默认使用完整预测块；有效预测年龄上限取服务端 RTC 设置与 Pi 的
-`--max-prediction-age-s`（默认 1 秒）的较小值。两端须使用支持 RTC 协议的版本。
-算法参考 [Physical Intelligence RTC](https://github.com/Physical-Intelligence/real-time-chunking-kinetix/tree/9296f31d62d5bfeb5779dcb2f9bcf71ca37f448b)，仅提供推理期引导模式。
+异步模式默认根据剩余轨迹时间与预测耗时自动重规划。必要时可调整：
+
+| 参数 | 默认值 | 用途 |
+|---|---|---|
+| `--inference.replan_interval_s` | 自动（TCP 为 `0.25`） | 重规划时间预算，单位秒 |
+| `--inference.prediction_lead_s` | `0.1` | 提前预测预算下限，单位秒 |
+| `--inference.max_prediction_age_s` | `5` | 源观测最大年龄，单位秒 |
+| `--inference.startup_timeout_s` | `15` | 首次及 TCP 同步块间预测等待上限，单位秒 |
+
+TCP 执行及异步执行的 `--fps` 是命令查询频率，可与 checkpoint 数据 FPS 不同。
+
+TCP 动作 checkpoint 加载后自动启用 TCP 跟踪，`sync`／`async` 共用限速和恢复；执行机须安装 `kinematics` 扩展。跟踪滞后时自动放慢，预测过期后制动保持。可选参考限制如下（默认值；速度、加速度分别为 m/s、m/s² 或 rad/s、rad/s²）：
+
+```bash
+--inference.tcp_tracking='{
+  "max_tcp_linear_velocity":0.2, "max_tcp_linear_acceleration":0.5,
+  "max_tcp_angular_velocity":1.0, "max_tcp_angular_acceleration":2.0
+}'
+```
+
+关节位置、速度及加速度限制仍有效。IK 失败时制动保持并重新预测，超过 1 s 或连续 3 次新预测失败时停止；正常同步块间等待使用 `startup_timeout_s`。
+TCP 暂不支持 `rtc`、ACT 时间融合、单个手臂关节固定覆盖及 Host 关节动作缩放。参考跟踪允许路径偏差，不含碰撞避障或 jerk 约束，尚未完成实机验证。
+
+预测过期、有效轨迹耗尽或 Host 状态变化时停止使用旧计划；TCP 异步执行只在上述恢复预算内保持等待。
+评估记录保存执行参数及源观测时间。云端服务默认 `async`，支持 `rtc`，TCP 动作 checkpoint 也可选择 `sync`；
+使用相同 `--inference.*` 参数，Pi 从服务端握手读取配置。
+两端必须使用相同平台版本，旧动作块协议不兼容。
 
 ### 固定维度的训练与推理
 
@@ -1208,42 +592,14 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 表示右臂用原有固定目标或训练动作均值、升降保持启动时高度。同一字段不能同时出现在两组选项中。
 仅省略 `--fixed-dataset` 不会改变 `--fixed-dimensions` 原有的均值语义。
 
-### 标定兼容
-
-| `--calibration-mode` | 用途 |
-| --- | --- |
-| `strict`（默认） | 要求训练标定与 Host 一致 |
-| `normalized` | 同型号机器间按归一化关节比例迁移，须有训练标定 |
-| `legacy_normalized` | 原始 LeRobot v3 模型缺少标定时，显式声明动作单位并绑定当前 Host |
-
-`legacy_normalized` 仅适用于普通关节 `[-100,100]`、夹爪 `[0,100]`、
-底盘平移 m/s、旋转 deg/s、升降 mm 的数据，动作名称与顺序须匹配型号。
-使用 state 时，原 state 也须为相同名称与顺序的 Host 位置、底盘速度和升降高度。
-迁移不会恢复旧机器的物理姿态或升降零点；升降零点不明确时，
-可加 `--fixed-current lift_axis` 保持启动高度。
-
-使用 `--fixed-current` 前，先遥操摆好位置，再退出遥操并保持同一 Host 进程。
-绑定标定与固定目标报告保存在工作区 `logs/evaluation/`；运行中标定变化会结束评估。
-
 ### 云端推理
 
-树莓派直接发送图像和 state 到云端 GPU，接收动作块并在本地执行；PC 用于登录管理。
-当前支持平台原生 PI05、SmolVLA 和 Spirit checkpoint。
+树莓派发送图像和 state 到云端 GPU，接收轨迹计划并在本地执行；PC 用于登录管理。
+支持声明远程轨迹能力的原生策略，包括 ACT、Diffusion、BSP、PI05、SmolVLA 和 Spirit。
 云端与树莓派使用相同版本的 Alohamini；树莓派先启动本地 Host，完成标定和升降归零，退出其他控制客户端。
 Host 地址保持 `127.0.0.1`。ZeroMQ 推理端口 `5560` 通过 SSH 隧道或 WireGuard 连接，不直接开放到公网。
 
-在各自已激活的环境、项目根目录安装。云端 PI05 环境执行：
-
-```bash
-pip install -e '.[pi05,zmq]'
-```
-
-SmolVLA／Spirit 云端环境分别使用 `.[smolvla,zmq]`、`.[spirit,zmq]`。
-树莓派复用运行 Host 的环境：
-
-```bash
-pip install -e '.[host]'
-```
+云端安装[策略与通信扩展](install.md#3-可选扩展)，树莓派复用运行 Host 的环境。
 
 以下服务端命令以 `pi05_01/checkpoint` 为例，替换为实际模型目录和任务文本；
 SSH 命令中的 `PORT`、`USER`、`CLOUD` 分别替换为云端 SSH 端口、用户名和地址。
@@ -1367,8 +723,9 @@ WireGuard 没有握手时检查公钥、UDP 入口和 `Endpoint`；已有握手�
 ss -ltn '( sport = :5560 )'
 ```
 
-`--fps` 必须与 checkpoint 数据频率一致。服务端 `--chunk-size` 省略时使用 checkpoint 的可执行窗口，
-可用 `--chunk-size 32` 请求更短动作块，但不能超过该窗口；RTC 使用完整预测块并单独校验重叠区。
+`--fps` 设置 Pi 的命令查询频率，checkpoint 数据频率用于解释轨迹时间。
+密集动作可用服务端 `--chunk-size 32` 缩短可执行窗口，不能超过模型窗口；BSP 不接受该参数。
+TCP 同样支持 `--chunk-size`，执行端须安装 `kinematics` 扩展。
 这些参数不保证云端持续按执行频率返回结果。迟到结果跳过过期前缀，动作耗尽或 Host 会话、控制参考变化时停止，需显式重新运行。
 
 | 树莓派 `run` 参数 | 默认值 | 用途 |
@@ -1380,7 +737,7 @@ ss -ltn '( sport = :5560 )'
 
 固定当前关节时，在云端 `serve` 和树莓派 `run` 两端传入相同的 `--fixed-current FIELD ...`。
 支持 `base`、`lift_axis`、`arm_left`、`arm_right` 或具名 Host 字段；树莓派从新鲜反馈捕获固定目标。
-PI05／SmolVLA 可在服务端开启[RTC](#rtc-异步推理)，仅提供推理期引导，不包含 RTC 训练。
+PI05／SmolVLA 可在服务端开启[RTC 引导](#推理模式)，仅提供推理期引导，不包含 RTC 训练。
 Spirit 使用普通动作块推理。实际链路时延与真机成功率须分别评估，不通过放宽控制 watchdog 补偿网络延迟。
 
 ## 8. 对比评估与训练示范
@@ -1494,5 +851,5 @@ alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
 | `--probe-seed 0` | 设置重新预测时的随机种子，便于重复比较 |
 | `--segment 0` / `--reference-segment 0` | 数据有时钟重置时，选择评估／示范的时间段 |
 
-已有 PC 环境包含查看依赖；独立分析环境可在仓库目录运行 `pip install -e '.[analysis]'`。
+已有 PC 环境包含查看依赖；独立分析环境安装 [`analysis` 扩展](install.md#3-可选扩展)。
 重新预测还需要对应策略的运行依赖。

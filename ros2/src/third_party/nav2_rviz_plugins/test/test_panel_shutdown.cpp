@@ -62,7 +62,7 @@ TEST_F(PanelShutdown, FinishedStatusWorkerIsStillOwned)
 {
   auto node = rclcpp::Node::make_shared("panel_shutdown_services");
   auto active = [](const std_srvs::srv::Trigger::Request::SharedPtr,
-      std_srvs::srv::Trigger::Response::SharedPtr response) {response->success = true;};
+    std_srvs::srv::Trigger::Response::SharedPtr response) {response->success = true;};
   auto nav = node->create_service<std_srvs::srv::Trigger>(
     "lifecycle_manager_navigation/is_active", active);
   auto loc = node->create_service<std_srvs::srv::Trigger>(

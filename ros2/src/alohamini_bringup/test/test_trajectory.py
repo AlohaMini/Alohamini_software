@@ -6,8 +6,9 @@ from unittest.mock import Mock
 import pytest
 from action_msgs.msg import GoalStatus
 from alohamini_bridge.actions import ControllerActions
-from alohamini_bridge.bridge_node import AlohaMiniBridge, load_mapper
+from alohamini_bridge.bridge_node import AlohaMiniBridge
 from alohamini_bridge.commands import RobotCommands
+from alohamini_bridge.mapping import JointMapper
 from alohamini_bridge.trajectory import TerminalState, TrajectoryResource, TrajectorySample
 from builtin_interfaces.msg import Duration, Time
 from control_msgs.action import FollowJointTrajectory, GripperCommand
@@ -19,20 +20,18 @@ from rclpy.parameter import Parameter
 from rclpy.task import Future
 from std_srvs.srv import SetBool
 from test_hardware import command_channel as command_channel
-from test_hardware import command_reply, observation, write_mapping
+from test_hardware import command_reply, observation
 from test_hardware import host as host
 from test_hardware import ros as ros
 from trajectory_msgs.msg import JointTrajectoryPoint
 
-from alohamini.model import get_robot_model
 from alohamini.schema import BodyVelocity
 
 
 @pytest.fixture
 def control(command_channel, tmp_path):
     _, client = command_channel
-    write_mapping(tmp_path)
-    commands = RobotCommands(0.25, mapper=load_mapper(tmp_path, get_robot_model("alohamini2pro")))
+    commands = RobotCommands(0.25, mapper=JointMapper())
     commands.step(client, observation())
     assert commands.enable()[0]
     return commands, client
@@ -54,7 +53,7 @@ def test_partial_goals_latch_other_joints_and_compose_once(control):
     commands, client = control
     for name, joint, target in (
         ("left_arm", "left_shoulder_pan", 0.1),
-        ("right_arm", "right_elbow_flex", -0.1),
+        ("right_arm", "right_elbow_flex", 0.1),
         ("lift", "vertical_move", 0.01),
     ):
         samples = (TrajectorySample(0.0, {joint: target}),)
@@ -65,9 +64,11 @@ def test_partial_goals_latch_other_joints_and_compose_once(control):
     target = client.send_command.call_args.args[0]
     assert len([key for key in target if key.endswith(".pos")]) == 12
     assert target["lift_axis.height_mm"] == pytest.approx(310.0)
-    assert target["arm_left_elbow_flex.pos"] == pytest.approx(0.5 * 360 / 4095)
+    assert target["arm_left_elbow_flex.pos"] == pytest.approx(
+        observation().payload["arm_left_elbow_flex.pos"]
+    )
     assert target["arm_left_shoulder_pan.pos"] > 0.0
-    assert target["arm_right_elbow_flex.pos"] < 0.0
+    assert target["arm_right_elbow_flex.pos"] < observation().payload["arm_right_elbow_flex.pos"]
     assert target["x.vel"] == target["theta.vel"] == 0.0
 
 
@@ -84,7 +85,9 @@ def test_disable_stops_touched_arm_and_lift_without_zeroing_other_joints(control
     assert target["lift_axis.stop"] == 1.0
     assert "lift_axis.height_mm" not in target
     assert "arm_right_shoulder_pan.pos" not in target
-    assert target["arm_left_shoulder_pan.pos"] == pytest.approx(0.5 * 360 / 4095)
+    assert target["arm_left_shoulder_pan.pos"] == pytest.approx(
+        observation().payload["arm_left_shoulder_pan.pos"]
+    )
     assert "lift_axis.vel" not in target
 
 
@@ -218,7 +221,9 @@ def test_cancel_supersedes_unacknowledged_motion_with_fresh_stop(control, resour
         assert targets["lift_axis.stop"] == 1.0
         assert "lift_axis.height_mm" not in targets
     else:
-        assert targets["arm_left_shoulder_pan.pos"] == pytest.approx(0.5 * 360 / 4095)
+        assert targets["arm_left_shoulder_pan.pos"] == pytest.approx(
+            observation().payload["arm_left_shoulder_pan.pos"]
+        )
     assert commands.status()[0]
 
 
@@ -251,8 +256,10 @@ def test_lift_stop_survives_temporary_command_backpressure(control):
 def test_cancel_hold_survives_temporary_command_backpressure(control):
     commands, client = control
     goal = commands.start_goal(
-        "left_arm", ["left_shoulder_pan"],
-        (TrajectorySample(1.0, {"left_shoulder_pan": 0.1}),), commands.input_epoch,
+        "left_arm",
+        ["left_shoulder_pan"],
+        (TrajectorySample(1.0, {"left_shoulder_pan": 0.1}),),
+        commands.input_epoch,
     )
     commands.step(client, command_reply(commands))
     original_send = client.send_command.side_effect
@@ -423,10 +430,8 @@ def test_jog_expiration_latches_measured_pose_instead_of_dropping_target():
 def robot(ros, host, tmp_path):
     port, state = host
     state["follow"] = True
-    write_mapping(tmp_path)
     node = AlohaMiniBridge(
         parameter_overrides=[
-            Parameter("arm_mapping_dir", value=str(tmp_path)),
             Parameter("observation_port", value=port),
             Parameter("command_port", value=state["command_port"]),
         ]
@@ -488,7 +493,7 @@ def test_two_arms_and_lift_run_concurrently_on_one_host_client(robot):
     results = []
     for resource, joint, target in (
         ("left_arm", "left_shoulder_pan", 0.1),
-        ("right_arm", "right_elbow_flex", -0.1),
+        ("right_arm", "right_elbow_flex", 0.1),
         ("lift", "vertical_move", 0.01),
     ):
         _, result = send(clients[resource], trajectory(joint, target, 0.3), until)
@@ -564,7 +569,7 @@ def test_joint_jog_topics_reuse_epoch_and_discard_stale_stamps(robot):
     until(lambda: publisher.get_subscription_count() > 0)
     message = JointJog()
     message.joint_names = list(node.commands.resources["left_arm"].joints)
-    message.displacements = [0.02] * 6
+    message.displacements = [0.02, -0.02, 0.02, 0.02, 0.02, 0.02]
     node.on_jog(message, "left_arm", node.commands.input_epoch)
     assert not state["commands"]
     message.header.stamp = node.get_clock().now().to_msg()
@@ -579,7 +584,7 @@ def test_joint_jog_topics_reuse_epoch_and_discard_stale_stamps(robot):
     "change",
     [
         lambda goal: goal.trajectory.header.stamp.__setattr__("sec", 1),
-        lambda goal: goal.trajectory.points[0].positions.__setitem__(0, 2.0),
+        lambda goal: goal.trajectory.points[0].positions.__setitem__(0, 3.0),
         lambda goal: goal.trajectory.joint_names.append("left_shoulder_pan"),
         lambda goal: goal.trajectory.points[0].__setattr__("velocities", [math.nan]),
         lambda goal: goal.path_tolerance.append(

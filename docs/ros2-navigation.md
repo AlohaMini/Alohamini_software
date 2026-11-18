@@ -35,28 +35,19 @@ ROS 域建议使用 0–101（本流程实机用 5、离线用 42–44），避�
 
 ## 安装与设备
 
-ROS 节点使用 Humble 的系统 Python。已有 Debian 树莓派可使用 Humble 对应容器，不直接套用 Ubuntu apt 源。Ubuntu 22.04／Humble 环境中的 PC 构建：
-
-PC 使用 `tf2_ros >= 0.25.24` 及配套 RViz 包，包含 [TF 等待死锁修复](https://github.com/ros2/geometry2/pull/990)。已装旧版 Humble 的 PC 先更新：
+PC 使用 [ROS2 安装](install.md#5-ros2-环境) 中的 `alohamini_ros` Conda 环境：Ubuntu 22.04 使用 Humble，Ubuntu 24.04 使用 Jazzy。按当前分支的锁文件准备环境，然后构建：
 
 ```bash
-sudo apt-get update
-sudo apt-get install ros-humble-tf2-ros ros-humble-rviz2 \
-  ros-humble-rviz-common ros-humble-rviz-default-plugins
-```
-
-```bash
-source /opt/ros/humble/setup.bash
-cd ~/Alohamini/ros2
-rosdep install --from-paths src ../simulation/navigation --ignore-src -r -y
-bash ../deploy/edu/build-pc.sh
-source install/local_setup.bash
+cd ~/Alohamini
+source ros2/env.bash --base
+bash deploy/edu/build-pc.sh
+source ros2/env.bash
 export ROS_DOMAIN_ID=5 ROS_LOCALHOST_ONLY=0
 ```
 
-树莓派只构建 `--packages-up-to alohamini_sensors`，不必为传感器安装 SLAM／Nav2。Host 使用原有 `alohamini_host` 环境和启动参数，机型改为 `--robot_model alohamini2edu`。仅注册型号不会改变已有舵机 EEPROM 标定。
+树莓派运行 Host 和传感器驱动。Debian 树莓派使用本文的传感器容器；Ubuntu 树莓派可按匹配的 ROS 发行版构建 `--packages-up-to alohamini_sensors`。容器的 ROS 发行版须与 PC 一致。
 
-PC 构建包含 `third_party/nav2_rviz_plugins`（固定为 Nav2 1.1.20，修复面板线程清理）和 `alohamini_rviz`（修复 Humble 相机显示重复取消订阅）。`build-pc.sh` 显式覆盖系统同名 Nav2 插件；运行前须 source 本工作区的 `install/local_setup.bash`。这些界面包不进入树莓派传感器容器。升级 ROS／Nav2 时须检查对应源码兼容性并重跑退出检查。
+Host 使用原有 `alohamini_host` 环境，机型为 `--robot_model alohamini2edu`；按使用手册完成该机器的 Home 标定。
 
 默认设备为 `/dev/lidar_c1`（460800）和 `/dev/imu_usb`（115200）；可用启动参数指定 `/dev/serial/by-id/...`。串口用户须有 `dialout` 权限。C1 的 udev 模板位于 `alohamini_rplidar_c1/udev/`，填写实际 USB 序列号后安装；不能仅凭相同 VID/PID 区分多个适配器。没有唯一序列号的 IMU 可使用固定 USB 插口的 `/dev/serial/by-path/...`。
 
@@ -83,7 +74,7 @@ ros2 launch alohamini_sensors sensors.launch.py
 ros2 launch alohamini_navigation mapping.launch.py host:=192.168.44.4
 ```
 
-传感器也连接 PC 时追加 `start_sensors:=true`，并停止另一处驱动。默认 `base_only:=true`，无需双臂／升降 URDF 映射；仍要求 Host 原有就绪状态与控制权条件。需要显示真实整机时使用 `base_only:=false arm_mapping_dir:=/实际EDU映射目录`。导航描述移除了规划用虚拟根关节，避免与 EKF 的 `odom→base_link` 冲突。
+传感器也连接 PC 时追加 `start_sensors:=true`，并停止另一处驱动。默认 `base_only:=true`，无需双臂／升降 URDF 映射；仍要求 Host 原有就绪状态与控制权条件。需要显示真实整机时使用 `base_only:=false`。导航描述移除了规划用虚拟根关节，避免与 EKF 的 `odom→base_link` 冲突。
 
 默认 EKF 融合轮速的 vx／vy 和 IMU 的 gz，不融合含重力的加速度或未标定绝对航向。没有 IMU 时显式追加 `use_imu:=false`，改用轮速推算的 yaw rate；这不是运行中自动降级。
 
@@ -148,19 +139,21 @@ ros2 run alohamini_navigation map_session record office_episode_001
 
 写入工作区 `runs/office_episode_001/bag/`，记录扫描、IMU、轮速、里程计、TF、关节、相机 JPEG／内参、采样时钟关联、地图、ROS 命令和诊断。Ctrl+C 正常刷新文件；结束清单列出各话题消息数和缺失项。可用 `--cameras forward wrist_left wrist_right` 选择相机，`--duration 30` 定时结束，`--require-topics /scan /imu/data_raw` 检查必需话题。录制器不创建 HostClient、不启用运动，不存在的话题不会产生数据。
 
-双臂 FK／IK 使用平台的同一套算法，EDU 通过自己的模型资源加载。完整 ROS 整机入口用 `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu`；MoveIt／Joy-Con 预览同样支持该参数。关节映射须属于 EDU，`sync_arm_mapping` 根据实际 Host 型号生成模板，不能直接更改另一台机器标定文件中的型号来复用。
+双臂 FK／IK 使用平台的同一套算法，EDU 通过自己的模型资源加载。完整 ROS 整机入口用 `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu`；MoveIt／Joy-Con 预览同样支持该参数。关节映射自动读取 EDU Host 的 Home 标定；设备零偏与行程保存在各机器自己的标定文件中。
 
 ## 树莓派容器与设备检查
 
-PC 已有 Humble 时无需 Docker。树莓派已有 Humble 时直接构建传感器包；Debian 主机可使用传感器容器。将本仓库源码放到树莓派 `~/Alohamini`，在树莓派执行：
+PC 使用 Conda ROS 环境。树莓派已有匹配的 ROS 时可直接构建传感器包；Debian 主机使用传感器容器。将本仓库源码放到树莓派 `~/Alohamini`，在树莓派执行：
 
 ```bash
 cd ~/Alohamini
-python3 deploy/edu/sensors-container build
-python3 deploy/edu/sensors-container run --domain 5 \
+python3 deploy/edu/sensors-container build --ros-distro humble
+python3 deploy/edu/sensors-container run --ros-distro humble --domain 5 \
   --lidar /dev/serial/by-id/实际雷达设备 \
   --imu /dev/serial/by-path/实际IMU设备
 ```
+
+PC 使用 Jazzy 时，将上述两个命令的 `humble` 改为 `jazzy`。两端默认使用 Cyclone DDS。
 
 容器只运行传感器，不安装 SLAM／Nav2，不启动 Host，也不映射电机串口；使用 host 网络和 IPC。原生 Host 继续在现有环境中运行，相机须在 Host 启动时显式开启，例如原有 `--cameras forward` 参数。`--dry-run` 查看容器命令；另一个终端用 `python3 deploy/edu/sensors-container stop` 停止。
 

@@ -22,6 +22,17 @@ def loss_counts(batch):
 
 
 class ACTAlgorithm:
+    supports_remote_chunks = True
+
+    @staticmethod
+    def action_horizon(config):
+        return config.chunk_size
+
+    @staticmethod
+    def validate_plan(config):
+        if config.temporal_ensemble_coeff is not None:
+            raise ValueError("Trajectory execution requires ACT temporal ensembling to be disabled")
+
     supports_field_transforms = True
     fsdp_classes = ("ACTEncoderLayer", "ACTDecoderLayer", "BasicBlock", "Bottleneck")
     include_task = False

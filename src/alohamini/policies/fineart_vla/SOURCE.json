@@ -1,0 +1,45 @@
+{
+  "paper": "https://arxiv.org/abs/2609.36416",
+  "author_release": "https://labs.scale.com/blog/fineart",
+  "official_implementation": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "paths": [
+      "src/lerobot/policies/fineart_vla",
+      "src/lerobot/datasets/recipe.py",
+      "src/lerobot/datasets/language_render.py"
+    ]
+  },
+  "base": {
+    "repository": "https://huggingface.co/lerobot/FineART-VLA-subtask-midtrained",
+    "revision": "b6cf4faf2630f971dd390bc32365e9d9c330da8e",
+    "structure": "All813 header tensor names/shapes match the native full-size meta model; contents not downloaded/tested",
+    "config": "Released base uses one flow draw and fast_skip_tokens128; source defaults5 and1152 are not silently substituted"
+  },
+  "native_math": [
+    "PaliGemma/Gemma/SigLIP and timestep adaRMS reuse the platform OpenPI implementation",
+    "Block-diagonal independent flow draws share one VLM prefix, reset RoPE positions per draw, and cannot attend to teacher-forced FAST codes",
+    "KI detaches VLM K/V only for expert queries; text/FAST gradients train the VLM",
+    "Text token-mean CE plus1e-4 z-loss; per-action-sample FAST code-only CE; actual-coordinate flow mean",
+    "Native local UniversalActionProcessor DCT/BPE encoding without executing remote Python",
+    "FP32 math SDPA in joint attention, matching the official FineART setting; native OpenPI token embeddings are explicitly scaled while current Transformers uses scaled embedding modules"
+  ],
+  "data": {
+    "paper_protocol": "FineART:14 named joint/gripper coordinates,30Hz,cam_high/cam_left_wrist/cam_right_wrist, timestamped subtask captions",
+    "robot_adaptation": "Explicit selected recorded units/fields; train-only quantiles+1e-6 without clipping; no inferred relative-joint/EE semantics",
+    "annotations": "Optional shared reader envelope; required persistent column for this recipe; recorded timestamp matching, deterministic episode/frame blend; no fabricated labels",
+    "supervision": "30% high-level task->active subtask text,70% low-level subtask/state->action; repeated episode tails retained",
+    "spatial_vqa": "Named per-camera paired question/answer events; normalized image xy/xyxy, strict finite ordered coordinates; PaliGemma label-first loc targets; no unit or camera inference",
+    "fast_fitting": "Rank0 only, train windows only, deterministic disjoint fit/validation samples; DCT/BPE scale10, target vocabulary1024; RMSE<=0.1/max-dim<=0.2; complete ByteLevel alphabet fixes unseen-coefficient byte loss in small fits"
+  },
+  "limits": [
+    "Tool calls and memory scratchpad controllers are not included",
+    "Invalid/missing labels, non-normalized spatial coordinates and incomplete FAST chunks fail explicitly",
+    "Old released FAST mapping overlaps loc tokens; spatial VQA with FAST requires an explicit skip>=1152",
+    "Episode termination uses the evaluation duration or user stop; no invented completion labels",
+    "Optional Liger/FlashRT/FlexAttention and process-global kernel patches are not enabled",
+    "Small-model CPU/CUDA/backward/cache/controller/checkpoint/resume tests do not establish full-base convergence or distributed readiness"
+  ],
+  "pretrained_weights_included": false,
+  "runtime": "Optional generic observation-time subtask controller; preserves high-level task, clears queues on phase change, resets per episode; independent NativePolicy language/VQA query API"
+}

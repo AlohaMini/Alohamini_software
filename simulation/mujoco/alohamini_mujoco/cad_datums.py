@@ -13,7 +13,7 @@ from scipy.optimize import linprog
 from .cad import file_sha256
 from .collision import visual_sources
 from .frames import points_in_frame, rigid_transform
-from .meshes import binary_stl
+from .meshes import read_mesh
 
 
 def planar_faces(shape):
@@ -216,7 +216,7 @@ def place_from_datums(description, directory, binding_path, output):
     if source["sha256"] != binding["visual_sha256"]:
         raise ValueError("Datum target visual checksum mismatch")
     target_path = description.robot_model.directory / source["path"]
-    target = binary_stl(target_path.read_bytes())
+    target = read_mesh(target_path.read_bytes(), target_path)
     # Bound rounding to float32 at the stored coordinate magnitude. This does
     # not assume an undocumented earlier CAD export/transform was error-free.
     raw = target.vertices.astype(np.float32)

@@ -25,9 +25,10 @@ def prepare(analysis: Analysis, context: dict, *, reference=None, anchors=None, 
         ]
         analysis.summary["interpretation"] = [
             "评估 action 是模型执行时请求的动作，示范 action 是训练数据中的动作标签。",
-            "不同运行的场景与进度可能不同；曲线并排不等于逐帧预测误差。",
-            "默认展示 checkpoint 划分中的首条示范，未自动检索相似场景；可选择其他 episode。",
-            "未标注任务成功或失败；动作变化排名不能直接判定任务成败。",
+            "两次运行的场景和进度可能不同，轨迹对照主要用于观察动作顺序与幅度。"
+            "模型预测误差使用同一条示范的观测和后续动作标签计算。",
+            "参考示范可按 episode 选择；省略时使用 checkpoint 所选划分中的首条示范。",
+            "动作变化事件可帮助定位需要复查的片段，任务完成情况则由画面及结果标注确认。",
         ]
         for key in (
             "command_hz_estimate",

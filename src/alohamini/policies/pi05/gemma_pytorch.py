@@ -9,6 +9,24 @@ from ._transformers import modeling_gemma
 from ._transformers.configuration_gemma import GemmaConfig
 
 
+def joint_attention(attention, query, key, value, mask, scaling, *, fp32=False):
+    """Optional stable FP32 math attention without changing the process compute policy."""
+    if not fp32:
+        return modeling_gemma.eager_attention_forward(attention, query, key, value, mask, scaling)
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    dtype = query.dtype
+    key = modeling_gemma.repeat_kv(key, attention.num_key_value_groups)
+    value = modeling_gemma.repeat_kv(value, attention.num_key_value_groups)
+    with torch.autocast(query.device.type, enabled=False), sdpa_kernel(SDPBackend.MATH):
+        result = torch.nn.functional.scaled_dot_product_attention(
+            query.float(), key.float(), value.float(),
+            attn_mask=mask.float() if mask is not None else None,
+            dropout_p=0.0, is_causal=False, scale=scaling,
+        )
+    return result.transpose(1, 2).contiguous().to(dtype), None
+
+
 class PaliGemmaWithExpertModel(nn.Module):
     def __init__(
         self,
@@ -39,10 +57,18 @@ class PaliGemmaWithExpertModel(nn.Module):
         vlm_config_hf.text_config.use_adarms = use_adarms[0]
         vlm_config_hf.text_config.adarms_cond_dim = vlm_config.width if use_adarms[0] else None
         vlm_config_hf.vision_config.intermediate_size = 4304
-        vlm_config_hf.vision_config.projection_dim = 2048
+        vlm_config_hf.vision_config.projection_dim = vlm_config.width
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.torch_dtype = "float32"
 
+        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
+        self.gemma_expert = None
+        if action_expert_config is not None:
+            self._build_expert(action_expert_config, use_adarms[1])
+
+        self.to_bfloat16_for_selected_params(precision)
+
+    def _build_expert(self, action_expert_config, use_adarms):
         action_expert_config_hf = GemmaConfig(
             head_dim=action_expert_config.head_dim,
             hidden_size=action_expert_config.width,
@@ -53,16 +79,13 @@ class PaliGemmaWithExpertModel(nn.Module):
             vocab_size=257152,
             hidden_activation="gelu_pytorch_tanh",
             torch_dtype="float32",
-            use_adarms=use_adarms[1],
-            adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
+            use_adarms=use_adarms,
+            adarms_cond_dim=action_expert_config.width if use_adarms else None,
         )
 
-        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
         self.gemma_expert.main_input_name = "inputs_embeds"
-
-        self.to_bfloat16_for_selected_params(precision)
 
     def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
         if precision == "bfloat16":
@@ -101,6 +124,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         use_cache: bool | None = None,
         adarms_cond: list[torch.Tensor] | None = None,
         detach_vlm: bool = False,
+        fp32_attention: bool = False,
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
@@ -188,21 +212,23 @@ class PaliGemmaWithExpertModel(nn.Module):
                     # KI equations (5)-(6): detach K AND V only on the expert's
                     # read path. The VLM retains its own differentiable attention.
                     prefix_len = inputs_embeds[0].shape[1]
-                    prefix_attention, _ = modeling_gemma.eager_attention_forward(
+                    prefix_attention, _ = joint_attention(
                         attention, query_states[:, :, :prefix_len],
                         key_states[:, :, :prefix_len], value_states[:, :, :prefix_len],
                         attention_mask[:, :, :prefix_len, :prefix_len], scaling,
+                        fp32=fp32_attention,
                     )
-                    expert_attention, _ = modeling_gemma.eager_attention_forward(
+                    expert_attention, _ = joint_attention(
                         attention, query_states[:, :, prefix_len:],
                         torch.cat((key_states[:, :, :prefix_len].detach(), key_states[:, :, prefix_len:]), dim=2),
                         torch.cat((value_states[:, :, :prefix_len].detach(), value_states[:, :, prefix_len:]), dim=2),
-                        attention_mask[:, :, prefix_len:], scaling,
+                        attention_mask[:, :, prefix_len:], scaling, fp32=fp32_attention,
                     )
                     att_output = torch.cat((prefix_attention, expert_attention), dim=1)
                 else:
-                    att_output, _ = modeling_gemma.eager_attention_forward(
+                    att_output, _ = joint_attention(
                         attention, query_states, key_states, value_states, attention_mask, scaling,
+                        fp32=fp32_attention,
                     )
                 # Get head_dim from the current layer, not from the model
                 head_dim = self.paligemma.language_model.layers[layer_idx].self_attn.head_dim

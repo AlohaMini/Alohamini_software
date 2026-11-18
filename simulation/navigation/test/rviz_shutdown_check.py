@@ -48,8 +48,8 @@ def main():
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     executable = Path(get_package_prefix("rviz2")) / "lib/rviz2/rviz2"
-    plugin = Path(get_package_prefix("nav2_rviz_plugins")) / "lib/libnav2_rviz_plugins.so"
-    image_plugin = Path(get_package_prefix("alohamini_rviz")) / "lib/libalohamini_rviz.so"
+    plugin = (Path(get_package_prefix("nav2_rviz_plugins")) / "lib/libnav2_rviz_plugins.so").resolve()
+    image_plugin = (Path(get_package_prefix("alohamini_rviz")) / "lib/libalohamini_rviz.so").resolve()
     config = Path(get_package_share_directory("alohamini_navigation")) / "config/navigation.rviz"
     assert not str(plugin).startswith("/opt/ros/"), (
         "Source the workspace containing the patched plugin"

@@ -5,8 +5,22 @@ realtime_action. The VJP includes the denoiser Jacobian, not only the identity.
 """
 
 import math
+from dataclasses import dataclass
 
 import torch
+
+
+@dataclass(frozen=True)
+class RTCGuidanceConfig:
+    max_guidance_weight: float = 10.0
+    prefix_attention_schedule: str = "linear"
+
+    def __post_init__(self):
+        if (type(self.max_guidance_weight) not in (int, float)
+                or not math.isfinite(self.max_guidance_weight) or self.max_guidance_weight <= 0):
+            raise ValueError("RTC guidance weight must be finite and positive")
+        if self.prefix_attention_schedule not in ("linear", "exp", "ones", "zeros"):
+            raise ValueError("Unknown RTC prefix attention schedule")
 
 
 def prefix_weights(length, delay, overlap, *, device, schedule="linear"):

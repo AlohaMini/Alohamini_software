@@ -15,6 +15,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from .cameras import add_cameras
 from .compilation import compile_xml
 from .frames import rigid_transform
 from .model import pose_attributes, text
@@ -271,17 +272,7 @@ class LiberoScene:
                 direction = np.fromstring(node.get("dir", "0 0 -1"), sep=" ")
                 node.set("dir", text(self.T_world_libero[:3, :3] @ direction))
             root.find("worldbody").append(node)
-        for camera in self.configuration.get("cameras", []):
-            body = root.find(f".//body[@name='{camera['body']}']")
-            if body is None:
-                raise ValueError(f"Unknown camera parent: {camera['body']}")
-            ET.SubElement(
-                body,
-                "camera",
-                name=camera["name"],
-                fovy=str(camera["fovy_deg"]),
-                **pose_attributes(rigid_transform(camera["T_body_camera"])),
-            )
+        add_cameras(root, self.configuration.get("cameras", []))
         support = self.configuration.get("robot_support")
         if support is not None:
             size = np.asarray(support["size_m"], dtype=float)

@@ -1,0 +1,42 @@
+{
+  "repository": "https://github.com/NVIDIA/cosmos-framework",
+  "revision": "0822f1d1f79f0e75a249ddddcb77c929932e881e",
+  "paper": "https://arxiv.org/abs/2606.02800",
+  "reference": "examples/toml/sft_config/action_policy_libero_10_nano.toml",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/cosmos3",
+    "license": "Apache-2.0"
+  },
+  "bases": {
+    "nano": {
+      "repository": "https://huggingface.co/lerobot/Cosmos3-Nano",
+      "revision": "104d12ccc544e14984443b812233969f389ee8dc",
+      "validation": "All1356 names/shapes match the full meta model, without excluded tensors; headers only, no full weight content or convergence test"
+    },
+    "edge": {
+      "repository": "https://huggingface.co/lerobot/Cosmos3-Edge",
+      "revision": "35d07f7f5ebedc020125dd06e87eee47109276ed",
+      "validation": "All1188 names/shapes match the full meta model, without excluded tensors; headers only, no full weight content or convergence test"
+    },
+    "original_license": "OpenMDW-1.1"
+  },
+  "adaptations": [
+    "Native data reader, sample-weighted video/action losses, relative optimizer groups, strict local safetensors loader, trainer-owned EMA and resumable checkpoints; no LeRobot runtime",
+    "Nano uses36 Qwen3-VL MoT decoder layers, Edge28 Nemotron3 Dense VL MoT layers; local backbone/vision/projector/VAE geometry is authoritative, not a reduced-depth replacement",
+    "Reproduce separate understanding/generation attention and feed-forward parameters; generation attends to causal understanding keys plus bidirectional generation keys; default frozen understanding/vision streams",
+    "Primary LIBERO recipe uses FusedAdam with FP32 master weights, BF16 compute, FP32 timestep math, action LR multiplier5, linear schedule16000 with500 warmup and power EMA sigma_rel0.1; native AdamW uses FP32 trainable authoritative parameters with BF16 AMP instead of Apex master copies",
+    "Generic Power-law EMA beta=((n-1)/n)^7.937203937601809 matches the sigma_rel0.1 EDM2 exponent; native shadows track only trainable tensors, frozen weights remain live unchanged",
+    "Frozen Wan VAE remains eval; non-reentrant checkpointing of MoT; optional per-decoder/VAE compilation without persistent global compiler or TF32 changes; compile mode default only",
+    "Explicit ordered one/two/three-camera canvas, optional named roles, bilinear antialias then uint8 rounding/truncation, tiered bicubic fitting and reflection/replication padding, RGB[-1,1] and per-channel Wan latent statistics",
+    "Current+H frames and H future commands, complete windows and episode-end trim; all offline/online inference consumes only the current frame even when passed a training clip",
+    "Task uses local released tokenizer chat template, native JSON video/task caption, generation marker, right padding, CFG text dropout and UniPC; named camera roles replace fixed LIBERO wrist/scene language",
+    "Robot adaptation uses recorded names/units and dataset action quantiles; no inferred rot6d conversion, relative pose, gripper inversion or DROID layout. It does not automatically reproduce LIBERO's quantile_rot bypass or author-provided global normalization statistics",
+    "State conditioning requires explicitly matching action-layout names, shapes and normalization; uses action statistics so clean state and action tokens share coordinates",
+    "Fresh action input/output/modality heads by default; keeping pretrained heads requires explicit ordered pretrained_action_names and a deliberately selected domain_id",
+    "Idle-frame prompt count remains0 without an explicit physical motion specification; no idle thresholds guessed from recorded channel widths or units",
+    "Inference reasoner KV reuse, LoRA, RTC, multimodal language/VQA training, dynamic token packing and distributed compiled execution are not validated or integrated"
+  ],
+  "pretrained_weights_included": false
+}

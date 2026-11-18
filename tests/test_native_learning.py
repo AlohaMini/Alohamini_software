@@ -157,7 +157,7 @@ def test_against_actual_old_fork(kind, use_state):
 
 
 @pytest.fixture
-def recording(tmp_path):
+def recording(tmp_path, frames=4):
     root = tmp_path / "dataset"
     robot_metadata = metadata()
     for motor in robot_metadata["motors"].values():
@@ -166,7 +166,7 @@ def recording(tmp_path):
     dataset = LocalDataset(root, fps=30, task="test", robot_metadata=robot_metadata)
     for episode in range(2):
         dataset.begin_episode()
-        for i in range(4):
+        for i in range(frames):
             value = frame(dataset)
             value["action"][:] = i + 10 * episode
             stamp = 100 + episode + i / 30

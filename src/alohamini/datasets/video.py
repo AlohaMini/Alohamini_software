@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import math
 import tempfile
 import time
@@ -24,6 +25,10 @@ import pyarrow.parquet as pq
 
 from alohamini.datasets.images import image_path, image_rgb
 from alohamini.datasets.record import _write_json
+from alohamini.datasets.recording_video import encoder_settings
+
+_ENCODER_THREADS = 2
+_RECORDING_OPTIONS = encoder_settings("cpu")[1]
 
 
 def file_sha256(path: Path) -> str:
@@ -62,7 +67,13 @@ def video_frame_count(path: Path) -> int:
         return sum(1 for _ in container.decode(video=0))
 
 
-def _encode_frames(frames, path, fps, shape, *, codec="libx264", pix_fmt="yuv420p", options=None):
+def _encode_frames(
+    frames, path, fps, shape, *, codec="libx264", pix_fmt="yuv420p", options=None, timings=None
+):
+    started = time.perf_counter() if timings is not None else 0.0
+    if timings is not None:
+        for stage in ("setup_s", "convert_s", "encode_s", "mux_s", "flush_s", "close_s"):
+            timings[stage] = 0.0
     rate = Fraction(str(fps)).limit_denominator(100000)
     if rate <= 0:
         raise ValueError("Video fps must be positive")
@@ -71,23 +82,51 @@ def _encode_frames(frames, path, fps, shape, *, codec="libx264", pix_fmt="yuv420
         stream = output.add_stream(codec, rate=rate, options=options or {})
         stream.width, stream.height = shape[1], shape[0]
         stream.pix_fmt = pix_fmt
-        stream.thread_count = 2
+        stream.thread_count = _ENCODER_THREADS
         stream.time_base = 1 / rate
+        if timings is not None:
+            timings["setup_s"] = time.perf_counter() - started
+
+        def write_packets(packets, began, stage):
+            mux_time = 0.0
+            for packet in packets:
+                before_mux = time.perf_counter() if timings is not None else 0.0
+                output.mux(packet)
+                if timings is not None:
+                    mux_time += time.perf_counter() - before_mux
+            if timings is not None:
+                timings[stage] += max(0.0, time.perf_counter() - began - mux_time)
+                timings["mux_s"] += mux_time
+
         for frame in frames:
+            began = time.perf_counter() if timings is not None else 0.0
             frame = frame.reformat(width=stream.width, height=stream.height, format=pix_fmt)
             frame.pts, frame.time_base = count, 1 / rate
-            for packet in stream.encode(frame):
-                output.mux(packet)
+            if timings is not None:
+                timings["convert_s"] += time.perf_counter() - began
+            began = time.perf_counter() if timings is not None else 0.0
+            write_packets(stream.encode(frame), began, "encode_s")
             count += 1
         if not count:
             raise ValueError("No frames to encode")
-        for packet in stream.encode():
-            output.mux(packet)
+        began = time.perf_counter() if timings is not None else 0.0
+        write_packets(stream.encode(), began, "flush_s")
+        closing = time.perf_counter() if timings is not None else 0.0
+    if timings is not None:
+        timings["close_s"] = time.perf_counter() - closing
     return count
 
 
 def finalize_recording_video(
-    episode: Path, fps: int, features: dict, cameras, *, workers=None, timings=None
+    episode: Path,
+    fps: int,
+    features: dict,
+    cameras,
+    *,
+    workers=None,
+    timings=None,
+    camera_timings=None,
+    preencoded=None,
 ) -> None:
     """Encode temporary Host JPEGs (or legacy PNGs), then replace the image index.
 
@@ -103,15 +142,64 @@ def finalize_recording_video(
     if workers is not None and (type(workers) is not int or workers < 1):
         raise ValueError("Video encoding workers must be a positive integer")
     cameras = tuple(cameras)
+    if camera_timings is not None:
+        camera_timings.clear()
+    max_workers = min(workers or len(cameras), len(cameras))
     summary = json.loads((episode / "episode.json").read_text())
     indices = set(sample_indices(summary["length"]))
     (episode / "videos").mkdir(exist_ok=True)
+    if preencoded is not None:
+        try:
+            if set(preencoded["cameras"]) != set(cameras):
+                raise ValueError("Background encoder camera set differs")
+            for camera in cameras:
+                expected = {
+                    "frames": summary["length"],
+                    "fps": fps,
+                    "shape": summary["image_shapes"][camera],
+                }
+                if (
+                    preencoded["cameras"][camera]["frames"] != summary["length"]
+                    or inspect_video(episode / "videos" / f"{camera}.mp4") != expected
+                ):
+                    raise ValueError(f"Background encoded video differs: {camera}")
+        except (OSError, ValueError, KeyError, av.error.FFmpegError) as exc:
+            logging.warning(
+                "Background video validation failed (%s); re-encoding original JPEGs on CPU.", exc
+            )
+            preencoded = None
 
     def encode_camera(camera):
+        if preencoded is not None:
+            path = episode / "videos" / f"{camera}.mp4"
+            reference = {"path": f"videos/{camera}.mp4", "sha256": file_sha256(path)}
+            detail = (
+                preencoded["cameras"][camera]["timings"] if camera_timings is not None else None
+            )
+            return camera, reference, ImageStatistics(), detail
+        camera_started = time.perf_counter() if camera_timings is not None else 0.0
         image_stats = ImageStatistics()
         key = f"observation.images.{camera}"
         shape = summary["image_shapes"][camera]
         path = episode / "videos" / f"{camera}.mp4"
+        pix_fmt = "yuv420p" if not (shape[0] % 2 or shape[1] % 2) else "yuv444p"
+        detail = None
+        if camera_timings is not None:
+            detail = {
+                "frames": summary["length"],
+                "width": shape[1],
+                "height": shape[0],
+                "codec": "libx264",
+                "pix_fmt": pix_fmt,
+                "threads": _ENCODER_THREADS,
+                "workers": max_workers,
+                "preset": _RECORDING_OPTIONS["preset"],
+                "crf": int(_RECORDING_OPTIONS["crf"]),
+                "gop": int(_RECORDING_OPTIONS["g"]),
+                "read_decode_s": 0.0,
+                "image_statistics_s": 0.0,
+                "frame_build_s": 0.0,
+            }
 
         def frames():
             index = 0
@@ -119,8 +207,12 @@ def finalize_recording_video(
                 batch_size=8, columns=[key]
             ):
                 for reference in batch.column(0).to_pylist():
+                    began = time.perf_counter() if detail is not None else 0.0
                     rgb = image_rgb(episode, camera, reference)
+                    if detail is not None:
+                        detail["read_decode_s"] += time.perf_counter() - began
                     if index in indices:
+                        began = time.perf_counter() if detail is not None else 0.0
                         image_stats.update(
                             key,
                             rgb,
@@ -128,7 +220,14 @@ def finalize_recording_video(
                                 "host_jpeg" if reference.endswith(".jpg") else "pre_encoding_png"
                             ),
                         )
-                    yield av.VideoFrame.from_ndarray(rgb, format="rgb24")
+                        if detail is not None:
+                            detail["image_statistics_s"] += time.perf_counter() - began
+                    began = time.perf_counter() if detail is not None else 0.0
+                    frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
+                    if detail is not None:
+                        detail["frame_build_s"] += time.perf_counter() - began
+                    yield frame
+                    del frame
                     index += 1
 
         count = _encode_frames(
@@ -136,21 +235,35 @@ def finalize_recording_video(
             path,
             fps,
             shape,
-            pix_fmt="yuv420p" if not (shape[0] % 2 or shape[1] % 2) else "yuv444p",
-            options={"crf": "18", "preset": "fast", "g": "2"},
+            pix_fmt=pix_fmt,
+            options=dict(_RECORDING_OPTIONS),
+            **({"timings": detail} if detail is not None else {}),
         )
         expected = {"frames": summary["length"], "fps": fps, "shape": shape}
         # Saving checks encoder input count and container metadata without a
         # second decode pass. Full decoding is available via dataset check.
-        if count != summary["length"] or inspect_video(path) != expected:
+        if count != summary["length"]:
             raise ValueError(f"Encoded video does not match recording: {path}")
+        began = time.perf_counter() if detail is not None else 0.0
+        actual = inspect_video(path)
+        if detail is not None:
+            detail["headers_s"] = time.perf_counter() - began
+        if actual != expected:
+            raise ValueError(f"Encoded video does not match recording: {path}")
+        began = time.perf_counter() if detail is not None else 0.0
         reference = {"path": f"videos/{camera}.mp4", "sha256": file_sha256(path)}
-        return camera, reference, image_stats
+        if detail is not None:
+            detail["hash_s"] = time.perf_counter() - began
+            wall = time.perf_counter() - camera_started
+            detail["other_s"] = max(
+                0.0, wall - sum(value for key, value in detail.items() if key.endswith("_s"))
+            )
+            detail["wall_s"] = wall
+        return camera, reference, image_stats, detail
 
     started = time.perf_counter()
     encoded = []
     if cameras:
-        max_workers = len(cameras) if workers is None else min(workers, len(cameras))
         with ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="AlohaMiniVideo"
         ) as pool:
@@ -161,10 +274,19 @@ def finalize_recording_video(
         timings["video_encode_headers_hash"] = time.perf_counter() - started
     started = time.perf_counter()
     references = {}
-    image_stats = ImageStatistics()
-    for camera, reference, camera_stats in encoded:
+    if preencoded is None:
+        image_stats = ImageStatistics()
+    else:
+        # Actual episode length is only known after early-stop/re-record. Keep
+        # the existing sampled, pre-encoding JPEG statistics exactly unchanged.
+        from alohamini.datasets.image_statistics import sample_recording_images
+
+        image_stats = sample_recording_images(episode, cameras, summary["length"])
+    for camera, reference, camera_stats, detail in encoded:
         references[camera] = reference
         image_stats.merge(camera_stats)
+        if camera_timings is not None:
+            camera_timings[camera] = detail
     # Publish a complete summary only after every encoder succeeds, while the
     # original image index still permits recovery if this write fails.
     _write_json(episode / "image_stats.json", image_stats.payload())

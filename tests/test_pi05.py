@@ -70,6 +70,31 @@ def test_explicit_physical_span_floor_is_reversible():
         PI05Processor(stats, original.tokenizer, span_floors={"state": [0.1]})
 
 
+def test_rare_valid_action_survives_collapsed_quantiles_with_or_without_span_floor():
+    from alohamini.datasets.statistics import ExactQuantileStats
+    from alohamini.policies.pi05.processor_pi05 import PI05Processor
+
+    values = np.zeros((2000, 18), dtype=np.float64)
+    values[-1, 0] = 0.02  # Valid motion in fewer than 1% of the numeric targets.
+    tracker = ExactQuantileStats()
+    tracker.update(values)
+    statistics = tracker.get_statistics()
+    assert statistics["q01"][0] == statistics["q99"][0] == 0
+    stats = {key: statistics for key in ("state", "actions")}
+    original = processor()
+    encoded = []
+    for floors in (None, {"actions": [0.05] * 18}):
+        transform = PI05Processor(stats, original.tokenizer, span_floors=floors)
+        targets = transform.normalize("actions", values[-2:])
+        assert targets[0, 0] != targets[1, 0]
+        padded = torch.from_numpy(np.pad(targets, ((0, 0), (0, 14))))
+        restored = transform.restore_actions(padded, np.zeros(18))
+        np.testing.assert_allclose(restored, values[-2:], atol=1e-8)
+        encoded.append(targets)
+    assert encoded[0][-1, 0] > 1  # No clipping, including when the quantile span is zero.
+    assert abs(encoded[1][-1, 0]) < 1
+
+
 def test_delta_targets_and_selected_camera():
     from alohamini.policies.pi05.processor_pi05 import ARM_DELTA_DIMS, relative_actions
 

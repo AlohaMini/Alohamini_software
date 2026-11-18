@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
@@ -241,7 +240,7 @@ class SerialArmKinematics:
         ):
             raise ValueError("Kinematic chain needs a frame and unique ordered joint names")
         if joint_limits is None:
-            root = ET.parse(model.description_path(spec["limits_description"])).getroot()
+            root = model.description_tree(spec["limits_description"])
             joints = {joint.get("name"): joint for joint in root.findall("joint")}
             joint_limits = []
             for name in names:
@@ -269,8 +268,24 @@ class SerialArmKinematics:
         max_iterations=100,
         position_tolerance=1e-5,
         rotation_tolerance=1e-4,
+        backend="pink",
+        qp_solver="daqp",
+        timeout_s=0.15,
+        damping=1e-6,
     ):
         """Bounded pose IK; reject targets that fail the declared tolerances."""
+        if backend == "pink":
+            return self.pink_solver(qp_solver=qp_solver).inverse(
+                target,
+                seed,
+                max_iterations=max_iterations,
+                position_tolerance=position_tolerance,
+                rotation_tolerance=rotation_tolerance,
+                timeout_s=timeout_s,
+                damping=damping,
+            )
+        if backend != "dls":
+            raise ValueError("IK backend must be pink or dls")
         target = np.asarray(target, dtype=float)
         joints = np.array(seed, dtype=float, copy=True)
         self.forward(joints)
@@ -317,6 +332,15 @@ class SerialArmKinematics:
             if not accepted:
                 break
         raise ValueError("IK did not converge within the declared pose tolerances")
+
+    def pink_solver(self, *, qp_solver="daqp"):
+        """Lazily cache the optional backend; FK and dataset encoding need no QP packages."""
+        from .pink import PinkArmSolver
+
+        solver = getattr(self, "_pink_solver", None)
+        if solver is None or solver.qp_solver != qp_solver:
+            solver = self._pink_solver = PinkArmSolver(self, qp_solver=qp_solver)
+        return solver
 
     def forward(self, joints: list[float] | np.ndarray) -> np.ndarray:
         joints = np.asarray(joints, dtype=float)

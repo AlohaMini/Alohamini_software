@@ -12,6 +12,8 @@ from contextlib import contextmanager
 import mujoco
 import numpy as np
 
+from alohamini.simulation.base import BaseMotion
+
 from .control import DynamicFollower
 from .libero import settle_scene
 
@@ -103,8 +105,17 @@ class DynamicPlayback:
         self.follower = DynamicFollower(robot, settings=follower_settings)
         self.follower_settings = self.follower.settings
         self.initial_target = self.follower.target.copy()
+        self.manual_target = self.initial_target.copy()
         if robot.scene is not None:
-            settle_scene(self.follower)
+            if hasattr(robot.scene, "settle"):
+                robot.scene.settle(self.follower)
+            else:
+                settle_scene(self.follower)
+        self.base_motion = None
+        if robot.scene is not None and robot.scene.configuration.get("base_mode") == "kinematic":
+            self.base_motion = BaseMotion(
+                robot.description, robot.profile.T_world_root, mode="kinematic"
+            )
         self.indices = (
             self.follower.trajectory_indices(trajectory)
             if trajectory is not None
@@ -130,10 +141,23 @@ class DynamicPlayback:
     def reset(self):
         mujoco.mj_copyData(self.data, self.robot.model, self.initial_data)
         self.follower.target[:] = self.initial_target
+        self.manual_target[:] = self.initial_target
         self.follower.target_velocity[:] = 0
         self.paused = True
         self.completed = False
         self.saturated_steps = 0
+        if self.base_motion is not None:
+            self.base_motion = BaseMotion(
+                self.robot.description, self.robot.profile.T_world_root, mode="kinematic"
+            )
+
+    def set_manual_target(self, target):
+        target = np.asarray(target, dtype=float)
+        if target.shape != self.manual_target.shape:
+            raise ValueError("Manual targets must match the driven joint order")
+        for name, value in zip(self.follower.names, target, strict=True):
+            self.robot.description.joints[name].check_position(float(value))
+        self.manual_target[:] = target
 
     def step(self, *, single=False):
         if self.completed or (self.paused and not single):
@@ -142,6 +166,30 @@ class DynamicPlayback:
             q, velocity = self.trajectory.reference(float(self.data.time) - self.start_time_s)
             self.follower.target[self.indices] = q
             self.follower.target_velocity[self.indices] = velocity
+        else:
+            if self.base_motion is not None:
+                from .model import pose_attributes
+
+                pose = pose_attributes(self.base_motion.step(self.robot.model.opt.timestep))
+                mocap = self.robot.model.body_mocapid[
+                    self.robot.model.body(self.robot.description.root).id
+                ]
+                self.data.mocap_pos[mocap] = np.fromstring(pose["pos"], sep=" ")
+                self.data.mocap_quat[mocap] = np.fromstring(pose["quat"], sep=" ")
+                for name, q in zip(
+                    self.base_motion.kinematics.names, self.base_motion.wheel_positions, strict=True
+                ):
+                    self.manual_target[self.follower.names.index(name)] = q
+            velocity = np.array(
+                [self.robot.description.joints[n].velocity for n in self.follower.names]
+            )
+            delta = np.clip(
+                self.manual_target - self.follower.target,
+                -velocity * self.robot.model.opt.timestep,
+                velocity * self.robot.model.opt.timestep,
+            )
+            self.follower.target[:] += delta
+            self.follower.target_velocity[:] = delta / self.robot.model.opt.timestep
         self.saturated_steps += int(self.follower.step().any())
         if (
             self.duration_s is not None
@@ -150,6 +198,53 @@ class DynamicPlayback:
             self.completed = True
             self.paused = True
         return True
+
+
+class JointControls:
+    """Translate native UI edits into bounded, speed-limited position commands.
+
+    The display copy never integrates dynamics. Its Control fields expose
+    rad/metre targets instead of raw actuator torque, and Joint slider edits
+    request the same targets without overwriting the physical state.
+    """
+
+    def __init__(self, playback, display_model, display_data):
+        self.playback = playback
+        self.qpos_ids = playback.follower.qpos_ids
+        self.limits = np.array(
+            [
+                (
+                    [joint.lower, joint.upper]
+                    if joint.lower is not None
+                    else [playback.manual_target[i] - np.pi, playback.manual_target[i] + np.pi]
+                )
+                for i, n in enumerate(playback.follower.names)
+                for joint in [playback.robot.description.joints[n]]
+            ]
+        )
+        display_model.actuator_ctrlrange[:] = self.limits
+        display_model.actuator_ctrllimited[:] = 1
+        self.publish(display_data)
+
+    def publish(self, display_data):
+        display_data.ctrl[:] = self.playback.manual_target
+        self.last_positions = display_data.qpos[self.qpos_ids].copy()
+        self.last_controls = display_data.ctrl.copy()
+
+    def read(self, display_data):
+        goal = self.playback.manual_target.copy()
+        for candidate, previous in (
+            (display_data.qpos[self.qpos_ids], self.last_positions),
+            (display_data.ctrl, self.last_controls),
+        ):
+            changed = candidate != previous
+            valid = (
+                np.isfinite(candidate)
+                & (candidate >= self.limits[:, 0])
+                & (candidate <= self.limits[:, 1])
+            )
+            goal[changed & valid] = candidate[changed & valid]
+        self.playback.set_manual_target(goal)
 
 
 def run_viewer(
@@ -177,17 +272,19 @@ def run_viewer(
     display_model = copy.copy(robot.model)
     display_data = mujoco.MjData(display_model)
     mujoco.mj_copyData(display_data, display_model, playback.data)
+    joint_controls = JointControls(playback, display_model, display_data) if mouse_forces else None
     events = queue.SimpleQueue()
     with native_window(
         display_model,
         display_data,
         key_callback=events.put,
-        show_left_ui=False,
-        show_right_ui=False,
+        show_left_ui=True,
+        show_right_ui=True,
     ) as window:
         with window.lock():
             set_geometry(window.opt, collisions=collisions)
             set_camera(robot, window.cam)
+        published_time = float(display_data.time)
 
         perturbation = None
 
@@ -212,6 +309,12 @@ def run_viewer(
         )
         while window.is_running():
             frame_start = time.monotonic()
+            with window.lock():
+                if display_data.time < published_time:
+                    playback.reset()
+            if joint_controls is not None:
+                with window.lock():
+                    joint_controls.read(display_data)
             if mouse_forces:
                 # Pointer events update at display cadence. Read their target
                 # once per frame; recompute the spring force at each physics
@@ -221,6 +324,8 @@ def run_viewer(
             while not events.empty():
                 key = events.get()
                 if key == 32 and not playback.completed:  # Space
+                    # Passive MuJoCo windows leave playback to the application;
+                    # Simulate.run is read-only and its native Run UI is disabled.
                     playback.paused = not playback.paused
                 elif key == 297:  # GLFW_KEY_F8
                     collisions = not collisions
@@ -255,7 +360,7 @@ def run_viewer(
             mode = (
                 "Finished (F9 to reset)"
                 if playback.completed
-                else "Paused"
+                else "Paused (Space to run)"
                 if playback.paused
                 else "Replaying recorded commands"
                 if getattr(playback, "is_recorded", False)
@@ -263,10 +368,21 @@ def run_viewer(
                 if getattr(playback, "is_policy", False)
                 else "Following trajectory"
                 if trajectory is not None
-                else "Holding initial pose"
+                else "Following joint targets"
             )
             with window.lock():
                 mujoco.mj_copyData(display_data, display_model, playback.data)
+                for field in dir(robot.model.opt):
+                    if field.startswith("_"):
+                        continue
+                    value = getattr(robot.model.opt, field)
+                    if isinstance(value, np.ndarray):
+                        getattr(display_model.opt, field)[:] = value
+                    elif not callable(value):
+                        setattr(display_model.opt, field, value)
+                published_time = float(playback.data.time)
+                if joint_controls is not None:
+                    joint_controls.publish(display_data)
             # Overlay updates wait for the render thread. It must be able to
             # acquire the viewer lock while processing the request.
             window.set_texts(
@@ -278,7 +394,9 @@ def run_viewer(
                     f"{'Collision convex hulls' if collisions else 'Visual meshes'}\n"
                     f"{playback.data.ncon} / {playback.saturated_steps}\n"
                     "Space: pause  F8: geometry  F9: reset  Right: step  F6: frames"
-                    + ("  Ctrl+drag: force" if mouse_forces else ""),
+                    + (
+                        "  Sliders: joint targets (rad/m)  Ctrl+drag: force" if mouse_forces else ""
+                    ),
                 )
             )
             window.sync(state_only=True)

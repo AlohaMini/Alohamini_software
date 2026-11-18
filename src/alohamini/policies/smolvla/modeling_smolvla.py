@@ -145,7 +145,7 @@ class SmolVLAPolicy(nn.Module):
         self.rtc_processor = None
 
         if self.config.rtc_config is not None:
-            raise ValueError("Configure RTC at deployment with --rtc, not policy.rtc_config")
+            raise ValueError("Configure RTC at deployment with --inference.type=rtc, not policy.rtc_config")
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -492,7 +492,6 @@ class VLAFlowMatching(nn.Module):
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             self.forward = torch.compile(self.forward, mode=config.compile_mode)
 

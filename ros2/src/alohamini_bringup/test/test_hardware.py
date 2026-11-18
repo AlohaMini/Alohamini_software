@@ -7,7 +7,9 @@ import subprocess
 import threading
 import time
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 from dataclasses import asdict
+from functools import lru_cache
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -15,9 +17,9 @@ import pytest
 import rclpy
 import yaml
 import zmq
-from alohamini_bridge.bridge_node import AlohaMiniBridge, StateReceiver, load_mapper
+from alohamini_bridge.bridge_node import AlohaMiniBridge, StateReceiver
 from alohamini_bridge.commands import RobotCommands
-from alohamini_bridge.mapping import ARM_JOINTS
+from alohamini_bridge.mapping import ARM_JOINTS, JointMapper
 from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticStatus
 from geometry_msgs.msg import Twist
@@ -28,60 +30,88 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
 from tf2_msgs.msg import TFMessage
 
+from alohamini.calibration.encoder import EncoderCalibration, HostPositionUnits
+from alohamini.calibration.reference import PROTOCOL, side_calibration
 from alohamini.client import HostClient
 from alohamini.errors import ResponseTimeoutError
 from alohamini.model import get_robot_model
+from alohamini.model.joint_spec import ModelJointSpecification
 from alohamini.protocol import HostSnapshot
 from alohamini.schema import BodyVelocity, CommandIdentity
 
 
-def write_mapping(directory):
-    model = get_robot_model("alohamini2pro")
+@lru_cache(maxsize=4)
+def reference_metadata(raw=1300, robot_model="alohamini2pro"):
+    spec = ModelJointSpecification.from_model(robot_model)
+    arms, references, captures, motors = {}, {}, {}, {}
     for side in ("left", "right"):
-        document = dict(
-            schema_version=1,
-            robot_model=model.model_id,
-            side=side,
-            ticks_per_revolution=4096,
-            joints={},
+        actuators = tuple(
+            m for m in spec.model.actuators if m.bus == side and m.name.startswith("arm_")
         )
-        for motor in model.actuators:
-            if motor.name.startswith(f"arm_{side}_"):
-                document["joints"][motor.name.removeprefix(f"arm_{side}_")] = dict(
-                    id=motor.motor_id,
-                    model=motor.motor_model,
-                    reference_tick=2048,
-                    reference_q_rad=0.0,
-                    sign=1,
-                    safe_q_min_rad=-1.0,
-                    safe_q_max_rad=1.0,
-                )
-        (directory / f"hardware_joint_map_{side}.yaml").write_text(yaml.safe_dump(document))
-    lift = dict(
+        values, ticks, mapping = side_calibration(
+            spec, side, actuators, dict.fromkeys((m.name for m in actuators), raw), leader=False
+        )
+        arms[side] = mapping
+        references.update(ticks)
+        for motor in actuators:
+            name = motor.name
+            motors[name] = dict(
+                **asdict(values[name]),
+                model=motor.motor_model,
+                normalization="range_0_100" if name.endswith("_gripper") else "range_m100_100",
+            )
+        captures.update(
+            {
+                f"arm_{side}_{name}": entry["capture_tick"]
+                for name, entry in mapping["joints"].items()
+            }
+        )
+    return dict(
         schema_version=1,
-        robot_model=model.model_id,
-        mechanism=dict(physical_min_mm=0.0, physical_max_mm=600.0),
-        urdf=dict(joint="vertical_move", q_at_physical_min_m=-0.3, q_at_physical_max_m=0.3),
+        robot_model=robot_model,
+        motors=motors,
+        lift_axis=dict(soft_min_mm=0.0, soft_max_mm=600.0),
+        reference_calibration=dict(
+            schema_version=1,
+            protocol=PROTOCOL,
+            robot_model=robot_model,
+            role="robot",
+            specification_sha256=spec.signature,
+            reference_pose=spec.descriptor["reference_pose"],
+            capture_pose=spec.descriptor["calibration_pose"]["name"],
+            boundary_policy=spec.descriptor["boundary_policy"],
+            arms=arms,
+            reference_ticks=references,
+            capture_ticks=captures,
+        ),
     )
-    (directory / "lift_axis.yaml").write_text(yaml.safe_dump(lift))
 
 
-def observation(session="host-a", sample=10.0):
-    motors = {}
+def observation(session="host-a", sample=10.0, *, raw=1300, robot_model="alohamini2pro"):
+    metadata = deepcopy(reference_metadata(raw, robot_model))
     payload = {}
     for side in ("left", "right"):
         for joint in ARM_JOINTS:
             name = f"arm_{side}_{joint}"
-            motors[name] = dict(range_min=0, range_max=4095, drive_mode=0, normalization="degrees")
-            payload[f"{name}.pos"] = 0.5 * 360 / 4095
+            entry = metadata["reference_calibration"]["arms"][side]["joints"][joint]
+            encoder = EncoderCalibration(
+                4096,
+                entry["reference_tick"],
+                entry["reference_q_rad"],
+                entry["sign"],
+                position_min_rad=entry["safe_q_min_rad"],
+                position_max_rad=entry["safe_q_max_rad"],
+            )
+            units = HostPositionUnits(
+                **{
+                    key: metadata["motors"][name][key]
+                    for key in ("normalization", "range_min", "range_max", "drive_mode")
+                }
+            )
+            payload[f"{name}.pos"] = units.from_tick(encoder.position_to_tick(0.0))
     payload.update(
         {
-            "_robot_metadata": {
-                "schema_version": 1,
-                "robot_model": "alohamini2pro",
-                "motors": motors,
-                "lift_axis": {"soft_min_mm": 0.0, "soft_max_mm": 600.0},
-            },
+            "_robot_metadata": metadata,
             "_images": [],
             "x.vel": 0.1,
             "y.vel": -0.02,
@@ -126,12 +156,9 @@ def ros(monkeypatch, tmp_path):
 
 @pytest.fixture
 def bridge(ros, tmp_path):
-    write_mapping(tmp_path)
     with patch("alohamini_bridge.bridge_node.StateReceiver") as receiver:
         receiver.return_value.take.return_value = None
-        node = AlohaMiniBridge(
-            parameter_overrides=[Parameter("arm_mapping_dir", value=str(tmp_path))]
-        )
+        node = AlohaMiniBridge()
     for name in (
         "joint_pub",
         "measured_joint_pub",
@@ -150,7 +177,7 @@ def test_mapping_and_units_match_existing_host_and_ros_names(bridge):
     assert len(joints.name) == 15
     assert "left_wrist_yaw_joint" in joints.name
     assert "right_gripper" in joints.name
-    assert joints.position == pytest.approx([0.0] * 15)
+    assert joints.position == pytest.approx([0.0] * 15, abs=0.002)
     assert not joints.effort  # Current is not joint torque.
     velocity = bridge.base_velocity_pub.publish.call_args.args[0]
     assert velocity.twist.angular.z == pytest.approx(math.pi / 2)
@@ -158,7 +185,11 @@ def test_mapping_and_units_match_existing_host_and_ros_names(bridge):
     assert velocity.header.stamp == joints.header.stamp
     assert velocity.header.frame_id == "base_link"
     derived = bridge.derived_wheel_pub.publish.call_args.args[0]
-    assert list(derived.position[:3]) == [0.0] * 3
+    assert derived.name == ["wheel1_joint", "wheel2_joint", "wheel3_joint"]
+    assert len(derived.position) == len(derived.velocity) == 3
+    model = ET.parse(bridge.model.description_path("collision"))
+    active = {joint.get("name") for joint in model.findall("joint") if joint.get("type") != "fixed"}
+    assert set(joints.name) | set(derived.name) == active
     assert derived.header.stamp == joints.header.stamp
 
 
@@ -389,14 +420,94 @@ def test_explicit_host_wall_stamp_does_not_fall_back_to_receipt(bridge):
         bridge.handle_observation(snapshot)
 
 
-def test_mapping_files_are_independent_and_validate_model(tmp_path):
-    write_mapping(tmp_path)
-    path = tmp_path / "hardware_joint_map_left.yaml"
-    document = yaml.safe_load(path.read_text())
-    document["side"] = "right"
-    path.write_text(yaml.safe_dump(document))
-    with pytest.raises(ValueError, match="side"):
-        load_mapper(tmp_path, get_robot_model("alohamini2pro"))
+def test_host_reference_is_required_and_changed_profiles_are_rejected(bridge):
+    snapshot = observation()
+    profile = snapshot.payload["_robot_metadata"].pop("reference_calibration")
+    with pytest.raises(ValueError, match="reference profiles"):
+        bridge.handle_observation(snapshot)
+    bridge.measured_joint_pub.publish.assert_not_called()
+    snapshot.payload["_robot_metadata"]["reference_calibration"] = profile
+    bridge.handle_observation(snapshot)
+    profile["specification_sha256"] = "0" * 64
+    snapshot.payload["_host_timing"]["state_sample_started_monotonic_s"] += 0.02
+    snapshot.payload["_host_timing"]["state_sample_finished_monotonic_s"] += 0.02
+    snapshot.payload["_safety"]["sampled_at_monotonic_s"] += 0.02
+    with pytest.raises(ValueError, match="calibration changed"):
+        bridge.handle_observation(snapshot)
+
+
+@pytest.mark.parametrize("raw", [1300, 4095])
+@pytest.mark.parametrize("robot_model", ["alohamini2", "alohamini2pro"])
+def test_new_robot_uses_its_own_host_binding_without_pc_files(raw, robot_model):
+    snapshot = observation(raw=raw, robot_model=robot_model)
+    mapper = JointMapper()
+    positions = mapper.observation_to_joint_positions(
+        snapshot.payload, snapshot.payload["_robot_metadata"]
+    )
+    assert len(positions) == 15
+    assert tuple(positions.values()) == pytest.approx([0] * 15, abs=0.002)
+    for name, target in (
+        ("left_shoulder_pan", 0.2),
+        ("right_shoulder_lift", -0.2),
+        ("left_elbow_flex", 0.2),
+        ("right_wrist_roll", -0.2),
+    ):
+        field, value = mapper.urdf_to_host(name, target, snapshot.payload["_robot_metadata"])
+        snapshot.payload[field] = value
+        decoded = mapper.observation_to_joint_positions(
+            snapshot.payload, snapshot.payload["_robot_metadata"]
+        )
+        assert decoded[name] == pytest.approx(target, abs=0.002)
+
+
+def test_standard_variant_bridge_reuses_the_common_geometry(ros):
+    with patch("alohamini_bridge.bridge_node.StateReceiver"):
+        node = AlohaMiniBridge(
+            parameter_overrides=[Parameter("expected_robot_model", value="alohamini2")]
+        )
+    try:
+        node.measured_joint_pub = Mock()
+        node.handle_observation(observation(robot_model="alohamini2"))
+        assert len(node.measured_joint_pub.publish.call_args.args[0].name) == 15
+    finally:
+        node.destroy_node()
+
+
+def test_host_lift_soft_limits_do_not_rescale_the_model_coordinate():
+    snapshot = observation()
+    metadata = snapshot.payload["_robot_metadata"]
+    metadata["lift_axis"].update(soft_min_mm=100.0, soft_max_mm=500.0)
+    snapshot.payload["lift_axis.height_mm"] = 200.0
+    mapper = JointMapper()
+    positions = mapper.observation_to_joint_positions(snapshot.payload, metadata)
+    assert positions["vertical_move"] == pytest.approx(-0.1)
+    assert mapper.lift_urdf_to_height(-0.1) == pytest.approx(200.0)
+
+
+def test_raw_encoder_overrun_is_not_hidden_by_normalized_feedback(bridge):
+    snapshot = observation()
+    metadata = snapshot.payload["_robot_metadata"]
+    motors = {}
+    for name, motor in metadata["motors"].items():
+        units = HostPositionUnits(
+            **{key: motor[key] for key in ("normalization", "range_min", "range_max", "drive_mode")}
+        )
+        motors[name] = dict(position_raw=units.to_tick(snapshot.payload[f"{name}.pos"]))
+    name = "arm_left_shoulder_pan"
+    motors[name]["position_raw"] = metadata["motors"][name]["range_max"] + 2
+    snapshot.payload[f"{name}.pos"] = 100.0
+    snapshot.payload["_motor_feedback"] = dict(version=1, motors=motors)
+    bridge.handle_observation(snapshot)
+    message = bridge.measured_joint_pub.publish.call_args.args[0]
+    measured = message.position[message.name.index("left_shoulder_pan")]
+    assert measured > bridge.mapper.encoders["left_shoulder_pan"].position_max_rad
+    snapshot = deepcopy(snapshot)
+    snapshot.payload["_host_timing"]["state_sample_started_monotonic_s"] += 0.02
+    snapshot.payload["_host_timing"]["state_sample_finished_monotonic_s"] += 0.02
+    snapshot.payload["_safety"]["sampled_at_monotonic_s"] += 0.02
+    snapshot.payload["_motor_feedback"]["motors"][name]["field_errors"] = {"position_raw": "bad"}
+    with pytest.raises(ValueError, match="raw encoder feedback"):
+        bridge.handle_observation(snapshot)
 
 
 def test_description_uses_native_assets_without_changing_geometry():
@@ -535,7 +646,6 @@ def test_worker_timeout_preserves_control_handshake_and_uses_feedback_expiry():
 
 def test_hardware_launch_publishes_state_and_tf_without_commands(ros, host, tmp_path):
     port, state = host
-    write_mapping(tmp_path)
     observer = Node("hardware_test_observer")
     names, frames = set(), set()
     observer.create_subscription(
@@ -552,7 +662,6 @@ def test_hardware_launch_publishes_state_and_tf_without_commands(ros, host, tmp_
             "hardware.launch.py",
             "host:=127.0.0.1",
             f"observation_port:={port}",
-            f"arm_mapping_dir:={tmp_path}",
             "enable_cameras:=false",
         ],
         stdout=subprocess.PIPE,
@@ -562,10 +671,10 @@ def test_hardware_launch_publishes_state_and_tf_without_commands(ros, host, tmp_
     )
     try:
         deadline = time.monotonic() + 8
-        expected = {"left_wrist_yaw", "right_wrist_yaw", "base_link"}
+        expected = {"left_wrist_yaw", "right_wrist_yaw"}
         while time.monotonic() < deadline and process.poll() is None:
             rclpy.spin_once(observer, timeout_sec=0.05)
-            if expected <= frames and len(names) == 21:
+            if expected <= frames and len(names) == 18:
                 break
         validation = subprocess.run(
             ["ros2", "run", "alohamini_validation", "validate_tf", "--ros-args", "-r", "__ns:=/"],
@@ -588,7 +697,7 @@ def test_hardware_launch_publishes_state_and_tf_without_commands(ros, host, tmp_
             observer.destroy_node()
     assert process.returncode == 0, output
     assert expected <= frames, output
-    assert len(names) == 21, output
+    assert len(names) == 18, output
     assert "vertical_move" in names
     assert "left_gripper" in names and "right_gripper" in names
     assert state["tokens"] and all(token.endswith(b":state") for token in state["tokens"])
@@ -675,9 +784,7 @@ def test_response_age_and_observation_gap_have_independent_limits(command_channe
 
 
 def test_configured_bridge_parameters_reach_consumers(ros, tmp_path):
-    write_mapping(tmp_path)
     values = dict(
-        arm_mapping_dir=str(tmp_path),
         request_window=4,
         request_timeout_sec=1.5,
         arm_path_tolerance_rad=0.4,
@@ -751,8 +858,7 @@ def test_packaged_bridge_yaml_matches_declared_defaults(bridge):
     config = yaml.safe_load(path.read_text())["alohamini_lerobot_bridge"]["ros__parameters"]
     for name, value in config.items():
         assert bridge.has_parameter(name), name
-        if name != "arm_mapping_dir":
-            assert bridge.get_parameter(name).value == value, name
+        assert bridge.get_parameter(name).value == value, name
 
 
 def test_latest_commands_do_not_wait_for_individual_host_ack(command_channel):
@@ -965,10 +1071,8 @@ def test_disable_does_not_wait_for_inflight_network_send(command_channel):
 
 def test_ros_service_and_cmd_vel_use_native_client_and_stop_on_shutdown(ros, host, tmp_path):
     port, state = host
-    write_mapping(tmp_path)
     node = AlohaMiniBridge(
         parameter_overrides=[
-            Parameter("arm_mapping_dir", value=str(tmp_path)),
             Parameter("observation_port", value=port),
             Parameter("command_port", value=state["command_port"]),
         ]
@@ -1085,7 +1189,7 @@ def test_edu_base_only_bridge_needs_no_arm_mapping_and_publishes_measured_twist(
     with (
         patch("alohamini_bridge.bridge_node.StateReceiver"),
         patch(
-            "alohamini_bridge.bridge_node.load_mapper",
+            "alohamini_bridge.bridge_node.JointMapper",
             side_effect=AssertionError("arm mapping loaded"),
         ),
     ):
@@ -1093,7 +1197,6 @@ def test_edu_base_only_bridge_needs_no_arm_mapping_and_publishes_measured_twist(
             parameter_overrides=[
                 Parameter("expected_robot_model", value="alohamini2edu"),
                 Parameter("base_only", value=True),
-                Parameter("arm_mapping_dir", value=str(tmp_path / "missing")),
             ]
         )
     try:

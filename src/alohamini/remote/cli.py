@@ -8,13 +8,21 @@ from alohamini.errors import AlohaMiniError
 
 
 def main(argv=None):
+    from alohamini.cli import _ensemble_coefficient
+
     parser = argparse.ArgumentParser(prog="alohamini inference")
     commands = parser.add_subparsers(dest="operation", required=True)
     cloud = commands.add_parser("serve", help="Run the policy on the cloud GPU")
     cloud.add_argument("--bind", default="tcp://127.0.0.1:5560", help="Loopback or VPN address")
     cloud.add_argument("--policy.path", dest="checkpoint", required=True)
     cloud.add_argument("--device", default="cuda")
+    cloud.add_argument("--language-replan-interval-s", type=float)
     cloud.add_argument("--chunk-size", type=int)
+    cloud.add_argument("--policy.time_scale", dest="time_scale", type=float)
+    cloud.add_argument(
+        "--policy.temporal_ensemble_coeff", dest="temporal_ensemble_coeff",
+        type=_ensemble_coefficient, default=argparse.SUPPRESS,
+    )
     cloud.add_argument("--task")
     cloud.add_argument("--robot_model")
     cloud.add_argument(
@@ -24,10 +32,10 @@ def main(argv=None):
     )
     cloud.add_argument("--fixed-current", nargs="+")
     cloud.add_argument("--request-timeout-s", type=float, default=15.0, help="Idle session lease")
-    from alohamini.rtc import add_rtc_arguments, pop_rtc_options
+    from alohamini.trajectory_execution import add_inference_arguments, pop_inference_options
 
-    add_rtc_arguments(cloud)
-    pi = commands.add_parser("run", help="Execute cloud action chunks beside the Pi Host")
+    add_inference_arguments(cloud, default="async")
+    pi = commands.add_parser("run", help="Execute cloud trajectory plans beside the Pi Host")
     pi.add_argument("--server", required=True, help="tcp://HOST:PORT on a VPN or SSH tunnel")
     pi.add_argument("--host", default="127.0.0.1")
     pi.add_argument("--robot_model", required=True)
@@ -40,21 +48,27 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.operation == "serve":
-            from alohamini.remote.server import NativeChunkPolicy, serve
+            from alohamini.remote.server import NativePlanPolicy, serve
 
+            execution = pop_inference_options(vars(args).copy(), remote=True)
             overrides = dict(calibration_mode=args.calibration_mode)
             if args.task is not None:
                 overrides["task"] = args.task
             if args.robot_model is not None:
                 overrides["robot_model"] = args.robot_model
-            rtc = pop_rtc_options(vars(args).copy())
-            backend = NativeChunkPolicy(
+            if args.time_scale is not None:
+                overrides["time_scale"] = args.time_scale
+            if args.language_replan_interval_s is not None:
+                overrides["language_replan_interval_s"] = args.language_replan_interval_s
+            if "temporal_ensemble_coeff" in vars(args):
+                overrides["temporal_ensemble_coeff"] = args.temporal_ensemble_coeff
+            backend = NativePlanPolicy(
                 args.checkpoint,
                 device=args.device,
                 chunk_size=args.chunk_size,
                 overrides=overrides,
                 fixed_current=tuple(args.fixed_current) if args.fixed_current else None,
-                **({"rtc": rtc} if rtc.enabled else {}),
+                execution=execution,
             )
             serve(args.bind, backend, threading.Event(), request_timeout_s=args.request_timeout_s)
         else:

@@ -7,6 +7,47 @@ import numpy as np
 from .rotations import RotationEncoding
 
 
+class JointRelativeActions:
+    """Named joint deltas from one observed anchor; all other targets stay absolute."""
+
+    def __init__(self, action_names, state_names, fields):
+        self.action_names, self.names = list(action_names), list(state_names)
+        if (
+            not self.action_names
+            or not self.names
+            or len(set(self.action_names)) != len(self.action_names)
+            or len(set(self.names)) != len(self.names)
+            or not isinstance(fields, dict)
+            or not fields
+            or any(a not in self.action_names or s not in self.names for a, s in fields.items())
+            or len(set(fields.values())) != len(fields)
+        ):
+            raise ValueError("joint_delta requires explicit unique action-to-state joint fields")
+        self.fields = dict(fields)
+        self.action_indices = [self.action_names.index(n) for n in fields]
+        self.state_indices = [self.names.index(n) for n in fields.values()]
+        self.relative = RelativeActions(len(self.action_names), linear_dims=self.action_indices)
+
+    def _reference(self, anchor):
+        anchor = np.asarray(anchor, dtype=np.float64)
+        if anchor.shape[-1:] != (len(self.names),) or not np.isfinite(anchor).all():
+            raise ValueError("joint_delta requires the declared finite observation anchor")
+        reference = np.zeros((*anchor.shape[:-1], len(self.action_names)))
+        reference[..., self.action_indices] = anchor[..., self.state_indices]
+        return reference
+
+    def encode(self, anchor, actions):
+        return self.relative.encode(self._reference(anchor), actions)
+
+    def decode(self, anchor, actions):
+        return self.relative.decode(self._reference(anchor), actions)
+
+    def feature(self, absolute_feature):
+        result = self.relative.feature(absolute_feature)
+        result["joint_delta_fields"] = dict(self.fields)
+        return result
+
+
 class RelativeActions:
     """Every target is relative to one observation anchor, never the preceding target.
 

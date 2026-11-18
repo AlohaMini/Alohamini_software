@@ -1,6 +1,6 @@
 # AlohaMini 使用手册
 
-先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文以 `alohamini2pro`、树莓派 IP `<树莓派_IP>` 为例。
+先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文将 `<型号>` 替换为实际型号，`<树莓派_IP>` 替换为树莓派地址。
 
 ## 1. 型号与接线
 
@@ -12,8 +12,6 @@
 
 AM-ARM 主臂使用 5 V、从臂使用 12 V。
 
-更新包内型号定义或模型资源后，请重启 Host 和 PC 控制程序，使新资源生效。
-
 | 设备 | 连接位置 | 默认设备名 |
 | --- | --- | --- |
 | 左、右主臂 | PC USB | `/dev/am_arm_leader_left`、`/dev/am_arm_leader_right` |
@@ -21,81 +19,55 @@ AM-ARM 主臂使用 5 V、从臂使用 12 V。
 | 右从臂 | 树莓派 USB | `/dev/am_arm_follower_right` |
 | 前视、右腕相机 | 树莓派 USB | `/dev/am_camera_forward`、`/dev/am_camera_wrist_right` |
 
-## 2. 串口与相机
+## 2. 主从臂标定
 
-Ubuntu / Raspberry Pi OS 的设备权限设置，重新登录后生效：
+AM-ARM（`alohamini2`、`alohamini2pro`）按以下 Home 流程标定。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。
+
+已有标定时按 Enter 复用，输入 `c` 重做。标定掉电保留，正常开机无需重新置零。
+
+首次使用设置设备访问组，并重新登录：
 
 ```bash
 sudo usermod -aG dialout,video "$USER"
 ```
-已有正确的默认设备名时无需重新配置。
 
-### PC：检查主臂 Leader
+当前终端仍提示串口权限不足时，执行 `newgrp dialout` 后重新激活 Conda 环境。
+
+Home 摆位：
+
+| 舵机 | 摆位 |
+| --- | --- |
+| 1：肩部转向、5：腕部偏转、6：腕部旋转 | 对齐中位 |
+| 2：肩部抬升、3：肘部弯曲、4：腕部弯曲 | 蜷缩，轻靠对应的连杆或外壳接触面 |
+| 夹爪 | 合拢 |
+
+轻靠接触面，不挤压打印件。标定期间不使能扭矩、不自动运动；任一侧失败时恢复原标定。
+
+### 主臂标定与序列号记录（PC）
 
 ```bash
 conda activate alohamini
-ls /dev/ttyACM*
-alohamini find-port
+alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
 ```
 
-按提示只拔下左主臂的 USB，按 Enter，记录输出的端口并接回 USB。再次运行 `alohamini find-port`，用同样方法确认右主臂。一次只拔一侧；没有端口变化或同时消失多个端口时，重新检查。
+首次按提示记录左右主臂 USB 控制板序列号并绑定设备名：拔下左右主臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码。
 
-接回后确认端口号。以下假设左臂为 `ttyACM0`、右臂为 `ttyACM1`，若不同则替换命令中的端口：
+同一 PC 可保存多套主臂：新主臂执行上述命令登记并标定，已登记主臂接回后自动使用各自的记录。同一时间只连接一套主臂。
+
+首次或重做时，将双主臂一起摆到 Home，保持静止，按一次 Enter 完成。更换配对机器人无需重标主臂。
+
+### 从臂标定（树莓派）
 
 ```bash
-udevadm info --attribute-walk --name=/dev/ttyACM0 | awk -F'"' '/ATTRS\{serial\}/{print $2; exit}'
-udevadm info --attribute-walk --name=/dev/ttyACM1 | awk -F'"' '/ATTRS\{serial\}/{print $2; exit}'
+conda activate alohamini_host
+alohamini calibrate robot --robot_model <型号>
 ```
 
-确认左右序列号非空且不同，创建 PC 端规则：
+使用已有的从臂设备名。首次或重做时，将双从臂一起摆到 Home，保持静止，按一次 Enter 完成。
 
-```bash
-sudo nano /etc/udev/rules.d/90-alohamini-leader.rules
-```
+串口查询用 `alohamini find-port`；自定义串口须同时传入 `--left_port`、`--right_port`。
 
-写入实际序列号：
-
-```udev
-SUBSYSTEM=="tty", ATTRS{serial}=="<左Leader序列号>", SYMLINK+="am_arm_leader_left"
-SUBSYSTEM=="tty", ATTRS{serial}=="<右Leader序列号>", SYMLINK+="am_arm_leader_right"
-```
-
-**应用**并检查两个别名是否指向对应主臂：
-
-```bash
-sudo udevadm control --reload-rules
-sudo udevadm trigger --subsystem-match=tty
-sudo udevadm settle
-ls -l /dev/am_arm_leader_left /dev/am_arm_leader_right
-```
-
-<details>
-<summary>树莓派：设置从臂 Follower 别名</summary>
-
-在 `alohamini_host` 环境中用 `alohamini find-port` 分别确认两块控制板，再查询各自的序列号：
-
-```bash
-udevadm info --attribute-walk --name=/dev/ttyACM0
-```
-
-将命令中的端口换成实际设备，在 `/etc/udev/rules.d/90-alohamini-follower.rules` 写入实际序列号：
-
-```udev
-SUBSYSTEM=="tty", ATTRS{serial}=="<左从臂控制板序列号>", SYMLINK+="am_arm_follower_left"
-SUBSYSTEM=="tty", ATTRS{serial}=="<右从臂控制板序列号>", SYMLINK+="am_arm_follower_right"
-```
-
-重新加载规则并重新插入控制板：
-
-```bash
-sudo udevadm control --reload-rules
-```
-
-确认 `/dev/am_arm_follower_left`、`/dev/am_arm_follower_right` 对应正确后，再启动 Host。
-
-</details>
-
-### 相机
+## 3. 相机
 
 在树莓派查找相机，先停止占用相机的 Host：
 
@@ -104,27 +76,7 @@ conda activate alohamini_host
 alohamini find-cameras opencv
 ```
 
-相机名称可选 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。默认开启前视和右腕；仅选择已连接、已配置设备名的相机。用 `--record-time-s 0` 只列出设备，不保存预览。
-
-## 3. 标定
-
-PC 标定左右主臂：
-
-```bash
-conda activate alohamini
-alohamini calibrate leader --robot_model alohamini2pro --teleop.id am_leader_bi
-```
-
-树莓派标定从臂：
-
-```bash
-conda activate alohamini_host
-alohamini calibrate robot --robot_model alohamini2pro
-```
-
-按终端提示将关节放到中位，再手动移动至完整活动范围。`alohamini2pro` 的中位姿态为大臂向上平行 z 轴、小臂和夹爪沿 x 轴前伸且平行地面、夹爪开合平面水平，1 号肩部转向与 5 号腕部偏转处于中位。依次完成左右臂；`wrist_roll`、底盘和升降无需手动采集范围。已有标定时按 Enter 复用，输入 `c` 重做。
-
-标定保存在 `~/Alohamini_workspace/calibration/`。可复用同一台机器的完整标定，不能套用另一台机器的数据。自定义标定目录用 `--calibration_dir`；Host 的整机 JSON 用 `--calibration` 指定。重做会保留 `*.backup.json` 备份；标定失败或恢复失败时先排查，不要直接启动运动。
+加 `--record-time-s 0` 只列出设备，不保存预览。
 
 ## 4. 启动树莓派 Host
 
@@ -132,9 +84,11 @@ alohamini calibrate robot --robot_model alohamini2pro
 
 ```bash
 conda activate alohamini_host
-alohamini host --robot_model alohamini2pro
+alohamini host --robot_model <型号>
 ```
 Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
+
+相机名称可选 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。默认开启前视和右腕；用 `--cameras` 指定已连接、已配置设备名的相机，多个名称用空格分隔。
 
 ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
 
@@ -152,7 +106,7 @@ ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
 
 ```bash
 conda activate alohamini
-alohamini inspect --host <树莓派_IP> --model alohamini2pro
+alohamini inspect --host <树莓派_IP> --model <型号>
 ```
 
 只读取一次状态，不发送运动命令。连接失败时先确认 Host、IP、两端型号；字段单位与 Python 调用见[客户端接口](host-protocol.md)。
@@ -165,7 +119,7 @@ alohamini inspect --host <树莓派_IP> --model alohamini2pro
 conda activate alohamini
 alohamini teleoperate \
   --host <树莓派_IP> \
-  --robot_model alohamini2pro \
+  --robot_model <型号> \
   --teleop.id am_leader_bi
 ```
 
@@ -188,11 +142,22 @@ PC 终端显示遥操状态和跟踪信息，树莓派终端显示 Host 的 Hz�
 
 ## 7. PC 本地数采
 
+先在树莓派选择本次要录制的相机并启动 Host，数采期间保持 Host 运行：
+
+```bash
+conda activate alohamini_host
+alohamini host --robot_model <型号> --cameras <相机列表>
+```
+
+`<相机列表>` 用空格分隔，例如 `forward wrist_right`；可选名称见 [Host 配置](#4-启动树莓派-host)。数采记录 Host 开启的全部相机。
+
+然后在 PC 启动数采：
+
 ```bash
 conda activate alohamini
 alohamini record \
   --host <树莓派_IP> \
-  --robot_model alohamini2pro \
+  --robot_model <型号> \
   --teleop.id am_leader_bi \
   --dataset pickup_01 \
   --task "pick up the object" \
@@ -201,7 +166,17 @@ alohamini record \
   --reset_time 3
 ```
 
-默认 30 Hz 数采，记录 Host 开启的全部相机。`--display_data` 开启预览，`--profile_timing` 显示采集耗时和保存分段计时。
+默认 30 Hz 数采，`--display_data` 开启预览。
+`--profile_timing` 开启采集、保存分段和各相机视频处理计时；默认关闭，不采集详细视频计时。
+
+| 参数 | 用途 |
+| --- | --- |
+| `--video-encoder nvenc` | 使用 NVIDIA GPU 编码 H.264，需驱动和 PyAV NVENC 支持；默认 `cpu` |
+| `--no-background-video-encoding` | 关闭后台编码，默认开启 |
+| `--video-encoding-workers 2` | 限制同时编码的相机数量，默认按启用相机数 |
+| `--video-encoding-memory-mib 2048` | 编码子进程的内存限额（MiB）；不包含整个录制程序或 GPU 显存 |
+
+NVENC 与 CPU 编码的图像像素和文件大小可能不同。
 
 | 按键 | 操作 |
 | --- | --- |
@@ -228,6 +203,8 @@ alohamini record \
 
 后续使用相同采集命令加 `--resume`，可省略 `--fixed-dimensions`；程序自动恢复保存的目标。
 
+录制结果为 LeRobot v3 数据集。
+
 | 文件 | 内容 |
 | --- | --- |
 | `meta/info.json`、`meta/alohamini.json` | 字段定义、型号、标定和单位 |
@@ -242,7 +219,7 @@ alohamini record \
 alohamini dataset check ~/Alohamini_workspace/datasets/pickup_01
 ```
 
-自动识别 AlohaMini 和 LeRobot v3 数据；两个解码选项检查完整图像和视频。`--output-json <新文件>` 保存报告。`VALID` 表示结构检查通过；训练前仍须检查缺帧和保护事件等警告。
+加 `--decode-videos` 检查视频内容，`--output-json <新文件>` 保存报告。`VALID` 表示结构检查通过；训练前仍须检查缺帧和保护事件等警告。
 
 保存中断时保留原目录，恢复到新目录：
 
@@ -254,7 +231,7 @@ alohamini dataset recover ~/Alohamini_workspace/datasets/pickup_01 \
 仅恢复完整帧，不修改原数据。异常中断留下的 `*.pending/` 用于恢复，不要手动删除。
 按 `R` 或左方向键重录会删除当前回合的临时图片和日志。
 
-AlohaMini 或 LeRobot v3 数据的索引、媒体引用异常时，修复到新目录：
+数据集的索引、媒体引用异常时，修复到新目录：
 
 ```bash
 alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
@@ -271,11 +248,11 @@ alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
 
 ```bash
 alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
-  --output ~/Alohamini_workspace/datasets/pickup_01_lerobot \
+  --output ~/Alohamini_workspace/datasets/pickup_01_copy \
   --format lerobot-v3
 ```
 
-默认 state 为双臂关节位置、底盘速度、升降高度（alohamini2pro 共 18 维），action 不变，反馈保留。`--state` 选择输入字段；纯视觉副本及训练见 [训练与部署](training.md#导出与纯视觉副本)。
+默认 state 为双臂关节位置、底盘速度、升降高度（AM-ARM 共 18 维），action 不变，反馈保留。`--state` 选择输入字段；纯视觉副本及训练见 [训练与部署](training.md#导出与纯视觉副本)。
 
 当前数据的视频在导出时原样复制，不重新编码。恢复与导出须使用新目录；`.pending-*` 表示导出未完成。
 
@@ -285,10 +262,10 @@ alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
 
 ```bash
 alohamini replay --dataset pickup_01 \
-  --host <PI_IP> --robot_model alohamini2pro --episode 0
+  --host <PI_IP> --robot_model <型号> --episode 0
 ```
 
-支持 AlohaMini 数据集及其 LeRobot v3 导出；自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。
+自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。
 
 默认按数据集帧率回放；`--fps` 覆盖帧率，`--speed` 调整倍率。低频或跳帧可能漏掉关键动作，无法保证底盘路径精确复现。
 
@@ -325,7 +302,7 @@ python examples/debug/motors.py get_motors_states --port /dev/ttyACM0
 | `python examples/debug/test_network.py --help` | 指定 HTTP(S) 地址进行连接检查 |
 | `python examples/debug/test_mic.py` | 录音与音量检查，需额外安装 `audio-debug` 和系统 PortAudio |
 
-相机预览、录音等调试输出默认位于工作目录的 `logs/debug/`。麦克风扩展安装命令为 `python -m pip install -e '.[audio-debug]'`。
+相机预览、录音等调试输出默认位于工作目录的 `logs/debug/`。麦克风依赖见[可选扩展](install.md#3-可选扩展)。
 
 <details>
 <summary>舵机维护：卸力、改 ID、改相位</summary>

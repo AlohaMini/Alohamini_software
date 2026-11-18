@@ -26,6 +26,7 @@ class FastWAMProcessor:
 
 
 class FastWAMAlgorithm:
+    asset_fields = ("vae_model_id", "text_encoder_model_id", "tokenizer_model_id")
     include_task = True
     fsdp_classes = ("MoTLayer",)
     validate_statistics = staticmethod(validate_statistics)

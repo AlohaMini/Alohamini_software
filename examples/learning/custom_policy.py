@@ -16,7 +16,11 @@ class RecedingHorizonPolicy:
         self.adapter = NativePolicy(
             checkpoint, device=device, n_action_steps=1, temporal_ensemble_coeff=None
         )
-        self.robot_metadata = self.adapter.robot_metadata
+
+    def __getattr__(self, name):
+        # Preserve checkpoint action semantics so the evaluator can select its
+        # protected execution path, including TCP checkpoints in sync mode.
+        return getattr(self.adapter, name)
 
     def reset(self):
         """Called at each episode start; discard every queued/ensembled old action."""

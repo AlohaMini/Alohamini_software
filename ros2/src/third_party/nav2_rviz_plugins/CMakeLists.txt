@@ -107,6 +107,8 @@ install(
   DESTINATION include/
 )
 
+install(DIRECTORY schema DESTINATION share/${PROJECT_NAME})
+
 install(FILES LICENSE LICENSE.Apache-2.0 LICENSE.BSD-3-Clause SOURCE.json
   DESTINATION share/${PROJECT_NAME})
 
@@ -117,6 +119,11 @@ if(BUILD_TESTING)
     ENV QT_QPA_PLATFORM=offscreen ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=51)
   target_link_libraries(test_panel_shutdown ${library_name} Qt5::Test)
   ament_target_dependencies(test_panel_shutdown ${dependencies})
+
+  # Humble gtest sources need this standard header with recent compilers.
+  if(TARGET gtest)
+    target_compile_options(gtest PRIVATE -include cstdint)
+  endif()
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 endif()

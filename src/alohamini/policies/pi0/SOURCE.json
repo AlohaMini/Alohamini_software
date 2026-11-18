@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/Physical-Intelligence/openpi",
+  "revision": "15a9616a00943ada6c20a0f158e3adb39df2ccac",
+  "paper": "https://arxiv.org/abs/2410.24164",
+  "model_port": {
+    "path": "../pi05",
+    "source": "existing native OpenPI core, full pi0 state/time branch"
+  },
+  "adaptations": [
+    "Reuse native OpenPI dual-stream core with pi05=false",
+    "Continuous state token; prompt-only SentencePiece; 48 tokens",
+    "Mean/std plus additive 1e-6, relative 12 named arm joints; gripper/base/lift unshifted",
+    "Native dataset/trainer/checkpoint and FP32 LoRA; no LeRobot runtime"
+  ],
+  "pretrained_weights_included": false
+}

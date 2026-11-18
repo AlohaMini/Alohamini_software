@@ -9,8 +9,6 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 
-from alohamini.paths import WorkspacePaths
-
 
 def _launch(package: str, filename: str) -> PythonLaunchDescriptionSource:
     share = Path(get_package_share_directory(package))
@@ -44,7 +42,9 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("host", default_value="127.0.0.1"),
             DeclareLaunchArgument("robot_model", default_value="alohamini2pro"),
             DeclareLaunchArgument(
-                "arm_mapping_dir", default_value=str(WorkspacePaths().calibration / "hardware")
+                "robot_model",
+                default_value="alohamini2pro",
+                choices=["alohamini2", "alohamini2pro", "alohamini2edu"],
             ),
             DeclareLaunchArgument("observation_port", default_value="5556"),
             DeclareLaunchArgument("command_port", default_value="5555"),
@@ -55,6 +55,11 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("enable_joycon", default_value="false"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("start_native_reader", default_value="true"),
+            DeclareLaunchArgument(
+                "ik_python",
+                default_value="",
+                description="Pink worker Python; empty uses conda run -n alohamini",
+            ),
             DeclareLaunchArgument(
                 "native_python",
                 default_value="",
@@ -79,7 +84,6 @@ def generate_launch_description() -> LaunchDescription:
                     "robot_model": LaunchConfiguration("robot_model"),
                     "observation_port": LaunchConfiguration("observation_port"),
                     "command_port": LaunchConfiguration("command_port"),
-                    "arm_mapping_dir": LaunchConfiguration("arm_mapping_dir"),
                     "state_timestamp_mode": LaunchConfiguration("state_timestamp_mode"),
                     "max_state_response_age_sec": LaunchConfiguration("max_state_response_age_sec"),
                 }.items(),
@@ -120,6 +124,7 @@ def generate_launch_description() -> LaunchDescription:
                             "use_rviz": _all_true("use_rviz", "enable_joycon"),
                             "start_native_reader": LaunchConfiguration("start_native_reader"),
                             "native_python": LaunchConfiguration("native_python"),
+                            "ik_python": LaunchConfiguration("ik_python"),
                         }.items(),
                     )
                 ],

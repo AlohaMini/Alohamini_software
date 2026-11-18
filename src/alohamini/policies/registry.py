@@ -3,6 +3,22 @@
 from importlib import import_module
 
 ALGORITHMS = {
+    "g05": ("alohamini.policies.g05.adapter", "G05Algorithm"),
+    "cosmos3_nano": ("alohamini.policies.cosmos3.adapter", "Cosmos3NanoAlgorithm"),
+    "cosmos3_edge": ("alohamini.policies.cosmos3.adapter", "Cosmos3EdgeAlgorithm"),
+    "lingbot_va": ("alohamini.policies.lingbot_va.adapter", "LingBotVAAlgorithm"),
+    "vla_jepa": ("alohamini.policies.vla_jepa.adapter", "VLAJEPAAlgorithm"),
+    "wall_oss_05": ("alohamini.policies.wall_oss_05.adapter", "WallOSS05Algorithm"),
+    "fineart_vla": ("alohamini.policies.fineart_vla.adapter", "FineARTVLAAlgorithm"),
+    "dm05": ("alohamini.policies.dm05.adapter", "DM05Algorithm"),
+    "xvla": ("alohamini.policies.xvla.adapter", "XVLAAlgorithm"),
+    "pi0_fast": ("alohamini.policies.pi0_fast.adapter", "PI0FastAlgorithm"),
+    "evo1": ("alohamini.policies.evo1.adapter", "Evo1Algorithm"),
+    "eo1": ("alohamini.policies.eo1.adapter", "EO1Algorithm"),
+    "pi0": ("alohamini.policies.pi0.adapter", "PI0Algorithm"),
+    "vqbet": ("alohamini.policies.vqbet.adapter", "VQBeTAlgorithm"),
+    "longwam": ("alohamini.policies.longwam.adapter", "LongWAMAlgorithm"),
+    "bspline": ("alohamini.policies.bspline.adapter", "BSplineAlgorithm"),
     "xiaomi_robotics1": ("alohamini.policies.xiaomi_robotics1.adapter", "XiaomiAlgorithm"),
     "lingbot_vla_v2": ("alohamini.policies.lingbot_vla_v2.adapter", "LingBotAlgorithm"),
     "gr00t_n17": ("alohamini.policies.gr00t_n17.adapter", "GR00TN17Algorithm"),

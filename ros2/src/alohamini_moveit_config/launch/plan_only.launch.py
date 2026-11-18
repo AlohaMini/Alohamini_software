@@ -3,6 +3,7 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, OpaqueFunction
@@ -20,7 +21,7 @@ def _nodes(context):
     moveit_config = (
         MoveItConfigsBuilder(model.model_id, package_name="alohamini_moveit_config")
         .robot_description(file_path=str(model.description_path("collision")))
-        .robot_description_semantic(file_path=str(model.description_path("semantic")))
+        .robot_description_semantic(file_path=str(model.description_path("semantic_planning")))
         .robot_description_kinematics()
         .joint_limits()
         .planning_pipelines(default_planning_pipeline="ompl", pipelines=["ompl"])
@@ -37,7 +38,10 @@ def _nodes(context):
         )
         .to_moveit_configs()
     )
-    moveit_config.robot_description = {"robot_description": model.description_xml("collision")}
+    moveit_config.robot_description = {"robot_description": model.description_xml("planning")}
+    moveit_config.planning_pipelines["ompl"].update(
+        yaml.safe_load((package / "config" / "ompl_groups.yaml").read_text())
+    )
 
     # Offline display poses are model data, never commands or installed-device homing.
     semantic = ET.fromstring(moveit_config.robot_description_semantic["robot_description_semantic"])

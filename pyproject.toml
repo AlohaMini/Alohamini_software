@@ -12,13 +12,30 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-analysis = ["numpy>=2,<3", "pyarrow>=18", "pillow>=11", "rerun-sdk==0.26.2", "av==15.1.0", "matplotlib==3.10.8"]
-kinematics = ["numpy>=2,<3", "scipy>=1.14,<2", "pyyaml>=6"]
+simulation = ["numpy>=1.26,<3"]
+analysis = ["numpy>=2,<3", "pyarrow>=18", "pillow>=11", "rerun-sdk==0.33.1", "av==15.1.0", "matplotlib==3.10.8"]
+kinematics = ["numpy>=2,<3", "scipy>=1.14,<2", "pyyaml>=6", "alohamini-platform[ik]"]
+ik = ["pin-pink==4.4.0", "pin==4.1.0", "qpsolvers[daqp]==4.12.0", "daqp==0.11.2"]
 smolvla = ["alohamini-platform[learning]"]
 spirit = ["alohamini-platform[learning,kinematics]"]
 hyvla05 = ["alohamini-platform[learning]", "timm==1.0.21"]
 openwam = ["alohamini-platform[learning]", "ftfy==6.3.1"]
 pi05 = ["alohamini-platform[learning]"]
+pi0 = ["alohamini-platform[learning]"]
+pi0_fast = ["alohamini-platform[learning]"]
+longwam = ["alohamini-platform[learning]"]
+vqbet = ["alohamini-platform[learning]"]
+eo1 = ["alohamini-platform[learning]"]
+evo1 = ["alohamini-platform[learning]"]
+xvla = ["alohamini-platform[learning]"]
+dm05 = ["alohamini-platform[learning]"]
+fineart_vla = ["alohamini-platform[learning]"]
+wall_oss_05 = ["alohamini-platform[learning]"]
+vla_jepa = ["alohamini-platform[learning]"]
+lingbot_va = ["alohamini-platform[learning]", "ftfy==6.3.1"]
+cosmos3_nano = ["alohamini-platform[learning]"]
+cosmos3_edge = ["alohamini-platform[learning]"]
+g05 = ["alohamini-platform[learning]"]
 multi_task_dit = ["alohamini-platform[learning]"]
 cdp = ["alohamini-platform[learning]"]
 dit_policy = ["alohamini-platform[learning]"]
@@ -29,9 +46,9 @@ xiaomi_robotics1 = ["alohamini-platform[learning,kinematics]"]
 lingbot_vla_v2 = ["alohamini-platform[learning]", "pyyaml>=6"]
 learning = [
     "diffusers==0.39.0",
-    "transformers==5.21.0",
+    "transformers==5.22.1",
     "sentencepiece==0.2.0",
-    "scipy>=1.14,<2",
+    "scipy>=1.15,<2",
     "num2words==0.5.14",
     "typing-extensions>=4.10",
     "accelerate==1.15.0",
@@ -45,7 +62,7 @@ learning = [
     "opencv-python-headless==4.13.0.92",
     "pillow>=11",
 ]
-pc = ["alohamini-platform[learning,notebook,zmq,feetech]", "pynput==1.8.2", "rerun-sdk==0.26.2", "av==15.1.0", "torchcodec==0.11.1", "pandas==2.3.3", "scipy==1.18.0"]
+pc = ["alohamini-platform[learning,notebook,zmq,feetech]", "pynput==1.8.2", "rerun-sdk==0.33.1", "av==15.1.0", "torchcodec==0.17.0", "pandas==2.3.3", "scipy==1.18.0"]
 notebook = ["nbformat==5.10.4", "nbclient==0.10.2", "ipykernel==6.30.1", "matplotlib==3.10.8"]
 zmq = ["pyzmq>=22"]
 feetech = ["feetech-servo-sdk==1.0.0", "pyserial==3.5"]
@@ -66,7 +83,21 @@ host = [
 alohamini = "alohamini.cli:main"
 
 [tool.setuptools.package-data]
-"alohamini._assets" = ["**/*.json", "**/*.yaml", "**/*.urdf", "**/*.srdf", "**/*.[sS][tT][lL]"]
+"alohamini.policies.pi0" = ["LICENSE.pi0", "SOURCE.json", "README.md"]
+"alohamini.policies.pi0_fast" = ["LICENSE.pi0_fast", "SOURCE.json", "README.md"]
+"alohamini.policies.longwam" = ["LICENSE.longwam", "SOURCE.json", "README.md"]
+"alohamini.policies.vqbet" = ["LICENSE.vqbet", "SOURCE.json", "README.md"]
+"alohamini.policies.eo1" = ["LICENSE.eo1", "SOURCE.json", "README.md"]
+"alohamini.policies.evo1" = ["LICENSE.evo1", "SOURCE.json", "README.md"]
+"alohamini.policies.xvla" = ["LICENSE.xvla", "SOURCE.json", "README.md"]
+"alohamini.policies.dm05" = ["LICENSE.dm05", "SOURCE.json", "README.md"]
+"alohamini.policies.fineart_vla" = ["LICENSE.fineart_vla", "SOURCE.json", "README.md"]
+"alohamini.policies.wall_oss_05" = ["LICENSE.wall_oss_05", "SOURCE.json", "README.md"]
+"alohamini.policies.vla_jepa" = ["LICENSE.vla_jepa", "THIRD_PARTY_NOTICES.md", "SOURCE.json", "README.md"]
+"alohamini.policies.lingbot_va" = ["LICENSE.lingbot_va", "SOURCE.json", "README.md"]
+"alohamini.policies.cosmos3" = ["LICENSE.cosmos3", "SOURCE.json", "README.md"]
+"alohamini.policies.g05" = ["LICENSE-G0.5", "NOTICE", "SOURCE.json", "README.md"]
+"alohamini._assets" = ["**/*.json", "**/*.yaml", "**/*.urdf", "**/*.srdf", "**/*.[sS][tT][lL]", "**/*.obj"]
 "alohamini.policies.dit_policy" = ["LICENSE.dit-policy"]
 "alohamini.policies.acdit" = ["LICENSE.acdit", "LICENSE.lift3d", "SOURCE.json"]
 "alohamini.policies.gr00t_n17" = ["LICENSE.gr00t", "SOURCE.json"]
@@ -74,6 +105,7 @@ alohamini = "alohamini.cli:main"
 "alohamini.policies.spirit" = ["LICENSE.spirit", "SOURCE.json"]
 "alohamini.policies.hyvla05" = ["LICENSE.hyvla05", "SOURCE.json"]
 "alohamini.policies.openwam" = ["LICENSE.openwam", "SOURCE.json", "licenses/wan/*"]
+"alohamini.policies.bspline" = ["LICENSE.bspline", "SOURCE.json"]
 
 "alohamini.policies.xiaomi_robotics1" = ["LICENSE.xiaomi", "SOURCE.json"]
 "alohamini.policies.lingbot_vla_v2" = ["LICENSE.lingbot", "SOURCE.json"]

@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/Dexmal/OpenDM",
+  "revision": "03f799120d425ead51d9482bb1da950b6dabade9",
+  "release_date": "2026-07-09",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/dm05/core"
+  },
+  "base": {
+    "repository": "https://huggingface.co/Dexmal/DM05",
+    "revision": "5cd18734814abb075a9ccfd9ad6d16777b5cf10e",
+    "architecture": "Gemma3 34 layers width2560; action expert34 layers width1024; shared head_dim256; SigLIP27 layers at448px; action_dim32",
+    "validation": "All1473 tensor names/shapes match after explicit SigLIP namespace mapping; full weight contents/inference not tested"
+  },
+  "adaptations": [
+    "Native platform data/trainer/checkpoint and local Gemma3 processor; no LeRobot runtime",
+    "No constructor network access, persistent global precision mutation or automatic optional kernel activation",
+    "Recorded normalization uses exact train-only q01/q99 +1e-6, without clipping or zeroing rare actions",
+    "Explicit opendm normalization selects source clipping and zero-if-zero-bounds rules using shared normalization options",
+    "Action loss excludes padded dimensions and repeated episode tails; per-sample masked mean",
+    "Original SigLIP vision_model namespace is explicitly remapped for native Transformers layouts; strict preflight retained",
+    "FSDP wraps the whole action expert because suffix blocks call their layers functionally",
+    "MEM variants, autoregressive CE, optional LoRA, compiled suffix and RTC are outside the initial base-policy integration"
+  ],
+  "pretrained_weights_included": false
+}

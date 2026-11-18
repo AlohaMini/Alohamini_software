@@ -1,0 +1,41 @@
+{
+  "repository": "https://github.com/OpenGalaxea/GalaxeaVLA",
+  "revision": "89f2322b4ad016e192437adc1a2c253b05bab246",
+  "paper": "https://arxiv.org/abs/2608.11739",
+  "reference": "configs/task/libero.yaml",
+  "license": "LicenseRef-G0.5-Community-1.0",
+  "model_port": {
+    "repository": "https://github.com/huggingface/lerobot",
+    "revision": "7910c20a75834ad3fa6a9792df4d44a614d1bba6",
+    "path": "src/lerobot/policies/g05",
+    "license": "LicenseRef-G0.5-Community-1.0"
+  },
+  "bases": {
+    "libero": {
+      "repository": "https://huggingface.co/lerobot/g05_libero",
+      "revision": "9b7ee7d7286b2744e7cfae855dd71aa3cf4c075a"
+    },
+    "base": {
+      "repository": "https://huggingface.co/lerobot/g05_base",
+      "revision": "66590e3252b3714a469d141b9c85a435a2926bcc"
+    },
+    "validation": "Both complete945-tensor schemas match full meta models without exclusions. Headers only, not full contents or convergence."
+  },
+  "adaptations": [
+    "Native platform reader, trainer, loss counting, relative optimizer groups, strict safetensors loader and checkpoint assets; no LeRobot runtime",
+    "Preserve full released24-layer hybrid Qwen3.5 and24-layer full-attention action expert, original head/KV geometry, temporal vision and tied vocabulary projection",
+    "Official LIBERO flow recipe: FP32 trainable/master parameters, BF16 AMP, author FP32 islands, lr1e-5,100k steps,batch8,1000 warmup,8 flow draws,no EMA; checkpointing optional off by default",
+    "Respect fm.joint_training: flow gradients cross the cached VLM bridge only when true. LeRobot PR4445 deliberately fixes knowledge insulation to the base/SO101 default and explicitly documents its LIBERO/RoboTwin training difference; native integration retains the original configurable switch",
+    "Exact extended tokenizer size from idempotent token registration, local-only assets; retain action codes/markers/EOV/state ordering and original prompt serialization",
+    "Ordinary mlp proprio encoder has no dropout; mlp_dropout derives its0.2 or configured probability from source config. Proprio variants bin/null/zeros are not silently substituted",
+    "Explicit camera order/sizes and all selected views; uint8 bilinear resize before float normalization. Multi-frame visual memory uses actual temporal checkpoint geometry",
+    "Named recorded/transformed coordinates replace benchmark-specific guessed left/right layouts; fresh robot input/output/proprio heads by default; retaining them or ActionCodec requires explicit named slots",
+    "Native horizon counts future targets only; historical observations are separate. Multi-frame source configurations whose action horizon includes past context are not benchmark-equivalent",
+    "Train-only exact per-offset action normalization excludes virtual episode padding; generic window statistics and whole-chunk inverse normalization precede execution queues",
+    "Recorded robot preset q01/q99 preserves valid outliers; g05 clipping protocol adds original normalized[-5,5] bounds. Explicit normalization_mapping can select original mean/std protocol; no guessed gripper inversion/relative-pose conversion",
+    "Optional frozen FP32 ActionCodec supports independent CE and flow training; only requested inference head executes. Text and weighted-coordinate losses have separate global denominators for accumulation/validation",
+    "Frame-aligned generic annotation renderer shared with FineART; optional source Subtask/BBox CoT templates. No generated labels used as training truth",
+    "Optional non-reentrant whole-VLM/expert recomputation creates fresh mutable caches. Reference PyTorch GatedDelta and convolution paths validated; installed fused kernel alternatives, compile, LoRA, RTC and distributed execution unvalidated"
+  ],
+  "pretrained_weights_included": false
+}

@@ -39,6 +39,21 @@ def _ensemble_coefficient(value: str) -> float | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from alohamini.environment import main as manage_environment
+    from alohamini.environment import runtime_environment
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["env"]:
+        return manage_environment(argv[1:])
+    try:
+        with runtime_environment(argv):
+            return _main(argv)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"alohamini: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["inference"]:
         from alohamini.remote.cli import main as remote_inference
@@ -64,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     parser = argparse.ArgumentParser(prog="alohamini", description="AlohaMini 机器人接口")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("env", help="检查或同步当前代码要求的环境依赖")
     commands.add_parser("inference", help="云端策略服务与树莓派本地动作执行")
     commands.add_parser("paths", help="显示工作文件保存路径，不创建目录或移动文件")
     commands.add_parser(
@@ -154,12 +170,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     evaluator.add_argument("--device", help="checkpoint 推理设备，默认 cuda")
     evaluator.add_argument(
+        "--language-replan-interval-s", dest="language_replan_interval_s", type=float,
+        default=argparse.SUPPRESS, help="支持语言规划的策略按观测时间周期更新子任务",
+    )
+    evaluator.add_argument(
         "--goal-images", dest="goal_images", type=json.loads, default=argparse.SUPPRESS,
         help='目标图像映射，例如 {"forward":"/path/goal.png"}；仅用于支持视觉目标的策略',
     )
-    from alohamini.rtc import add_rtc_arguments
+    from alohamini.trajectory_execution import add_inference_arguments
 
-    add_rtc_arguments(evaluator)
+    add_inference_arguments(evaluator)
+    evaluator.add_argument("--policy.time_scale", dest="time_scale", type=float,
+                           default=argparse.SUPPRESS)
     evaluator.add_argument(
         "--policy.n_action_steps",
         dest="n_action_steps",
@@ -230,7 +252,25 @@ def main(argv: list[str] | None = None) -> int:
         "--video-encoding-workers",
         type=int,
         default=None,
-        help="保存时并行编码的相机数量上限（默认按启用的相机数量）",
+        help="并行编码的相机数量上限（默认按启用的相机数量）",
+    )
+    recorder.add_argument(
+        "--video-encoder",
+        choices=("cpu", "nvenc"),
+        default="cpu",
+        help="H.264 编码器：CPU libx264 或 NVIDIA NVENC（不可用时回退 CPU）",
+    )
+    recorder.add_argument(
+        "--background-video-encoding",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="采集时后台编码，原始 JPEG 保留至保存成功（默认开启）",
+    )
+    recorder.add_argument(
+        "--video-encoding-memory-mib",
+        type=int,
+        default=2048,
+        help="编码子进程的内存限额，单位 MiB（默认 2048）",
     )
     recorder.add_argument(
         "--num_episodes", "--dataset.num_episodes", dest="num_episodes", type=int, default=1
@@ -270,27 +310,31 @@ def main(argv: list[str] | None = None) -> int:
         "--display_data", "--display-data", type=parse_bool, nargs="?", const=True, default=False
     )
     calibration = commands.add_parser(
-        "calibrate", help="本机手动标定主臂、整机或仅双臂，不使能或自动回零"
+        "calibrate", help="Bind USB controllers and calibrate both arms at Home"
     )
-    calibration.add_argument("target", choices=("leader", "robot", "arms"))
+    calibration.add_argument("target", choices=("leader", "robot"))
     calibration.add_argument(
-        "--rehome", action="store_true", help="仅 arms：重新设置双臂零偏；默认保留"
-    )
-    calibration.add_argument(
-        "--robot_model", required=True, choices=robot_models()
+        "--robot_model", required=True, choices=("alohamini2", "alohamini2pro")
     )
     calibration.add_argument(
-        "--id", "--teleop.id", dest="device_id", help="与遥操或 Host 一致的标定 ID"
+        "--id", "--teleop.id", dest="device_id", help="Calibration ID used by teleoperation or Host"
     )
-    calibration.add_argument("--calibration_dir", help="标定 JSON 所在目录；默认使用工作目录")
-    calibration.add_argument("--left_port", help="左侧串口；默认使用对应主臂/从臂设备名")
-    calibration.add_argument("--right_port", help="右侧串口；默认使用对应主臂/从臂设备名")
+    calibration.add_argument(
+        "--calibration_dir",
+        help="Calibration directory; defaults to the leader USB pair or robot ID",
+    )
+    calibration.add_argument(
+        "--left_port", help="Left serial port; defaults to the arm's USB alias"
+    )
+    calibration.add_argument(
+        "--right_port", help="Right serial port; defaults to the arm's USB alias"
+    )
     calibration.add_argument(
         "--teleop.arm_profile",
         "--arm_profile",
         dest="arm_profile",
-        choices=("so-arm-5dof", "am-leader-6dof"),
-        help="主臂型号，默认按整机选择",
+        choices=("am-leader-6dof",),
+        help="Leader profile; defaults to the selected robot model",
     )
     host = commands.add_parser(
         "host", help="启动硬件 Host：使能并回零；启动前支撑双臂、清空升降下降路径"
@@ -445,9 +489,9 @@ def main(argv: list[str] | None = None) -> int:
             options.pop("command")
             checkpoint = options.pop("checkpoint")
             device = options.pop("device")
-            from alohamini.rtc import pop_rtc_options
+            from alohamini.trajectory_execution import pop_inference_options
 
-            rtc = pop_rtc_options(options)
+            execution = pop_inference_options(options)
             overrides = {
                 key: options.pop(key)
                 for key in (
@@ -458,6 +502,8 @@ def main(argv: list[str] | None = None) -> int:
                     "fixed_current",
                     "calibration_mode",
                     "goal_images",
+                    "time_scale",
+                    "language_replan_interval_s",
                 )
                 if key in options
             }
@@ -484,16 +530,12 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                         **overrides,
                     )
-                    if policy.fps != options["fps"]:
-                        raise ValueError("Evaluation FPS must match the checkpoint")
-                    if rtc.enabled:
-                        from alohamini.learning.rtc import RTCPolicy
+                    from alohamini.learning.trajectory_execution import prepare_execution
 
-                        return RTCPolicy(policy, rtc)
-                    return policy
+                    return prepare_execution(policy, execution, control_fps=options["fps"])
 
                 options["policy_factory"] = load_checkpoint
-            elif device is not None or overrides or rtc.enabled:
+            elif device is not None or overrides or execution != type(execution)():
                 raise ValueError("Checkpoint options require --policy.path, not --policy")
             evaluate(**options)
             return 0
@@ -525,7 +567,6 @@ def main(argv: list[str] | None = None) -> int:
                 left_port=args.left_port,
                 right_port=args.right_port,
                 arm_profile=args.arm_profile,
-                rehome=args.rehome,
             )
             return 0
         if args.command == "paths":

@@ -2,17 +2,21 @@ import os
 import signal
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import rclpy
 import yaml
 from action_msgs.msg import GoalStatus
+from alohamini_validation.validate_moveit import Validator, check_collision_states, model_context
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from moveit_msgs.action import ExecuteTrajectory
-from moveit_msgs.msg import Constraints, JointConstraint, MoveItErrorCodes
-from moveit_msgs.srv import GetMotionPlan, GetPositionFK, GetPositionIK
+from moveit_msgs.msg import Constraints, JointConstraint, MoveItErrorCodes, PlanningSceneComponents
+from moveit_msgs.srv import GetMotionPlan, GetPlanningScene, GetPositionFK, GetPositionIK
 from rcl_interfaces.srv import GetParameters
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -22,6 +26,47 @@ from test_hardware import ros as ros
 from test_trajectory import robot as robot
 from tf2_msgs.msg import TFMessage
 from trajectory_msgs.msg import JointTrajectoryPoint
+
+from alohamini.model import get_robot_model
+
+
+@pytest.mark.parametrize(
+    "description,semantic,root,virtual_base",
+    [
+        ("collision", "semantic", "base_link", False),
+        ("planning", "semantic_planning", "root", True),
+    ],
+)
+def test_validator_uses_served_model_joints_and_keeps_the_lift_reference(
+    description, semantic, root, virtual_base
+):
+    model = get_robot_model("alohamini2pro")
+    frame, state, actual_semantic = model_context(
+        model.description_xml(description), model.description_xml(semantic)
+    )
+    assert frame == root
+    assert actual_semantic.tag == "robot"
+    active = {
+        joint.attrib["name"]
+        for joint in ET.fromstring(model.description_xml(description)).findall("joint")
+        if joint.attrib["type"] != "fixed" and joint.find("mimic") is None
+    }
+    request = GetPositionFK.Request()
+    context = SimpleNamespace(default_state=state)
+    Validator.fill_state(context, request.robot_state, {"left_shoulder_pan": 0.1})
+    positions = dict(
+        zip(
+            request.robot_state.joint_state.name,
+            request.robot_state.joint_state.position,
+            strict=True,
+        )
+    )
+    assert positions.keys() == active
+    assert positions["vertical_move"] == 0.2
+    assert positions["left_shoulder_pan"] == 0.1
+    assert ("root_x_axis_joint" in positions) is virtual_base
+    with pytest.raises(ValueError, match="absent from the served MoveIt model"):
+        Validator.fill_state(context, request.robot_state, {"unknown_joint": 0.0})
 
 
 def test_offline_rviz_targets_only_offline_move_group():
@@ -40,6 +85,7 @@ def test_offline_rviz_targets_only_offline_move_group():
 def test_moveit_executes_through_the_native_host_bridge(robot, tmp_path):
     node, _, state, until = robot
     client = ActionClient(node, ExecuteTrajectory, "/execute_trajectory")
+    state_client = node.create_client(GetPlanningScene, "/get_planning_scene")
     log_path = tmp_path / "moveit_execution.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(
@@ -56,6 +102,34 @@ def test_moveit_executes_through_the_native_host_bridge(robot, tmp_path):
         )
         try:
             until(client.server_is_ready, timeout=15)
+            validator = Validator(namespace="/")
+            try:
+                assert validator.root_frame == "base_link"
+                assert "root_x_axis_joint" not in validator.default_state
+                seed = [0.0, -1.571, 1.571, 0.0, 0.0, 0.0]
+                for side in ("left", "right"):
+                    base, tcp = validator.fk_in_model(side, seed)
+                    validator.default_state["vertical_move"] = 0.1
+                    lower_base, lower_tcp = validator.fk_in_model(side, seed)
+                    np.testing.assert_allclose(
+                        lower_base[:3, 3] - base[:3, 3], [0, 0, -0.1], atol=1e-12
+                    )
+                    np.testing.assert_allclose(
+                        lower_tcp[:3, 3] - tcp[:3, 3], [0, 0, -0.1], atol=1e-12
+                    )
+                    validator.default_state["vertical_move"] = 0.2
+                    target = validator.fk(side, seed)
+                    recovered = validator.ik(side, target, seed)
+                    np.testing.assert_allclose(validator.fk(side, recovered), target, atol=1e-4)
+                baseline_path = Path(get_package_share_directory("alohamini_validation"))
+                baseline = yaml.safe_load(
+                    (baseline_path / "config/collision_baseline.yaml").read_text()
+                )
+                assert set(check_collision_states(validator, baseline)) == set(
+                    baseline["state_validity"]
+                )
+            finally:
+                validator.destroy_node()
             for resource, target in (
                 ("left_arm", 0.1),
                 ("right_arm", 0.1),
@@ -65,7 +139,27 @@ def test_moveit_executes_through_the_native_host_bridge(robot, tmp_path):
             ):
                 goal = ExecuteTrajectory.Goal()
                 joints = node.commands.resources[resource].joints
-                start = [node.commands.positions[joint] for joint in joints]
+                # Validation above spins a separate node. Resume the bridge's
+                # executor and wait for MoveIt's state monitor to catch up.
+                until(state_client.service_is_ready)
+                deadline = time.monotonic() + 5
+                while True:
+                    observed = node.observation_count
+                    until(lambda: node.observation_count > observed)
+                    query = GetPlanningScene.Request()
+                    query.components.components = PlanningSceneComponents.ROBOT_STATE
+                    current = state_client.call_async(query)
+                    until(current.done)
+                    state_message = current.result().scene.robot_state.joint_state
+                    reported = dict(zip(state_message.name, state_message.position, strict=True))
+                    if all(
+                        joint in reported
+                        and abs(reported[joint] - node.commands.positions[joint]) < 0.001
+                        for joint in joints
+                    ):
+                        break
+                    assert time.monotonic() < deadline, "MoveIt state monitor did not catch up"
+                start = [reported[joint] for joint in joints]
                 end = [target, *start[1:]]
                 goal.trajectory.joint_trajectory.joint_names = list(joints)
                 goal.trajectory.joint_trajectory.points = [

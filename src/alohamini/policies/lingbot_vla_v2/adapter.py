@@ -16,6 +16,7 @@ from .semantic import JOINTS, configure, relative_actions, validate_layout
 
 
 class LingBotAlgorithm(ChunkAlgorithm):
+    asset_fields = ("tokenizer_path", "text_tokenizer_path", "image_processor_path", "teacher_root")
     config_class = LingBotConfig
     # Dual-stream attention directly calls decoder projections; wrapping decoder
     # parents does not gather them. These leaf module forwards are actually invoked.

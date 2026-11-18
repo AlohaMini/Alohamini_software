@@ -14,6 +14,15 @@ from alohamini.model import get_robot_model
 
 def test_edu_mechanics_match_pro_without_borrowing_device_calibration():
     pro, edu = (get_robot_model(name) for name in ("alohamini2pro", "alohamini2edu"))
+    original = ET.fromstring(
+        pro.description_path("collision").read_text().replace("alohamini2pro", "alohamini2edu")
+    )
+    updated = ET.parse(edu.description_path("collision")).getroot()
+    updated.remove(updated.find("./link[@name='lidar_housing']"))
+    updated.remove(updated.find("./joint[@name='lidar_housing_joint']"))
+    assert ET.canonicalize(ET.tostring(original), strip_text=True) == ET.canonicalize(
+        ET.tostring(updated), strip_text=True
+    )
     assert pro.actuators == edu.actuators
     assert (pro.wheel_radius_m, pro.base_radius_m, pro.lift_lead_m_per_rev) == (
         edu.wheel_radius_m,
@@ -27,12 +36,36 @@ def test_edu_mechanics_match_pro_without_borrowing_device_calibration():
     assert preset["robot_model"] == edu.model_id
     dh_path = edu.asset_path("config/kinematics/right_arm_kinematics.yaml")
     dh = yaml.safe_load(dh_path.read_text())
-    assert hashlib.sha256((dh_path.parent / dh["source_urdf"]).read_bytes()).hexdigest() == dh[
-        "source_urdf_sha256"
-    ]
+    assert (
+        hashlib.sha256((dh_path.parent / dh["source_urdf"]).read_bytes()).hexdigest()
+        == dh["source_urdf_sha256"]
+    )
     for description in edu.descriptions:
         root = ET.fromstring(edu.description_xml(description))
         assert root.tag == "robot"
+
+
+def test_lidar_box_is_present_in_planning_and_base_views_at_the_sensor_mount():
+    from alohamini.simulation.frames import rotation_rpy
+
+    model = get_robot_model("alohamini2edu")
+    sensor = yaml.safe_load(model.asset_path("config/sensors.yaml").read_text())["lidar"]
+    housing = json.loads(model.asset_path("config/lidar_collision.json").read_text())
+    expected_center = np.asarray(sensor["xyz"]) + rotation_rpy(sensor["rpy"]) @ np.asarray(
+        housing["center_in_reference_m"]
+    )
+    for name in ("collision", "planning", "navigation", "base"):
+        tree = model.description_tree(name)
+        link = tree.find("./link[@name='lidar_housing']")
+        box = link.find("collision/geometry/box")
+        np.testing.assert_allclose(list(map(float, box.get("size").split())), housing["size_m"])
+        joint = tree.find("./joint[@name='lidar_housing_joint']")
+        assert joint.find("parent").get("link") == sensor["parent_frame"]
+        np.testing.assert_allclose(
+            list(map(float, joint.find("origin").get("xyz").split())), expected_center
+        )
+        # Sensor drivers publish the calibrated scan frame independently.
+        assert tree.find("./link[@name='laser_frame']") is None
 
 
 @pytest.mark.parametrize("description", ["base", "navigation"])

@@ -10,6 +10,7 @@ from .configuration_openwam import OpenWAMConfig
 
 
 class OpenWAMAlgorithm(ChunkAlgorithm):
+    asset_fields = ("assets_path",)
     supports_field_transforms = True
     loss_terms = ("loss_video", "loss_action")
     config_class = OpenWAMConfig

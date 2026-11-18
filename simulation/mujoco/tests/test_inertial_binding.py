@@ -28,7 +28,7 @@ def specification(robot):
         "link_groups": [
             {
                 "link": "vertical_link",
-                "replaces": ["vertical_link", "chest_camera"],
+                "replaces": ["vertical_link", "left_Base"],
                 "sources": [
                     {
                         "properties": main.in_frame(np.linalg.inv(T_main), "report/main").to_dict(),
@@ -40,12 +40,12 @@ def specification(robot):
                             np.linalg.inv(T_camera), "report/camera"
                         ).to_dict(),
                         "T_link_source": T_camera.tolist(),
-                        "component_ids": ["chest_camera"],
+                        "component_ids": ["left_Base"],
                     },
                 ],
             }
         ],
-        "component_inventory": ["carriage", "chest_camera", "unbound_arm"],
+        "component_inventory": ["carriage", "left_Base", "unbound_arm"],
         "unresolved": ["Other inertias retain their original declarations"],
     }, properties
 
@@ -66,12 +66,12 @@ def test_binding_replaces_a_fixed_group_without_double_counting_or_moving_geomet
     metadata = bound.manifest["inertial_binding"]
     assert not metadata["complete"]
     assert metadata["unassigned_cad_components"] == ["unbound_arm"]
-    assert set(metadata["removed_urdf_inertias"]) == {"vertical_link", "chest_camera"}
-    assert "chest_camera" not in bound.description.inertials
-    assert bound.model.body("chest_camera").mass == 0
+    assert set(metadata["removed_urdf_inertias"]) == {"vertical_link", "left_Base"}
+    assert "left_Base" not in bound.description.inertials
+    assert bound.model.body("left_Base").mass == 0
     assert bound.model.body("vertical_link").mass == pytest.approx(properties.mass_kg)
     old_mass = sum(p[0] for p in robot.description.inertials.values())
-    removed_mass = sum(robot.description.inertials[n][0] for n in ["vertical_link", "chest_camera"])
+    removed_mass = sum(robot.description.inertials[n][0] for n in ["vertical_link", "left_Base"])
     assert bound.model.body_mass.sum() == pytest.approx(
         old_mass - removed_mass + properties.mass_kg
     )
@@ -114,8 +114,8 @@ def test_binding_rejects_combining_material_across_an_active_joint(robot, tmp_pa
 def test_a_collapsed_wheel_requires_its_explicit_locked_pose(robot, tmp_path):
     definition, properties = specification(robot)
     group = definition["link_groups"][0]
-    group["link"] = "base_cad_link"
-    group["replaces"] = ["base_cad_link", "wheel1"]
+    group["link"] = "base_link"
+    group["replaces"] = ["base_link", "wheel1"]
     path = save(tmp_path, definition)
     with pytest.raises(ValueError, match="across an active joint"):
         load_inertial_bundle(robot.description, path, robot.profile.locked_positions)
@@ -178,7 +178,7 @@ def complete_specification(robot):
         required_locked_positions=dict(robot.profile.locked_positions),
         link_groups=groups,
         component_inventory=[*robot.description.inertials, "stationary_electronics"],
-        fixed_unassigned_components={"base_cad_link": ["stationary_electronics"]},
+        fixed_unassigned_components={"wheel1": ["stationary_electronics"]},
         unresolved=[],
     )
     return definition
@@ -194,7 +194,7 @@ def test_stationary_mass_gap_preserves_active_dynamics_and_its_scope(robot, tmp_
     assert metadata["unassigned_active_cad_components"] == []
     np.testing.assert_allclose(bound.data().qfrc_bias, robot.data().qfrc_bias, rtol=0, atol=1e-12)
     DynamicFollower(bound)
-    definition["required_locked_positions"].pop("root_x_axis_joint")
+    definition["required_locked_positions"].pop("wheel1_joint")
     with pytest.raises(ValueError, match="stationary owner"):
         load_inertial_bundle(
             robot.description, save(tmp_path, definition), robot.profile.locked_positions
@@ -221,7 +221,8 @@ def test_armature_adds_only_declared_joint_inertia_and_is_audited(robot, tmp_pat
     mujoco.mj_fullM(bound.model, bound.data(), modified)
     address = bound.model.jnt_dofadr[bound.model.joint("left_shoulder_pan").id]
     expected = np.zeros_like(baseline)
-    expected[address, address] = 3.9e-4
+    expected[address, address] = 3.9e-4 - robot.model.dof_armature[address]
+    assert bound.model.dof_armature[address] == pytest.approx(3.9e-4)
     np.testing.assert_allclose(modified - baseline, expected, rtol=0, atol=1e-12)
     np.testing.assert_allclose(bound.data().qfrc_bias, robot.data().qfrc_bias, rtol=0, atol=1e-12)
     assert validate_model(bound, samples=1)["passed"]

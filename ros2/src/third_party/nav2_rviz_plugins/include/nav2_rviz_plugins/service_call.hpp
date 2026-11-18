@@ -20,6 +20,7 @@
 #include <string>
 
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp/version.h"
 
 namespace nav2_rviz_plugins
 {
@@ -38,7 +39,11 @@ typename Service::Response::SharedPtr callService(
     options.context = node->get_node_base_interface()->get_context();
     rclcpp::executors::SingleThreadedExecutor executor(options);
     executor.add_callback_group(group, node->get_node_base_interface());
+#if RCLCPP_VERSION_MAJOR >= 28
+    auto client = node->create_client<Service>(name, rclcpp::ServicesQoS(), group);
+#else
     auto client = node->create_client<Service>(name, rmw_qos_profile_services_default, group);
+#endif
     if (!client->wait_for_service(timeout)) {
       return nullptr;
     }

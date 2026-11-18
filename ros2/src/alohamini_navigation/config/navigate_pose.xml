@@ -1,5 +1,5 @@
 <!-- Front-sector profile: replan and clear costmaps; no automatic reverse recovery. -->
-<root main_tree_to_execute="MainTree">
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="3" name="NavigateRecovery">
       <PipelineSequence>

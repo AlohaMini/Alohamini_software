@@ -18,6 +18,7 @@ class ModelAssetTests(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.data = json.loads(self.model.asset_path("model.json").read_text())
         self.data["descriptions"] = {}
+        self.data.pop("description_views", None)
         self.data.pop("kinematic_chains", None)
         self.data.pop("kinematic_presets", None)
         self.data.pop("default_kinematic_preset", None)

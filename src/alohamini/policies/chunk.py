@@ -48,6 +48,14 @@ class TaskProcessor:
 
 
 class ChunkAlgorithm:
+    """Shared action-chunk mechanics with adapter-owned resource and data declarations.
+
+    Optional ``prepare_training_assets(options, samples, stats, *, validation_samples=None)``
+    fits only on training samples. Validation inputs may only prepare frozen input features.
+    ``asset_fields`` names local resources in the saved config; the adapter bundles them.
+    """
+
+    asset_fields = ()
     include_task = True
     supports_remote_chunks = True
     loss_terms = ()

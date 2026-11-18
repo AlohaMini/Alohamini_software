@@ -81,7 +81,7 @@ def export_collision_urdf(description, bundle, output, *, mesh_unit="m"):
                 )
         ET.indent(root)
         (stage / "robot.urdf").write_text(ET.tostring(root, encoding="unicode") + "\n")
-        semantic = description.robot_model.description_path("semantic")
+        semantic = description.semantic_path
         (stage / "robot.srdf").write_bytes(description.source_bytes[semantic])
         definition = (bundle / "collision.json").read_bytes()
         if hashlib.sha256(definition).hexdigest() != provenance["manifest_sha256"]:

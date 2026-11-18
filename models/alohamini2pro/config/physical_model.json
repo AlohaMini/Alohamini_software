@@ -1,0 +1,873 @@
+{
+  "format": "alohamini-physical-model-v1",
+  "robot_model": "alohamini2pro",
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "mass": "kg",
+    "inertia": "kg*m^2"
+  },
+  "required_locked_positions": {},
+  "joint_armature_kg_m2": {
+    "left_shoulder_pan": 0.00038740560914602627,
+    "right_shoulder_pan": 0.00038740560914602627
+  },
+  "lift_reference": {
+    "status": "accepted_for_ros_visualization",
+    "source_sha256": "2d9b768357f40ab9742215c2f8fa9aa30a8a4c2e4eee8d25995c19ae08797c70",
+    "physical_min_m": 0.0,
+    "physical_max_m": 0.6,
+    "position_min_m": -0.3,
+    "position_max_m": 0.3,
+    "configured_lead_m_per_rev": 0.131,
+    "sample_count": 5,
+    "fit_rms_error_m": 0.007055547746856804
+  },
+  "collision_bundle_sha256": "23098536e343ab2e58108c36d14589185f07f15a1509d78c88d64b92146ae73e",
+  "inertial_bundle_sha256": "b22a27a4981a026c4891fbe9b79014cf9376c5a1f54c85b27b22ffc89cd7f23e",
+  "inertia_status": {
+    "dynamics_ready": true,
+    "complete": false,
+    "unassigned_cad_components": [
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:1.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:10.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:11.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:12.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:13.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:14.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:15.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:16.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:17.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:18.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:2.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:3.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:4.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:5.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:6.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:7.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:8.",
+      "0:1:1:1./0:1:1:1:3./0:1:1:27:9."
+    ]
+  },
+  "limitations": [
+    "CAD nominal tensors with user mass overrides, not identified hardware dynamics.",
+    "Pi tower stationary components have no mass report. Base inertia is a known subtotal; base and wheel locks are mandatory.",
+    "Internal motor rotor and gear reflected inertia, friction, compliance and delay remain uncalibrated.",
+    "Pan race armature uses the whole-bearing inertia upper bound; sensitivity range is zero to this value.",
+    "ST3250 horns use closed mesh geometry and nominal aluminium density 2700 kg/m^3.",
+    "Each printed part is anchored locally. STEP occurrence placements and legacy motor/print assembly placements differ; no CAD global frame is used as world.",
+    "Existing robot joint axes, encoder zeros and collision geometry are retained; mass import does not certify their hardware accuracy."
+  ],
+  "files": {
+    "config/gripper_collision.json": "404949321bbc8fede3e5a7af98bc9b9062c2a743165521909c0d6a53ee741e46",
+    "config/gripper_reference.json": "838e91c69848b4078b7f8dee389c70b42b5f80e5df92512e00a21d8e8e39e52b",
+    "config/planar_base.urdf": "ac32a58b9c4b672276ae8bb85fc5972fc9d00169a59847557d7a069c30468c32",
+    "config/structural_collision.json": "063ee5b69f0849c9c87d6dd750b7b37f82806f2b9480b7dc172361a30d1654e7",
+    "meshes/collision/reference/fixed_jaw.npz": "24b80fdfca15c73e3e72c8db026f3e797dc6dfe9e741eb0f33db02b0b71d8a5a",
+    "meshes/collision/reference/moving_jaw.npz": "99005ec68e304c001bab143e0f97c6ca8507ea0c9c65f4ff0425aa3f2fd1faa1",
+    "meshes/collision/structural/091a6af8d138d4d3835f6720b00083b74f1c64e739215719aea3ce6461735004.obj": "091a6af8d138d4d3835f6720b00083b74f1c64e739215719aea3ce6461735004",
+    "meshes/collision/structural/09a4cd7ca59f035a3bdd6797c94e33f0f9021600fbd50d1d0863045e2174dbb4.obj": "09a4cd7ca59f035a3bdd6797c94e33f0f9021600fbd50d1d0863045e2174dbb4",
+    "meshes/collision/structural/0d47dd55282bc01ebc961707d66d94c3e936e2798b5139dbdb77444017d21075.obj": "0d47dd55282bc01ebc961707d66d94c3e936e2798b5139dbdb77444017d21075",
+    "meshes/collision/structural/1750df191692e5df839b84959b5fdaa2b4633b87106c7cb08e75e9633421c781.obj": "1750df191692e5df839b84959b5fdaa2b4633b87106c7cb08e75e9633421c781",
+    "meshes/collision/structural/1754bb796def836465dac9e70cf7e6e02fe0e7e639071b99cea156245748ab56.obj": "1754bb796def836465dac9e70cf7e6e02fe0e7e639071b99cea156245748ab56",
+    "meshes/collision/structural/176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28.obj": "176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28",
+    "meshes/collision/structural/177225f19902f7524a128d836525835f8e5dc35520b9a2bba87c1915951bc46f.obj": "177225f19902f7524a128d836525835f8e5dc35520b9a2bba87c1915951bc46f",
+    "meshes/collision/structural/19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8.obj": "19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8",
+    "meshes/collision/structural/1dff10015044b302dd36682eb07960acb4fc97f2732d911438634f398329e1c6.obj": "1dff10015044b302dd36682eb07960acb4fc97f2732d911438634f398329e1c6",
+    "meshes/collision/structural/1f8d84cba3910096c47f8e25110b6b85bc58d6f9c4155afbbb70c68c6be5b91b.obj": "1f8d84cba3910096c47f8e25110b6b85bc58d6f9c4155afbbb70c68c6be5b91b",
+    "meshes/collision/structural/1fc04b2c54d4b2151499cdb04188a8bc8b25a662b179960e18ac8b7def0ed834.obj": "1fc04b2c54d4b2151499cdb04188a8bc8b25a662b179960e18ac8b7def0ed834",
+    "meshes/collision/structural/258cc154ae6e3fa15def02821734dd16c47fa2c8238b9de94fc299349bec53b5.obj": "258cc154ae6e3fa15def02821734dd16c47fa2c8238b9de94fc299349bec53b5",
+    "meshes/collision/structural/27afaea55575a8f0aee51d037cee08600e4b5e857660df0efc56141fcae7ef07.obj": "27afaea55575a8f0aee51d037cee08600e4b5e857660df0efc56141fcae7ef07",
+    "meshes/collision/structural/30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46.obj": "30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46",
+    "meshes/collision/structural/3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338.obj": "3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338",
+    "meshes/collision/structural/3555c0fe60a965ec8b91c759fd634b064b5788455da3ed346e60458b780baea9.obj": "3555c0fe60a965ec8b91c759fd634b064b5788455da3ed346e60458b780baea9",
+    "meshes/collision/structural/389061abaf91dd6b8ad6b4afcae01b1dcf311e4d5320430c9bdb06d630df7865.obj": "389061abaf91dd6b8ad6b4afcae01b1dcf311e4d5320430c9bdb06d630df7865",
+    "meshes/collision/structural/3c6df4df7d6f16da7e3f348ed2301250a916859c2351047c4f7f348291f35751.obj": "3c6df4df7d6f16da7e3f348ed2301250a916859c2351047c4f7f348291f35751",
+    "meshes/collision/structural/3db2141ff90d8aa2b3edad1c2a8c4f54950044a6055052a05df1bf668126e355.obj": "3db2141ff90d8aa2b3edad1c2a8c4f54950044a6055052a05df1bf668126e355",
+    "meshes/collision/structural/3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50.obj": "3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50",
+    "meshes/collision/structural/424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35.obj": "424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35",
+    "meshes/collision/structural/4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954.obj": "4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954",
+    "meshes/collision/structural/4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8.obj": "4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8",
+    "meshes/collision/structural/4a1c2fc60147d7f689da21e37c371032a3210f674e2334fb0dbbfc26af572ac8.obj": "4a1c2fc60147d7f689da21e37c371032a3210f674e2334fb0dbbfc26af572ac8",
+    "meshes/collision/structural/54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe.obj": "54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe",
+    "meshes/collision/structural/57e0a790b8badaf042c76f1496acf996fd6baf5292049a42c5bbd3bcb76903c1.obj": "57e0a790b8badaf042c76f1496acf996fd6baf5292049a42c5bbd3bcb76903c1",
+    "meshes/collision/structural/5aac0401ce2a5790990a967c1db0b4f2f78e1bd51ceb4e91467e8838957a4c48.obj": "5aac0401ce2a5790990a967c1db0b4f2f78e1bd51ceb4e91467e8838957a4c48",
+    "meshes/collision/structural/5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9.obj": "5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9",
+    "meshes/collision/structural/610240f64c3877d3490662cf54fc2c4405b673bfadfd3fe2466e78933ced47e4.obj": "610240f64c3877d3490662cf54fc2c4405b673bfadfd3fe2466e78933ced47e4",
+    "meshes/collision/structural/6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57.obj": "6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57",
+    "meshes/collision/structural/644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c.obj": "644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c",
+    "meshes/collision/structural/723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461.obj": "723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461",
+    "meshes/collision/structural/72e9be1cb7f0153a4f29fac7bb0d57c4f697e675afccb9c1661da04dbc843bfc.obj": "72e9be1cb7f0153a4f29fac7bb0d57c4f697e675afccb9c1661da04dbc843bfc",
+    "meshes/collision/structural/73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf.obj": "73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf",
+    "meshes/collision/structural/74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb.obj": "74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb",
+    "meshes/collision/structural/7557fa4b61f6a68a36ffca789337929de74a5be07abde68b6875c1a40f7d0ad0.obj": "7557fa4b61f6a68a36ffca789337929de74a5be07abde68b6875c1a40f7d0ad0",
+    "meshes/collision/structural/7c9fc10651c221928b2f439940b7befcacef54ae45f92fcd8c5fe637e87eac68.obj": "7c9fc10651c221928b2f439940b7befcacef54ae45f92fcd8c5fe637e87eac68",
+    "meshes/collision/structural/7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f.obj": "7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f",
+    "meshes/collision/structural/805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c.obj": "805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c",
+    "meshes/collision/structural/895908605c2cd95c38829bfe78522fe2d7a5f90ac642ce5582c51384e2c7a713.obj": "895908605c2cd95c38829bfe78522fe2d7a5f90ac642ce5582c51384e2c7a713",
+    "meshes/collision/structural/8adbe5366c3215e2f39bfa5c457904a5ea386288e506f613b3a2e545c93fbd92.obj": "8adbe5366c3215e2f39bfa5c457904a5ea386288e506f613b3a2e545c93fbd92",
+    "meshes/collision/structural/8bbee6e285425b43e7f0458b9c19c2bb00812cc20c150e5549e2b9e5388cda3b.obj": "8bbee6e285425b43e7f0458b9c19c2bb00812cc20c150e5549e2b9e5388cda3b",
+    "meshes/collision/structural/9ac1303d4654d9eda9d49d041768e8e3326ed903d4519eea071f490a12f307f1.obj": "9ac1303d4654d9eda9d49d041768e8e3326ed903d4519eea071f490a12f307f1",
+    "meshes/collision/structural/9bc6b99fd7d482aebf4007a5c41eac36dbb4e30262b86f0318e156dc774ad3ae.obj": "9bc6b99fd7d482aebf4007a5c41eac36dbb4e30262b86f0318e156dc774ad3ae",
+    "meshes/collision/structural/a31da562e54013136d854665fc7192a94d964f7321f9e753ffceb8850f9a50a9.obj": "a31da562e54013136d854665fc7192a94d964f7321f9e753ffceb8850f9a50a9",
+    "meshes/collision/structural/ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0.obj": "ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0",
+    "meshes/collision/structural/b036471f178a1f0a65542f49aa750871f09555214b8ded7ec1d8eccb8baad8cd.obj": "b036471f178a1f0a65542f49aa750871f09555214b8ded7ec1d8eccb8baad8cd",
+    "meshes/collision/structural/b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749.obj": "b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749",
+    "meshes/collision/structural/b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f.obj": "b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f",
+    "meshes/collision/structural/ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0.obj": "ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0",
+    "meshes/collision/structural/bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8.obj": "bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8",
+    "meshes/collision/structural/bbbd85127f619ed607e9ae933e9c193482aedf02cf6026ce6f3360d5765a3907.obj": "bbbd85127f619ed607e9ae933e9c193482aedf02cf6026ce6f3360d5765a3907",
+    "meshes/collision/structural/bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3.obj": "bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3",
+    "meshes/collision/structural/c17e57a686c521d935f73d3acadec43aed5a962af605cf239854438f47b1d9b0.obj": "c17e57a686c521d935f73d3acadec43aed5a962af605cf239854438f47b1d9b0",
+    "meshes/collision/structural/c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f.obj": "c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f",
+    "meshes/collision/structural/c28b730d268bb71b189aa717d7f856e514c58d8edf6a617192504f516089ce1d.obj": "c28b730d268bb71b189aa717d7f856e514c58d8edf6a617192504f516089ce1d",
+    "meshes/collision/structural/ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b.obj": "ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b",
+    "meshes/collision/structural/d3159c07dd72742293b33d8c2448bfe4d36a4206df7d41c612ca049e89b60edc.obj": "d3159c07dd72742293b33d8c2448bfe4d36a4206df7d41c612ca049e89b60edc",
+    "meshes/collision/structural/d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165.obj": "d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165",
+    "meshes/collision/structural/d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2.obj": "d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2",
+    "meshes/collision/structural/dc630d77a8d5096d47cb6283d8d79a15c023e2ca297da0b0cea581954d6cd2f7.obj": "dc630d77a8d5096d47cb6283d8d79a15c023e2ca297da0b0cea581954d6cd2f7",
+    "meshes/collision/structural/de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549.obj": "de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549",
+    "meshes/collision/structural/debe0013a453df0cb779a10d259e92e29d41292c6ef148e2c387e14ee82f40cd.obj": "debe0013a453df0cb779a10d259e92e29d41292c6ef148e2c387e14ee82f40cd",
+    "meshes/collision/structural/e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6.obj": "e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6",
+    "meshes/collision/structural/e3d69e2a3cb0dcb765de246bdeaaab99909ba755f024cdc832b785151fed86c1.obj": "e3d69e2a3cb0dcb765de246bdeaaab99909ba755f024cdc832b785151fed86c1",
+    "meshes/collision/structural/e8ee94f36768e712af66d5ef800c1e6cfbab75bb1acdacaf9a71e7563c596086.obj": "e8ee94f36768e712af66d5ef800c1e6cfbab75bb1acdacaf9a71e7563c596086",
+    "meshes/collision/structural/ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908.obj": "ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908",
+    "meshes/collision/structural/f6bca89e1b48228ed9e2c19df8f0a39a7e637ba765c90b87b69105431bb164b7.obj": "f6bca89e1b48228ed9e2c19df8f0a39a7e637ba765c90b87b69105431bb164b7",
+    "meshes/collision/structural/f9010e73c38995195c7420e1a27abab167c8c0e643b91f807ee71ac419284fbc.obj": "f9010e73c38995195c7420e1a27abab167c8c0e643b91f807ee71ac419284fbc",
+    "meshes/collision/structural/fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b.obj": "fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b",
+    "meshes/collision/structural/fdf9c45806b2ebdea840458dad02d25dacc0b3cbcd851be44ec160c095360c82.obj": "fdf9c45806b2ebdea840458dad02d25dacc0b3cbcd851be44ec160c095360c82",
+    "meshes/collision/structural/ffc95e709d887db4aa2063dc12f7d88731bf675dcbdf335311e892ba6ef46235.obj": "ffc95e709d887db4aa2063dc12f7d88731bf675dcbdf335311e892ba6ef46235",
+    "meshes/visual/back_camera.STL": "2c2baefbd92ef9ba8daf9f46b5a2757b1b101cf6cf53b2e41210ed7f8d35a7d1",
+    "meshes/visual/base_link.STL": "3fd5f037e721b8cdfaf489e6280dcbb9b9cf5c96f7d6304f7bd3aa8bdace7f62",
+    "meshes/visual/chest_camera.STL": "1d669640257cd80d35a8f4bb8b8a8f3faf7361d72740445890aaf9d2932ed3e3",
+    "meshes/visual/front_camera.STL": "f84933fa72c1a17f0160eb39e003fa5f7e7f88d978524a2100bfd91eec725cee",
+    "meshes/visual/indexed/21cf45083704f66ad2cbae590a4a61f3fda17dc8646b8909b3ab8638aa803803.obj": "21cf45083704f66ad2cbae590a4a61f3fda17dc8646b8909b3ab8638aa803803",
+    "meshes/visual/indexed/2e09e4ca99f98e7cdc116f74e0a83fe46dce0395baac7be0aa6351e33211eddc.obj": "2e09e4ca99f98e7cdc116f74e0a83fe46dce0395baac7be0aa6351e33211eddc",
+    "meshes/visual/indexed/4b017e7c695693186afb4cd22ddf0b76f9a8d82efda2130f0ac6ad95c5be346f.obj": "4b017e7c695693186afb4cd22ddf0b76f9a8d82efda2130f0ac6ad95c5be346f",
+    "meshes/visual/indexed/76810b7735511d970da06de382088ac803926f2206c77a809866e53322bed3bd.obj": "76810b7735511d970da06de382088ac803926f2206c77a809866e53322bed3bd",
+    "meshes/visual/indexed/f31785cf8c7de7f73b4b8d8a9972ae0332393e99a06b6ed9e01efc8e199ecd77.obj": "f31785cf8c7de7f73b4b8d8a9972ae0332393e99a06b6ed9e01efc8e199ecd77",
+    "meshes/visual/left_Base.STL": "e434f4998e44e8ba1ffa2b90f97a3811e8be025dea779a66a5c7f365f46f6913",
+    "meshes/visual/left_Fixed_Jaw.STL": "de4af3b62e96ea792137033c4322681cf929df7d563e64f2526c5edb0d2e7b69",
+    "meshes/visual/left_Lower_Arm.STL": "a26bd76bb2b28df4aa175f3ee8b852d1b9a683af681d4b509deb21894e72de20",
+    "meshes/visual/left_Moving_Jaw.STL": "01710e46191ba7e868cc78bdf34faafef7b154ee8869e2ec5a484ef13c81aea9",
+    "meshes/visual/left_Wrist_Pitch_Roll.STL": "912f3c1dcbde86bc6e088aef2e76ad65d10fd8b75e5cf075686ea4a5a5a44428",
+    "meshes/visual/left_camera.STL": "d6573d3a98352ccf784996440a8299474f4c9692f9ed2ae5e44ac499e2b93e05",
+    "meshes/visual/left_wrist_yaw.STL": "287208b4608245740a148f45c31668b3de975772fa15cdbfb910cd405d39b511",
+    "meshes/visual/right_Base.STL": "e434f4998e44e8ba1ffa2b90f97a3811e8be025dea779a66a5c7f365f46f6913",
+    "meshes/visual/right_Fixed_Jaw.STL": "de4af3b62e96ea792137033c4322681cf929df7d563e64f2526c5edb0d2e7b69",
+    "meshes/visual/right_Lower_Arm.STL": "a26bd76bb2b28df4aa175f3ee8b852d1b9a683af681d4b509deb21894e72de20",
+    "meshes/visual/right_Moving_Jaw.STL": "01710e46191ba7e868cc78bdf34faafef7b154ee8869e2ec5a484ef13c81aea9",
+    "meshes/visual/right_Wrist_Pitch_Roll.STL": "912f3c1dcbde86bc6e088aef2e76ad65d10fd8b75e5cf075686ea4a5a5a44428",
+    "meshes/visual/right_camera.STL": "d6573d3a98352ccf784996440a8299474f4c9692f9ed2ae5e44ac499e2b93e05",
+    "meshes/visual/right_wrist_yaw.STL": "287208b4608245740a148f45c31668b3de975772fa15cdbfb910cd405d39b511",
+    "meshes/visual/vertical_link.STL": "ca0df2d2b789b805c808a7550d2974bf005571db91b2ac3bb929df770011da66",
+    "srdf/alohamini2pro.srdf": "eb2ca182c095d3ce7ab47dbd8272888c5ae310c88793946d2b1aadfc6a42c945",
+    "urdf/alohamini2pro.urdf": "cc7958dad549429632810a90b4c3aab3c1ad7f6e3404fac56c47b53daac071cc"
+  },
+  "mesh_transport": {
+    "meshes/visual/indexed/f31785cf8c7de7f73b4b8d8a9972ae0332393e99a06b6ed9e01efc8e199ecd77.obj": {
+      "msh_sha256": "c56d04b2aaa42c83a0e2549acf0ef85243dbe076c3057bd58ceac6c3ce1aece0",
+      "vertices": 119972,
+      "triangles": 240136,
+      "geometry_changed": false
+    },
+    "meshes/visual/indexed/21cf45083704f66ad2cbae590a4a61f3fda17dc8646b8909b3ab8638aa803803.obj": {
+      "msh_sha256": "440690ac005c640a1bdace1da91fd6029ed80b637e2bdfef37ed380aaac119ed",
+      "vertices": 119972,
+      "triangles": 240136,
+      "geometry_changed": false
+    },
+    "meshes/visual/indexed/2e09e4ca99f98e7cdc116f74e0a83fe46dce0395baac7be0aa6351e33211eddc.obj": {
+      "msh_sha256": "4cbc913112630da243066b328f4197fe716357e831d293bbf605bb62ddc2522e",
+      "vertices": 119972,
+      "triangles": 240136,
+      "geometry_changed": false
+    },
+    "meshes/visual/indexed/76810b7735511d970da06de382088ac803926f2206c77a809866e53322bed3bd.obj": {
+      "msh_sha256": "77f12cec0e3047078b0b5fed17c530c2871bd032b3225245336a60f603d49fe9",
+      "vertices": 132814,
+      "triangles": 223715,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/c17e57a686c521d935f73d3acadec43aed5a962af605cf239854438f47b1d9b0.obj": {
+      "msh_sha256": "0b9c1ae412ea7127e3627d0d07411009da1190de05f4a4d9c659084c960fdbf0",
+      "vertices": 29,
+      "triangles": 54,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/e8ee94f36768e712af66d5ef800c1e6cfbab75bb1acdacaf9a71e7563c596086.obj": {
+      "msh_sha256": "194a0eba5a1595551204755480190dbcdbf26203d97b0ae32027dc90042535a7",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/4a1c2fc60147d7f689da21e37c371032a3210f674e2334fb0dbbfc26af572ac8.obj": {
+      "msh_sha256": "8435c73396c85aaa431839c1593dbccad443247257372065969942bd86240704",
+      "vertices": 11,
+      "triangles": 18,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/258cc154ae6e3fa15def02821734dd16c47fa2c8238b9de94fc299349bec53b5.obj": {
+      "msh_sha256": "4b464814127cdfe97d998cc1dbba7c6fed2dc9ee93e7f58e6b527f6df627eb69",
+      "vertices": 22,
+      "triangles": 40,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/3db2141ff90d8aa2b3edad1c2a8c4f54950044a6055052a05df1bf668126e355.obj": {
+      "msh_sha256": "1f8d2888e5cfd90f0049c68e05e28d06cd25a240595a3b555f1fce65bf2379b9",
+      "vertices": 30,
+      "triangles": 56,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/895908605c2cd95c38829bfe78522fe2d7a5f90ac642ce5582c51384e2c7a713.obj": {
+      "msh_sha256": "d3a52d5a3a57329ae247fbb51497c48fac3a8f987efd940e9d6b2085fb0d5333",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/visual/indexed/4b017e7c695693186afb4cd22ddf0b76f9a8d82efda2130f0ac6ad95c5be346f.obj": {
+      "msh_sha256": "d869d8b862afd140f0ef1f0c62efb94396dcd2b7916b3c7b96b5e3ef2a12cea7",
+      "vertices": 142487,
+      "triangles": 240053,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/57e0a790b8badaf042c76f1496acf996fd6baf5292049a42c5bbd3bcb76903c1.obj": {
+      "msh_sha256": "c9f4feb756e4a04d4303b7af77ad49a2d43d34b98d3ec21d25073f90343c2e6d",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/d3159c07dd72742293b33d8c2448bfe4d36a4206df7d41c612ca049e89b60edc.obj": {
+      "msh_sha256": "e42a65ff4b475b8a176a0455969bf24273e4a38196ea60ceffdd9e09ea04c0ea",
+      "vertices": 23,
+      "triangles": 42,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/610240f64c3877d3490662cf54fc2c4405b673bfadfd3fe2466e78933ced47e4.obj": {
+      "msh_sha256": "0a6d0fe751317ecfa1c6a137eff359dff4aa9be078703c5f1dcec2ab707b0ac4",
+      "vertices": 29,
+      "triangles": 54,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/e3d69e2a3cb0dcb765de246bdeaaab99909ba755f024cdc832b785151fed86c1.obj": {
+      "msh_sha256": "12ff0133be8f7644aae645dc532e415639d6ad45b7f113526ed7868d35c7ccbb",
+      "vertices": 30,
+      "triangles": 56,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/177225f19902f7524a128d836525835f8e5dc35520b9a2bba87c1915951bc46f.obj": {
+      "msh_sha256": "95125e42fff547f326166a3632dd5f8b4a92f30622701e0333436cc885136722",
+      "vertices": 10,
+      "triangles": 16,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/9ac1303d4654d9eda9d49d041768e8e3326ed903d4519eea071f490a12f307f1.obj": {
+      "msh_sha256": "a04c9266c265eefdbcfe32149f8cfaeb71db078f5c0d4322004474886b98ff83",
+      "vertices": 25,
+      "triangles": 46,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/dc630d77a8d5096d47cb6283d8d79a15c023e2ca297da0b0cea581954d6cd2f7.obj": {
+      "msh_sha256": "67948cdfb053b5d58dcff398e8d4c087379c4e7760dbf44f402b1421f3267f26",
+      "vertices": 14,
+      "triangles": 24,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/7557fa4b61f6a68a36ffca789337929de74a5be07abde68b6875c1a40f7d0ad0.obj": {
+      "msh_sha256": "3e46459f0f6475cd34e61a6097279ccf2c92a04fd5d07fa18e5de1efca7bd41b",
+      "vertices": 17,
+      "triangles": 30,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/bbbd85127f619ed607e9ae933e9c193482aedf02cf6026ce6f3360d5765a3907.obj": {
+      "msh_sha256": "42b62e2f593207de49c3f3749fbc59ee477e10cf1ecfffb362b8969542e8c7e1",
+      "vertices": 18,
+      "triangles": 32,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/fdf9c45806b2ebdea840458dad02d25dacc0b3cbcd851be44ec160c095360c82.obj": {
+      "msh_sha256": "da6e0a8b5e8382499f9d0bce01722e832c4e8a7da124b36d34ac33c0eda718b9",
+      "vertices": 16,
+      "triangles": 28,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/72e9be1cb7f0153a4f29fac7bb0d57c4f697e675afccb9c1661da04dbc843bfc.obj": {
+      "msh_sha256": "8d8a318d437c46db89799c1382a4de8e90b78086fd52bf3babe221ef4e0ecbce",
+      "vertices": 8,
+      "triangles": 12,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/0d47dd55282bc01ebc961707d66d94c3e936e2798b5139dbdb77444017d21075.obj": {
+      "msh_sha256": "d6ad5abb5b6209fcc84819458dabec8a964b44e39bcd472ae3e18fe96c05eac3",
+      "vertices": 13,
+      "triangles": 22,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/9bc6b99fd7d482aebf4007a5c41eac36dbb4e30262b86f0318e156dc774ad3ae.obj": {
+      "msh_sha256": "e44463178b5bb3a83f16d1ef486dc5bc5ba1b199d77a6b9ebe7d959c8f3eeb20",
+      "vertices": 16,
+      "triangles": 28,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/5aac0401ce2a5790990a967c1db0b4f2f78e1bd51ceb4e91467e8838957a4c48.obj": {
+      "msh_sha256": "be144350f028b3dbed4dc71a30ae53dac72689bfc0b4c0b6ff34132a98271ebb",
+      "vertices": 13,
+      "triangles": 22,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/3555c0fe60a965ec8b91c759fd634b064b5788455da3ed346e60458b780baea9.obj": {
+      "msh_sha256": "7371d84f0c49a1eb10408cc4069b5008e8f960fc4cff6a6f6d2c19586bbd1cac",
+      "vertices": 30,
+      "triangles": 56,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/1fc04b2c54d4b2151499cdb04188a8bc8b25a662b179960e18ac8b7def0ed834.obj": {
+      "msh_sha256": "7c6f9d12b21df71761fa23ef04ffce478098cd9ff39762b3c9561435265f4701",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/debe0013a453df0cb779a10d259e92e29d41292c6ef148e2c387e14ee82f40cd.obj": {
+      "msh_sha256": "d4c00331357710df89e194e61e3dac2a56d170d6c8a1465921637c5b8184eb92",
+      "vertices": 29,
+      "triangles": 54,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/27afaea55575a8f0aee51d037cee08600e4b5e857660df0efc56141fcae7ef07.obj": {
+      "msh_sha256": "9303e66742e11ee7579865767c9e1ec5f760f2486bff0234f3b3819f0cc9c261",
+      "vertices": 14,
+      "triangles": 24,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/ffc95e709d887db4aa2063dc12f7d88731bf675dcbdf335311e892ba6ef46235.obj": {
+      "msh_sha256": "0f85f38e783a782a19e766e8fcc9d31c866fd59533afa7c1591f3437df1dd53d",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/7c9fc10651c221928b2f439940b7befcacef54ae45f92fcd8c5fe637e87eac68.obj": {
+      "msh_sha256": "85e64e8208bbe9351e706806da2f4d754018347c6266a172428e32f70b9b7300",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/f9010e73c38995195c7420e1a27abab167c8c0e643b91f807ee71ac419284fbc.obj": {
+      "msh_sha256": "fe7d879a16429285c7e4ff7aa52572756a09d0529b40875663ef9b1ecb1683c6",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/f6bca89e1b48228ed9e2c19df8f0a39a7e637ba765c90b87b69105431bb164b7.obj": {
+      "msh_sha256": "a4249c9a1721f428a5abe5ae0d2c4b25fe8833fcfe4adc07634fbd9bd04fe349",
+      "vertices": 20,
+      "triangles": 36,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/8adbe5366c3215e2f39bfa5c457904a5ea386288e506f613b3a2e545c93fbd92.obj": {
+      "msh_sha256": "b940b9728fa2232acca502dfb1c2999fdbda879de29b5c571fdd2531d8b4cbdd",
+      "vertices": 15,
+      "triangles": 26,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/389061abaf91dd6b8ad6b4afcae01b1dcf311e4d5320430c9bdb06d630df7865.obj": {
+      "msh_sha256": "b7fba436fcb660621c6b01c61b71e4fc6d393ced32abb8776c37a2819513f72e",
+      "vertices": 26,
+      "triangles": 48,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/1750df191692e5df839b84959b5fdaa2b4633b87106c7cb08e75e9633421c781.obj": {
+      "msh_sha256": "884ca26e09ecb4a3c15983c666b628ada5838a3fb6f05297d1cd011c90449e38",
+      "vertices": 27,
+      "triangles": 50,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/1dff10015044b302dd36682eb07960acb4fc97f2732d911438634f398329e1c6.obj": {
+      "msh_sha256": "8cb0387ced10e7324bfb82d49ce90552e91c339cdc1457dfc49bc74bef1f0c11",
+      "vertices": 30,
+      "triangles": 56,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/09a4cd7ca59f035a3bdd6797c94e33f0f9021600fbd50d1d0863045e2174dbb4.obj": {
+      "msh_sha256": "279d1747453973df44f5a3a3bbfe726d92fb987e5a57912b2fb0f1293db95bb7",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/c28b730d268bb71b189aa717d7f856e514c58d8edf6a617192504f516089ce1d.obj": {
+      "msh_sha256": "ad9e77fa1a03dc4e8045a41f294583ac3b7d2e42f44a5c5ff918dcca94d3bc2c",
+      "vertices": 21,
+      "triangles": 38,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/a31da562e54013136d854665fc7192a94d964f7321f9e753ffceb8850f9a50a9.obj": {
+      "msh_sha256": "c1d220619f42fdbe6245e7b99bc01c32503fb0a341f01d8d20ed52e1ed0183f7",
+      "vertices": 29,
+      "triangles": 54,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/3c6df4df7d6f16da7e3f348ed2301250a916859c2351047c4f7f348291f35751.obj": {
+      "msh_sha256": "73dc6278107ef4b08ae1b1f5f35db09be65a94e3d39d0b57c7b746dd26f67ba2",
+      "vertices": 14,
+      "triangles": 24,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/091a6af8d138d4d3835f6720b00083b74f1c64e739215719aea3ce6461735004.obj": {
+      "msh_sha256": "147f0b928777490bcacf2cf786835372d028637d9babfc168c7416fa87fa14b3",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/1754bb796def836465dac9e70cf7e6e02fe0e7e639071b99cea156245748ab56.obj": {
+      "msh_sha256": "e6131b620dcb3c51f9b528540006aa912112c1827b541521e94ca95b95682902",
+      "vertices": 30,
+      "triangles": 56,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/1f8d84cba3910096c47f8e25110b6b85bc58d6f9c4155afbbb70c68c6be5b91b.obj": {
+      "msh_sha256": "ba9a6682e65a67129f3704c288b9d748a259bf264ebd8b05b42d4ce70a51217b",
+      "vertices": 19,
+      "triangles": 34,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/b036471f178a1f0a65542f49aa750871f09555214b8ded7ec1d8eccb8baad8cd.obj": {
+      "msh_sha256": "d733bfc10fbee8ec16600be263369a0e3f16cde11d0e0c6cb9cf6db2687feac6",
+      "vertices": 32,
+      "triangles": 60,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/8bbee6e285425b43e7f0458b9c19c2bb00812cc20c150e5549e2b9e5388cda3b.obj": {
+      "msh_sha256": "348df3e707e47b81fb4e1f81eb59a72ed39f545fcfd290ae6eaaaf91a1ada246",
+      "vertices": 16,
+      "triangles": 28,
+      "geometry_changed": false
+    },
+    "meshes/collision/structural/d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 42,
+      "triangles": 80,
+      "msh_sha256": "cc9159ab6a3f49fa1521a091e385e6f5854bae7fd804f62058b1cc55ff54817c",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 126,
+      "triangles": 248,
+      "msh_sha256": "c865d398c808d3bcc122d7d2988baf5c75f859b4c41dcf7a831d7d88b38db2c0",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 20,
+      "triangles": 36,
+      "msh_sha256": "7d78df52cc9922eb94a0ce183431aa853450f33816b46d398fefd7fb31c9b0b7",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 41,
+      "triangles": 78,
+      "msh_sha256": "01c0dd6c3b50db0a68b04852f8c28b2de44c6dcbad2a5ee287b621efc266b6e2",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 49,
+      "triangles": 94,
+      "msh_sha256": "0a02f5230c59b2eb1ffa01c3ef4dde025b6b49f4cbf0bdbefc47fb211f694912",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 21,
+      "triangles": 38,
+      "msh_sha256": "a406ef15552ef2422503525a3b3c15210fb839564f3c327b0e94dcc3f8067659",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 111,
+      "triangles": 218,
+      "msh_sha256": "4ed9e87154bb44d4018493e715a8d72b29d1c848b1ee6d0def88e3eb9368ef9d",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 40,
+      "triangles": 76,
+      "msh_sha256": "87a0c41b73a5d1fab322e5026d1e480ff2121c48c064b61217391ef9885acb36",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 58,
+      "triangles": 112,
+      "msh_sha256": "b18f6e6c5baee2541e8c9a67bfc55d6c7aef275cd875153b78f9029f25964a56",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 58,
+      "triangles": 112,
+      "msh_sha256": "87d38b38436696f4a08d6e288ccf3bf15057f4a323824d9eee159b8b39747154",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 23,
+      "triangles": 42,
+      "msh_sha256": "43da4052ae44a6883b29708e91462325b775b5ead82a85728b009e2d2b48fb2b",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 53,
+      "triangles": 102,
+      "msh_sha256": "d6eb6bc6f03bb3d57329b550cda039fa28ab524aa0ab47566ca827f089e1ab46",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 41,
+      "triangles": 78,
+      "msh_sha256": "b5dde548c0e4a2ae19b349f3a3f1aa5100cd27e3a01cb1d68b95ff04374a2e40",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 41,
+      "triangles": 78,
+      "msh_sha256": "0d0aa3906264bd35a7b63476c794d45b95de07552530afc12e7b6f07bcb8d0cf",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 27,
+      "triangles": 50,
+      "msh_sha256": "ddb4fd99b8aa250abd5b699d22f4ae2bc20815171e7ac0d510ad85452316b454",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 52,
+      "triangles": 100,
+      "msh_sha256": "ebad87e8ed44327c2f1334814d2b49d264516bced2f27594e79f5594bacf6e20",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 25,
+      "triangles": 46,
+      "msh_sha256": "ed1701595fa69b90455456d52124c6bb70065c58229cfbb039cf96f8ce71ce94",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 42,
+      "triangles": 80,
+      "msh_sha256": "e91ae9fee27316949e540462e068edb49ab9dce96186976b8c31bc9c15ee216c",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 13,
+      "triangles": 22,
+      "msh_sha256": "0ce5ad5de9cdf7cae44a497b18575bd1cee28f268e4912249d0fabff58c04458",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 35,
+      "triangles": 66,
+      "msh_sha256": "d3c4c67a56f467b154489d30a41649f9b2dc77dae59d01068c4adcd3860c09c1",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 31,
+      "triangles": 58,
+      "msh_sha256": "93363a961bf51b576028866a207a08c317d914eaa5ebed735588fa2ed448aefa",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 15,
+      "triangles": 26,
+      "msh_sha256": "349c350155d91f04bf5b825423280ce8cfd49e8c21c4da2d26803e5e540435f6",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 53,
+      "triangles": 102,
+      "msh_sha256": "729c6c6ab00469d60cd3cedb3f5fb2a5041f51ae0ea526293ce8a3463d5e3562",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 19,
+      "triangles": 34,
+      "msh_sha256": "e9ef3216cdd0e7582440d4914f88aacd7dc707e8f8e4d0c6d398af6a6bee8083",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 57,
+      "triangles": 110,
+      "msh_sha256": "c69618ec2f5ffa725910e845eb909410018b98860994dec13056940213a306e9",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 40,
+      "triangles": 76,
+      "msh_sha256": "8f1101c28f7d19b89a62bf7184244e41db714bf47e0d344f8dc0d2a1dd3d8c43",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 38,
+      "triangles": 72,
+      "msh_sha256": "2e73ef51229214ee7c877a5d5c0e836b54a1fc848746e0927d978bce1390276d",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 22,
+      "triangles": 40,
+      "msh_sha256": "2c46dd1efb3a05d67ba73eca9b058564c99dd3d77ef3ad6caf7f4d324da1c05c",
+      "geometry_changed": false,
+      "qualification": "config/gripper_collision.json"
+    },
+    "meshes/collision/structural/424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 78,
+      "triangles": 152,
+      "msh_sha256": "28c146936e7f2c5da166c91cb95b23a33e2b8ba1e7cd1a3a887994bec0a9ad4c",
+      "geometry_changed": false,
+      "qualification": "config/structural_collision.json"
+    },
+    "meshes/collision/structural/ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 78,
+      "triangles": 152,
+      "msh_sha256": "0c7bac35b6a77f16814f73e3ee804d4770aecc90a411b96f1e803790c6953715",
+      "geometry_changed": false,
+      "qualification": "config/structural_collision.json"
+    },
+    "meshes/collision/structural/bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8.obj": {
+      "coordinate_unit": "mm",
+      "scale": [
+        0.001,
+        0.001,
+        0.001
+      ],
+      "vertices": 74,
+      "triangles": 144,
+      "msh_sha256": "cd4c90cb3aa6ffc318edce38441ac5efdcfab2c3523f5c97b4372de595531517",
+      "geometry_changed": false,
+      "qualification": "config/structural_collision.json"
+    }
+  },
+  "wheel_inertia": {
+    "status": "engineering_estimate",
+    "mass_each_kg": 0.3,
+    "center_and_tensor": "uniform collision cylinder; local geometry frame",
+    "mass_policy": "subtracted from the fixed CAD subtotal to preserve combined mass, COM and inertia",
+    "effort_nm": 1.57,
+    "velocity_rad_s": 4.2,
+    "drive_limits_source": "ST3250 nominal rating"
+  },
+  "base_dynamics": "stationary CAD subtotal; mobile-base contact dynamics remain uncalibrated",
+  "base_frame": "base_link",
+  "import_source": {
+    "git_commit": "262d5318074169709925cf8dfafc0eec78eeb0f8",
+    "description_sha256": {
+      "urdf/alohamini2pro.urdf": "8459353ebc6af5800d809b96566b5073a7fcff880c67171ab07a0bd2f98ffee6",
+      "srdf/alohamini2pro.srdf": "48314b09feef0348655a8f027c40638b5232a684420aef1ce124fccf714f68e6"
+    },
+    "purpose": "Historical inputs of the prepared CAD bundles; not runtime robot descriptions."
+  },
+  "gripper_collision": {
+    "reference": "config/gripper_reference.json",
+    "certificate": "config/gripper_collision.json",
+    "source_collision_bundle_sha256": "23098536e343ab2e58108c36d14589185f07f15a1509d78c88d64b92146ae73e"
+  },
+  "structural_primitives": "config/structural_collision.json"
+}

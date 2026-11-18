@@ -4,7 +4,6 @@
   <description>Planar EDU navigation simulation with geometric LiDAR and measured ROS feedback</description>
   <maintainer email="anncatto@users.noreply.github.com">AlohaMini</maintainer>
   <license>Apache-2.0</license>
-  <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>alohamini_navigation</exec_depend><exec_depend>alohamini_sensors</exec_depend>
   <exec_depend>rclpy</exec_depend><exec_depend>rosgraph_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend><exec_depend>nav_msgs</exec_depend>

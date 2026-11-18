@@ -16,8 +16,22 @@ from alohamini.learning.processor import (
 
 
 class DiffusionAlgorithm:
+    supports_remote_chunks = True
+    queues_online_observations = True
     include_task = False
     fsdp_classes = ("DiffusionConditionalResidualBlock1d", "BasicBlock", "Bottleneck")
+
+    @staticmethod
+    def action_horizon(config):
+        return config.horizon - config.n_obs_steps + 1
+
+    @staticmethod
+    def action_offset(config):
+        return config.n_obs_steps - 1
+
+    def live_history_spec(self, options, *, cameras=()):
+        return {k: v for k, v in self.sample_spec(options, cameras=cameras)["delta_indices"].items()
+                if k != "action"}
 
     @staticmethod
     def metric_specs(config):

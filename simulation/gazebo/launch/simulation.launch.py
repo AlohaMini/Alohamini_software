@@ -1,7 +1,10 @@
-"""Spawn AlohaMini in Gazebo Fortress without any real-hardware process."""
+"""Spawn AlohaMini in the Gazebo version paired with the ROS distribution."""
 
+import shutil
+import tempfile
 from pathlib import Path
 
+from alohamini_gazebo.runtime import gazebo_runtime, world_description
 from alohamini_gazebo.sim_description import make_sim_description
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
@@ -9,10 +12,12 @@ from launch.actions import (
     AppendEnvironmentVariable,
     DeclareLaunchArgument,
     ExecuteProcess,
+    RegisterEventHandler,
     Shutdown,
     TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
+from launch.event_handlers import OnShutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -22,22 +27,31 @@ from alohamini.model import get_robot_model
 def generate_launch_description() -> LaunchDescription:
     gazebo_share = Path(get_package_share_directory("alohamini_gazebo"))
     description_share = get_robot_model("alohamini2pro").directory
-    world = gazebo_share / "worlds" / "lift_pick_place.sdf"
+    runtime = gazebo_runtime()
+    temporary = Path(tempfile.mkdtemp(prefix="alohamini-gazebo-"))
+    world = temporary / "lift_pick_place.sdf"
+    world.write_text(world_description(gazebo_share / "worlds" / world.name, runtime))
     controllers = gazebo_share / "config" / "ros2_controllers.yaml"
     robot_description = make_sim_description(
         description_share / "urdf" / "alohamini2pro.urdf",
         controllers,
+        runtime=runtime,
+        collision_directory=temporary / "collisions",
     )
+
+    def cleanup(_event, _context):
+        shutil.rmtree(temporary, ignore_errors=True)
+        return []
 
     headless = LaunchConfiguration("headless")
     common_gz = ExecuteProcess(
-        cmd=["ign", "gazebo", "-r", str(world), "--force-version", "6"],
+        cmd=[*runtime.command, "-r", str(world)],
         output="screen",
         on_exit=Shutdown(),
         condition=UnlessCondition(headless),
     )
     headless_gz = ExecuteProcess(
-        cmd=["ign", "gazebo", "-r", "-s", str(world), "--force-version", "6"],
+        cmd=[*runtime.command, "-r", "-s", str(world)],
         output="screen",
         on_exit=Shutdown(),
         condition=IfCondition(headless),
@@ -56,6 +70,7 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription(
         [
+            RegisterEventHandler(OnShutdown(on_shutdown=cleanup)),
             DeclareLaunchArgument(
                 "headless",
                 default_value="false",

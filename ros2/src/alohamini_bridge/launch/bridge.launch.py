@@ -7,8 +7,6 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-from alohamini.paths import WorkspacePaths
-
 
 def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
@@ -20,11 +18,12 @@ def generate_launch_description() -> LaunchDescription:
                 ),
             ),
             DeclareLaunchArgument("host", default_value="127.0.0.1"),
-            DeclareLaunchArgument("robot_model", default_value="alohamini2pro"),
             DeclareLaunchArgument("base_only", default_value="false"),
             DeclareLaunchArgument("cmd_vel_topic", default_value="/cmd_vel"),
             DeclareLaunchArgument(
-                "arm_mapping_dir", default_value=str(WorkspacePaths().calibration / "hardware")
+                "robot_model",
+                default_value="alohamini2pro",
+                choices=["alohamini2", "alohamini2pro", "alohamini2edu"],
             ),
             DeclareLaunchArgument("observation_port", default_value="5556"),
             DeclareLaunchArgument("command_port", default_value="5555"),
@@ -44,7 +43,6 @@ def generate_launch_description() -> LaunchDescription:
                             LaunchConfiguration("base_only"), value_type=bool
                         ),
                         "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
-                        "arm_mapping_dir": LaunchConfiguration("arm_mapping_dir"),
                         "state_timestamp_mode": LaunchConfiguration("state_timestamp_mode"),
                         "max_state_response_age_sec": ParameterValue(
                             LaunchConfiguration("max_state_response_age_sec"), value_type=float

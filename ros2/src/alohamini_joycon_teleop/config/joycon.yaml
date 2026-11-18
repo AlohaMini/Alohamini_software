@@ -6,9 +6,11 @@ alohamini_joycon_teleop:
     measured_state_timeout_sec: 0.25
     control_rate_hz: 50.0
     ik_rate_hz: 20.0
-    # Realtime Joy-Con control uses the exact packaged DH model and local DLS.
+    # Realtime tracking uses Pink/Pinocchio over the packaged geometry.
     # "moveit" keeps the older point-IK service path for comparison only.
     arm_control_mode: differential
+    ik_qp_solver: daqp
+    ik_max_joint_acceleration_rad_s2: 8.0
     ik_timeout_sec: 0.3
     deadzone: 0.25
     tcp_speed_m_s: 0.15
@@ -31,9 +33,6 @@ alohamini_joycon_teleop:
     dls_damping: 0.04
     dls_max_joint_velocity_rad_s: 1.5
     dls_max_joint_step_rad: 0.10
-    # Use a short feedback-anchored look-ahead to cross friction/backlash without
-    # driving the solver at its joint-step ceiling during ordinary motion.
-    dls_command_horizon_sec: 0.12
     dls_max_target_error_m: 0.025
     # Never drive farther into a physical endpoint from within this margin.
     dls_joint_limit_margin_rad: 0.03
