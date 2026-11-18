@@ -29,7 +29,7 @@ def synthetic_stream_capture(_config, output, stop, stream_enabled):
 
 
 def capture_frame(enabled=True, rotation=0, fail_stream=False):
-    """One synthetic V4L2 read; no device is opened."""
+    """One synthetic local-camera read; no device is opened."""
     stop, stream_enabled = threading.Event(), SimpleNamespace(value=enabled)
     output = Queue(maxsize=8)
     output.cancel_join_thread = lambda: None
@@ -58,7 +58,7 @@ def capture_frame(enabled=True, rotation=0, fail_stream=False):
         patch("cv2.imencode", side_effect=encoding),
     ):
         _capture(
-            CameraConfig("/dev/test-only", width=16, height=8, rotation=rotation),
+            CameraConfig(0, width=16, height=8, rotation=rotation),
             output,
             stop,
             stream_enabled,

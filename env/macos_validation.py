@@ -46,6 +46,7 @@ SUITES = {
         "test_macos.py", "test_macos_hardware.py", "test_macos_training.py",
         "test_training_precision.py", "test_loss_metrics.py", "test_validation_loading.py",
         "test_training_logging.py", "test_ema.py", "test_policy_normalization.py",
+        "test_checkpoint_probe.py",
         "test_training.py::test_periodic_checkpoint_resume_exact_and_no_data_mutation[cpu-none-1-1-0]",
         "test_training.py::test_periodic_checkpoint_resume_exact_and_no_data_mutation[cpu-none-1-2-2]",
     ],

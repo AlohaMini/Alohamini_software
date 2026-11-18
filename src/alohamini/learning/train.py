@@ -116,6 +116,9 @@ def launch_training(settings):
                 "-m",
                 "torch.distributed.run",
                 "--standalone",
+                # This launcher starts local workers; use the loopback address
+                # directly instead of resolving the machine hostname.
+                "--local-addr=127.0.0.1",
                 f"--nproc_per_node={processes}",
                 "-m",
                 "alohamini.learning.train",

@@ -1,7 +1,7 @@
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Capture and image handling adapted from LeRobot OpenCVCamera and AlohaMini Host.
-"""V4L2 capture and JPEG production outside the motor-control process/thread."""
+"""Local camera capture and JPEG production outside the motor-control process/thread."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ class JpegSnapshot:
 
 
 def _capture(config: CameraConfig, output, stop, stream_enabled) -> None:
-    """Child owns V4L2 and OpenCV; a stuck driver can be terminated on shutdown."""
+    """Child owns OpenCV capture; a stuck driver can be terminated on shutdown."""
     capture = None
     # Do not let an unread IPC queue keep the child alive during shutdown.
     output.cancel_join_thread()
