@@ -1,0 +1,71 @@
+name: 同步 main 到代码镜像
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-main-mirrors
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: 同步到 ${{ matrix.target }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Gitee
+            host: gitee.com
+            url: https://gitee.com/dijkstra402/Alohamini_software.git
+            username: ${{ vars.GITEE_USERNAME }}
+            secret: GITEE_TOKEN
+          - target: CNB
+            host: cnb.cool
+            url: https://cnb.cool/emoera/Alohamini_software
+            username: cnb
+            secret: CNB_TOKEN
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 推送 main
+        shell: bash
+        env:
+          MIRROR_HOST: ${{ matrix.host }}
+          MIRROR_URL: ${{ matrix.url }}
+          MIRROR_USERNAME: ${{ matrix.username }}
+          MIRROR_TOKEN: ${{ secrets[matrix.secret] }}
+          GIT_TERMINAL_PROMPT: "0"
+          LC_ALL: C
+        run: |
+          case "$MIRROR_URL" in
+            "https://$MIRROR_HOST/"?*) ;;
+            *) printf '请配置 %s 上的 HTTPS 镜像仓库地址。\n' "$MIRROR_HOST" >&2; exit 1 ;;
+          esac
+          if [[ -z "$MIRROR_USERNAME" || -z "$MIRROR_TOKEN" ]]; then
+            printf '请配置 %s 的用户名和推送令牌。\n' "$MIRROR_HOST" >&2
+            exit 1
+          fi
+          GIT_ASKPASS="$(mktemp "$RUNNER_TEMP/mirror-askpass.XXXXXX")"
+          export GIT_ASKPASS
+          trap 'rm -f "$GIT_ASKPASS"' EXIT
+          cat > "$GIT_ASKPASS" <<'SCRIPT'
+          #!/bin/sh
+          case "$1" in
+            Username*) printf '%s\n' "$MIRROR_USERNAME" ;;
+            Password*) printf '%s\n' "$MIRROR_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          SCRIPT
+          chmod 700 "$GIT_ASKPASS"
+          git -c credential.helper= -c http.followRedirects=false push --no-follow-tags -- "$MIRROR_URL" HEAD:refs/heads/main
