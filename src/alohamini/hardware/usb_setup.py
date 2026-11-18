@@ -16,6 +16,9 @@ from pathlib import Path
 from alohamini.calibration.reference import json_bytes, save_bundle
 from alohamini.paths import WorkspacePaths
 
+# The uaccess tag must precede systemd's 73-seat-late.rules.
+_RULES_DIRECTORY = Path("/etc/udev/rules.d")
+
 
 @dataclass(frozen=True)
 class USBController:
@@ -104,7 +107,7 @@ def render_rules(role, bindings):
         lines.append(
             f'SUBSYSTEM=="tty", ATTRS{{idVendor}}=="{board.vid:04x}", '
             f'ATTRS{{idProduct}}=="{board.pid:04x}", ATTRS{{serial}}=="{board.serial_number}", '
-            f'SYMLINK+="am_arm_{role}_{side}", GROUP="dialout", MODE="0660"'
+            f'SYMLINK+="am_arm_{role}_{side}", GROUP="dialout", MODE="0660", TAG+="uaccess"'
         )
     return ("\n".join(lines) + "\n").encode()
 
@@ -254,7 +257,6 @@ def _ensure_leader_ports(workspace, aliases):
     known[_pair_key(bindings)] = bindings
     rules = _leader_rules(known)
     prepared = directory / "leader.rules"
-    rules_changed = not prepared.exists() or prepared.read_bytes() != rules
     payloads = {directory / "leader.json": json_bytes(_binding_document(bindings)), prepared: rules}
     anchor = directory / "leader-legacy.json"
     active = directory / "leader.json"
@@ -273,7 +275,7 @@ def _ensure_leader_ports(workspace, aliases):
     }
     if changed:
         save_bundle(changed, {})
-    if rules_changed or any(
+    if not _rules_installed("leader", rules) or any(
         not alias.exists() or alias.resolve() != Path(matched[side]).resolve()
         for side, alias in aliases.items()
     ):
@@ -296,15 +298,25 @@ def _matched_ports(bindings, ports):
     return matched
 
 
+def _rules_installed(role, rules):
+    destination = _RULES_DIRECTORY / f"70-alohamini-{role}.rules"
+    legacy = _RULES_DIRECTORY / f"90-alohamini-{role}.rules"
+    return destination.exists() and destination.read_bytes() == rules and not legacy.exists()
+
+
 def _install_rules(role, prepared, matched, aliases, backup_dir):
     udevadm = shutil.which("udevadm")
     if udevadm is None:
         raise RuntimeError(f"udevadm is required on Linux; generated rules: {prepared}")
     prefix = [] if os.geteuid() == 0 else [shutil.which("sudo") or "sudo"]
-    destination = Path(f"/etc/udev/rules.d/90-alohamini-{role}.rules")
-    if destination.exists() and destination.read_bytes() != prepared.read_bytes():
-        backup = backup_dir / f"{destination.stem}.{time.time_ns()}.backup.rules"
-        backup.write_bytes(destination.read_bytes())
+    destination = _RULES_DIRECTORY / f"70-alohamini-{role}.rules"
+    legacy = _RULES_DIRECTORY / f"90-alohamini-{role}.rules"
+    for previous in (destination, legacy):
+        if previous.exists() and (
+            previous == legacy or previous.read_bytes() != prepared.read_bytes()
+        ):
+            backup = backup_dir / f"{previous.stem}.{time.time_ns()}.backup.rules"
+            backup.write_bytes(previous.read_bytes())
     print(
         f"Installing USB aliases: {destination}; sudo may request your system password.", flush=True
     )
@@ -324,6 +336,8 @@ def _install_rules(role, prepared, matched, aliases, backup_dir):
         ],
         check=True,
     )
+    if legacy.exists():
+        subprocess.run([*prefix, "rm", "--", str(legacy)], check=True)
     subprocess.run([*prefix, udevadm, "control", "--reload-rules"], check=True)
     for port in matched.values():
         subprocess.run(
