@@ -376,6 +376,12 @@ class JoyConTeleop(Node):
         self.zmq_context.term()
         if self.ik_worker is not None:
             self.ik_worker.close()
+        # Humble's Node.destroy_node does not release action waitables. They
+        # must be closed while this node's ROS context is still alive.
+        for clients in (self.arm_clients, self.gripper_clients):
+            for client in clients.values():
+                client.destroy()
+            clients.clear()
         return super().destroy_node()
 
     def on_bridge_status(self, message: DiagnosticArray) -> None:
