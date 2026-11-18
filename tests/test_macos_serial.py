@@ -66,5 +66,3 @@ def test_mac_single_leader_respects_fixed_arm_and_rejects_ambiguous_pairs(tmp_pa
     save_pair(workspace, second)
     with pytest.raises(ValueError, match="Multiple registered"):
         usb_setup.connected_leader_ports(workspace, ("left",))
-
-

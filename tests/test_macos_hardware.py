@@ -114,5 +114,3 @@ def test_mac_camera_debug_passes_index_to_capture(monkeypatch):
     monkeypatch.setattr(test_cv, "save_images_from_cameras", capture)
     assert test_cv.main(["--camera", "2"]) == 0
     assert capture.call_args.args[0] == [{"type": "OpenCV", "id": 2}]
-
-

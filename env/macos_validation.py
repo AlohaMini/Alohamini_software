@@ -44,6 +44,7 @@ SUITES = {
     ],
     "training": [
         "test_macos.py", "test_macos_hardware.py", "test_macos_training.py",
+        "test_macos_coordinates.py",
         "test_training_precision.py", "test_loss_metrics.py", "test_validation_loading.py",
         "test_training_logging.py", "test_ema.py", "test_policy_normalization.py",
         "test_checkpoint_probe.py",
@@ -167,7 +168,7 @@ def main(argv=None):
             *[f"tests/{name}" for name in SUITES[section]],
             # macOS default is spawn; forkserver is separately supported. Native
             # library state inherited through an explicit fork is outside this run.
-            "-k", "not fork or forkserver",
+            "-k", "not fork or forkserver or rejects_explicit_fork",
         ]
         result = _run(command, section, output, environment)
         if junit.is_file():

@@ -317,7 +317,8 @@ CPU 训练使用 `--policy.device=cpu`。MPS 使用单进程，DataLoader 沿用
 
 梯度累积、归一化、优化器、EMA 和调度器沿用原配置。续训保持原设备和精度；
 跨设备微调使用 `--policy.path` 加载权重。推理、评估命令使用 `--device=mps`。
-含 CUDA 专用算子的策略按对应 README 的设备要求运行。
+FastWAM、OpenWAM、LongWAM 和 LingBot-VA 的 GPU 运行使用 CUDA；
+Mac 可完成数采与数据处理，再将数据交给 CUDA 训练机。其余策略按对应 README 准备。
 
 ### 多卡与梯度累积
 

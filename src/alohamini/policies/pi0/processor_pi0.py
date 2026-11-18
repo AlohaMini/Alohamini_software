@@ -4,7 +4,11 @@ import numpy as np
 import torch
 
 from alohamini.policies.pi05.adapter import PI05BatchProcessor
-from alohamini.policies.pi05.processor_pi05 import PI05Processor, validate_camera_names
+from alohamini.policies.pi05.processor_pi05 import (
+    PI05Processor,
+    _fp64_inputs,
+    validate_camera_names,
+)
 
 
 class PI0Processor(PI05Processor):
@@ -36,23 +40,25 @@ class PI0Processor(PI05Processor):
         return ((values - stats["mean"]) / (stats["std"] + 1e-6)).astype(np.float32)
 
     def restore_actions(self, actions, state):
-        values = actions[..., :18].double()
+        values, state = _fp64_inputs(actions, state)
+        values = values[..., :18].double()
         stats = self.stats["actions"]
         mean = torch.as_tensor(stats["mean"], device=values.device)
         std = torch.as_tensor(stats["std"], device=values.device)
-        state = torch.as_tensor(state, device=values.device, dtype=torch.float64)
         offset = torch.zeros_like(state)
         offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
-        return (values * (std + 1e-6) + mean + offset.unsqueeze(-2)).float()
+        return (values * (std + 1e-6) + mean + offset.unsqueeze(-2)).float().to(actions.device)
 
     def encode_actions(self, actions, state):
+        values, state = _fp64_inputs(actions, state)
         stats = self.stats["actions"]
-        mean = torch.as_tensor(stats["mean"], device=actions.device)
-        std = torch.as_tensor(stats["std"], device=actions.device)
-        state = torch.as_tensor(state, device=actions.device, dtype=torch.float64)
+        mean = torch.as_tensor(stats["mean"], device=values.device)
+        std = torch.as_tensor(stats["std"], device=values.device)
         offset = torch.zeros_like(state)
         offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
-        return ((actions.double() - offset.unsqueeze(-2) - mean) / (std + 1e-6)).float()
+        return ((values.double() - offset.unsqueeze(-2) - mean) / (std + 1e-6)).float().to(
+            actions.device
+        )
 
 
 class ContinuousTokenizer:
