@@ -4,6 +4,8 @@
 
 命令在仓库根目录执行。示例保留 episode 1 用于验证；单回合数据省略 `--dataset.eval_episodes` 和 `--eval_steps`。
 
+Apple Silicon 将 `--policy.device=cuda` 改为 `--policy.device=mps`，公共参数见 [MPS 配置](../../../../docs/training.md#apple-siliconmps)。
+
 共有相机身份编码和旧模型迁移设置见 [ACT：相机身份编码](../act/README.md#相机身份编码)。
 
 ```bash

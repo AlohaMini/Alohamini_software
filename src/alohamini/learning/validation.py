@@ -7,6 +7,7 @@ import time
 import torch
 
 from alohamini.learning.loading import collate_samples
+from alohamini.learning.precision import reduction_device, synchronize_device
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +69,13 @@ def timed_batches(loader, *, device="cpu", label="Evaluation", log_freq=50, acti
     data_s = compute_s = 0.0
     samples = valid = 0
     for number in range(1, len(loader) + 1):
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
+        synchronize_device(device)
         before = time.perf_counter()
         batch = next(iterator)
         data_s += time.perf_counter() - before
         before = time.perf_counter()
         yield batch
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
+        synchronize_device(device)
         compute_s += time.perf_counter() - before
         padding = is_padding_batch(loader, number - 1)
         if not padding:
@@ -128,7 +127,7 @@ def evaluate_loss(
     model, processor, loader, reduction, totals, *, device, log_freq=50, metrics=None, reduce=None
 ):
     """Sum contributions using global denominators, including across FSDP ranks."""
-    loss_sum = torch.zeros((), dtype=torch.float64, device=device)
+    loss_sum = torch.zeros((), dtype=torch.float64, device=reduction_device(device))
     batches = timed_batches(loader, device=device, label="Validation", log_freq=log_freq)
     for number, raw in enumerate(batches):
         padding = is_padding_batch(loader, number)
@@ -143,7 +142,7 @@ def evaluate_loss(
         loss, outputs = model(batch)
         if metrics is not None and not padding:
             metrics.add(outputs, raw, counts)
-        value = loss.detach().double()
+        value = loss.detach().to(loss_sum.device).double()
         invalid = (~torch.isfinite(value)).int()
         if reduce is not None:
             # Fail together before another collective model forward.

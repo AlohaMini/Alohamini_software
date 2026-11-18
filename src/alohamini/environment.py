@@ -31,6 +31,17 @@ def checkout():
 
 
 def lock_path(root, role):
+    if platform.system() == "Darwin":
+        arch = {"arm64": "osx-arm64", "x86_64": "osx-64"}.get(platform.machine())
+        if role == "host":
+            raise ValueError("Robot Host runs on Ubuntu; use the alohamini PC environment on macOS")
+        if role == "pc" and arch == "osx-64":
+            raise ValueError(
+                "The current PyTorch deployment requires Apple Silicon and native arm64 Python; "
+                "Intel Mac supports serial calibration, not the locked learning environment"
+            )
+        if arch is not None:
+            return root / "env" / f"{role}-{arch}.lock"
     arch = {"x86_64": "linux-64", "aarch64": "linux-aarch64"}.get(platform.machine())
     if platform.system() != "Linux" or arch is None or (role == "pc" and arch != "linux-64"):
         raise ValueError(f"No {role} deployment lock for {platform.system()}/{platform.machine()}")
@@ -167,6 +178,19 @@ def runtime_environment(argv):
     if root is None or not names:
         yield
         return
+    if platform.system() == "Darwin" and names <= {"pyserial", "feetech-servo-sdk"}:
+        # Serial-only commands also work on Intel, without a learning environment.
+        with environment_lock():
+            expected, _ = read_lock(root / "env/hardware.lock")
+            installed = installed_versions()
+            for name, version in expected.items():
+                if installed.get(name) != version:
+                    raise ValueError(
+                        f"Serial tools require {name}=={version}; "
+                        "install dependencies from env/hardware.lock"
+                    )
+            yield
+        return
     role = "host" if argv[0] == "host" else inferred_role()
     # Reading metadata does not import optional frameworks or contact a package index.
     with environment_lock():
@@ -189,6 +213,20 @@ def runtime_environment(argv):
 def active_python_processes(prefix=None, proc=Path("/proc")):
     """Also detect older entry points and notebooks which do not hold our lock."""
     prefix = Path(prefix or sys.prefix).resolve()
+    if not proc.is_dir() and platform.system() == "Darwin":
+        # /proc is Linux-specific. Ask ps for executable paths on macOS.
+        output = subprocess.run(
+            ["ps", "-axo", "pid=,comm="], check=True, capture_output=True, text=True
+        ).stdout
+        result = []
+        for line in output.splitlines():
+            parts = line.strip().split(None, 1)
+            if len(parts) != 2 or not parts[0].isdigit() or int(parts[0]) == os.getpid():
+                continue
+            executable = Path(parts[1])
+            if executable.name.startswith("python") and executable.is_relative_to(prefix):
+                result.append(int(parts[0]))
+        return sorted(result)
     result = []
     for entry in proc.iterdir():
         if not entry.name.isdigit() or int(entry.name) == os.getpid():

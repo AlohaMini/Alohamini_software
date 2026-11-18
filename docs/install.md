@@ -2,6 +2,8 @@
 
 PC 使用 `alohamini` 环境进行遥操、数采和开发；树莓派使用轻量的 `alohamini_host` 环境连接硬件。
 
+macOS 的安装与使用见 [macOS 使用手册](macos.md)。
+
 ## 0. 仓库与环境准备
 
 未安装 Git 时，在 Bash 中执行：

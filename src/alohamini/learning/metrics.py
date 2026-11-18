@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import torch
 
+from alohamini.learning.precision import reduction_device
+
 
 def loss_count(key, width=1):
     """Reuse the algorithm's already computed loss denominator."""
@@ -61,7 +63,9 @@ class MetricAccumulator:
         self.specs = tuple(spec for spec in specs if phase in spec.phases)
         if len({s.name for s in self.specs}) != len(self.specs):
             raise ValueError("Metric names must be unique")
-        self.totals = torch.zeros((len(self.specs), 2), device=device, dtype=torch.float64)
+        self.totals = torch.zeros(
+            (len(self.specs), 2), device=reduction_device(device), dtype=torch.float64
+        )
 
     def add(self, outputs, batch, counts):
         with torch.no_grad():
@@ -73,13 +77,17 @@ class MetricAccumulator:
                 )
                 if not isinstance(count, torch.Tensor) and (not math.isfinite(count) or count < 0):
                     raise ValueError(f"{spec.name}: invalid metric denominator {count}")
-                value = torch.as_tensor(
-                    outputs[spec.source], device=self.totals.device, dtype=torch.float64
-                ).detach()
+                value = outputs[spec.source]
+                value = (
+                    value.detach().to(self.totals.device).double()
+                    if isinstance(value, torch.Tensor)
+                    else torch.as_tensor(value, device=self.totals.device, dtype=torch.float64)
+                )
                 if value.numel() != 1:
                     raise ValueError(f"{spec.name}: expected a scalar policy metric")
                 # A batch with no valid targets contributes neither sum nor count.
                 if isinstance(count, torch.Tensor):
+                    count = count.detach().to(self.totals.device)
                     # Class supports are detached bincounts. Keep them on device;
                     # validate the aggregate once in result(), not once per class.
                     self.totals[index, 0].add_(

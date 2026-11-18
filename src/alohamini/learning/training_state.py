@@ -195,15 +195,18 @@ def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_proce
     return {"epoch": epoch, "start_index": start_index}
 
 
-def rng_state():
+def rng_state(device="cpu"):
     """Tensor/primitives only, so training state can be loaded with weights_only=True."""
     numpy = np.random.get_state()
-    return {
+    state = {
         "python": random.getstate(),
         "numpy": (numpy[0], torch.tensor(numpy[1].astype(np.int64)), *numpy[2:]),
         "torch": torch.get_rng_state(),
         "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_initialized() else [],
     }
+    if torch.device(device).type == "mps":
+        state["mps"] = torch.mps.get_rng_state()
+    return state
 
 
 def restore_rng(state):
@@ -213,6 +216,12 @@ def restore_rng(state):
     torch.set_rng_state(state["torch"])
     if state["cuda"]:
         torch.cuda.set_rng_state_all(state["cuda"])
+    if "mps" in state:
+        if not torch.backends.mps.is_available():
+            raise ValueError(
+                "Restoring MPS RNG requires MPS; use pretrained weights to change device"
+            )
+        torch.mps.set_rng_state(state["mps"])
 
 
 def _link(target, destination):
@@ -268,7 +277,7 @@ def save_training_checkpoint(
         if not execution.main:
             return checkpoint
     stage = Path(stage)
-    state = {"step": step, "rng": rng_state()}
+    state = {"step": step, "rng": rng_state(cfg.get("device", "cpu"))}
     if not sharded:
         state["optimizer"] = optimizer.state_dict()
     else:

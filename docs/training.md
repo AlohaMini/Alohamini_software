@@ -2,7 +2,7 @@
 
 ## 1. 准备
 
-完成 [PC 安装](install.md)，按需安装[策略与功能扩展](install.md#3-可选扩展)，在仓库根目录执行：
+完成 [Linux 安装](install.md)或 [macOS 安装](macos.md#1-安装)，按需安装[策略与功能扩展](install.md#3-可选扩展)，在仓库根目录执行：
 
 ```bash
 cd ~/Alohamini
@@ -301,6 +301,23 @@ TF32 不改变参数存储类型，只影响 FP32 运算，可与 BF16/FP16 混�
 设置随 checkpoint 保存，推理沿用已保存的设置。
 `--policy.path` 开始新微调时，只默认继承 `trainable_dtype`；混合精度、TF32 使用本次配置或策略默认值。
 显式参数优先；`--resume=true` 续训须保持原设置。模型内部必须使用 FP32 的算子保留其数值保护。
+
+### Apple Silicon（MPS）
+
+将策略示例的 `--policy.device=cuda` 改为 `--policy.device=mps`，首次运行使用：
+
+```text
+--policy.device=mps --num_processes=1 --mixed_precision=none
+```
+
+CPU 训练使用 `--policy.device=cpu`。MPS 使用单进程，DataLoader 沿用默认 `spawn`；
+内存紧张时减小 `--batch_size`、`--num_workers`，并按需增加 `--gradient_accumulation_steps`。
+`--mixed_precision=bfloat16` / `float16` 按策略验证；FP16 使用 MPS GradScaler。
+可训练权重精度仍由 `--trainable_dtype` 控制，`tf32` 仅影响 CUDA。
+
+梯度累积、归一化、优化器、EMA 和调度器沿用原配置。续训保持原设备和精度；
+跨设备微调使用 `--policy.path` 加载权重。推理、评估命令使用 `--device=mps`。
+含 CUDA 专用算子的策略按对应 README 的设备要求运行。
 
 ### 多卡与梯度累积
 

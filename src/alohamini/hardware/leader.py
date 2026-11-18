@@ -4,6 +4,7 @@
 """Passive bimanual leaders using the deployed per-arm calibration files."""
 
 import logging
+import sys
 from collections.abc import Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -13,7 +14,7 @@ from alohamini.calibration.procedure import ensure_calibration
 from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.hardware.feetech_device import FeetechBusDevice
-from alohamini.hardware.usb_setup import leader_calibration_directory
+from alohamini.hardware.usb_setup import connected_leader_ports, leader_calibration_directory
 from alohamini.model import ActuatorSpec, get_robot_model
 from alohamini.paths import WorkspacePaths
 
@@ -58,8 +59,16 @@ class BimanualLeader:
             else paths.calibration / "teleoperators"
         )
         if calibration_dir is None and robot_model != "alohamini1":
+            if active_sides and sys.platform == "darwin" and self._ports == {
+                side: f"/dev/am_arm_leader_{side}" for side in ("left", "right")
+            }:
+                self._ports = connected_leader_ports(paths, active_sides)
+                if not self._ports:
+                    raise ValueError(
+                        "Connect the registered leader pair; run alohamini calibrate leader first"
+                    )
             directory = leader_calibration_directory(paths, leader_id, self._ports, active_sides)
-        for side, port in (("left", left_port), ("right", right_port)):
+        for side, port in self._ports.items():
             if side not in active_sides:
                 continue
             # The old BiSOLeader stores <id>_left/right.json with unprefixed joints.

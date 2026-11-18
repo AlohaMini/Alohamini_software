@@ -19,6 +19,7 @@ from accelerate.utils import (
 )
 
 from alohamini.learning.metrics import MetricAccumulator
+from alohamini.learning.precision import reduction_device
 from alohamini.learning.training_state import EpisodeAwareSampler
 
 
@@ -27,6 +28,14 @@ def validate_local_workers(processes, device):
     if type(processes) is not int or processes < 1:
         raise ValueError("num_processes must be a positive integer")
     device = torch.device(device)
+    if device.type == "mps":
+        if processes != 1:
+            raise ValueError("MPS training requires num_processes=1; DDP/FSDP2 require CUDA or CPU")
+        if not torch.backends.mps.is_available():
+            raise ValueError(
+                "MPS unavailable: use native arm64 Python/PyTorch on a supported macOS "
+                "and Metal GPU, or select policy.device=cpu explicitly"
+            )
     if device.type == "cuda":
         available = torch.cuda.device_count()
         if not torch.cuda.is_available() or processes > available:
@@ -61,6 +70,8 @@ class Execution:
         self.world_size = int(os.environ.get("WORLD_SIZE", "1"))
         self.rank = int(os.environ.get("RANK", "0"))
         self.local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", str(self.world_size)))
+        if torch.device(device).type == "mps" and self.world_size != 1:
+            raise ValueError("MPS training requires WORLD_SIZE=1; distributed MPS is unsupported")
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         if not 0 <= self.rank < self.world_size or not 0 <= local_rank < self.local_world_size:
             raise ValueError("Invalid distributed rank configuration")
@@ -74,8 +85,13 @@ class Execution:
             elif self.device.index is None:
                 self.device = torch.device("cuda", torch.cuda.current_device())
             torch.cuda.set_device(self.device)
-        if precision == "float16" and self.device.type != "cuda":
-            raise ValueError("float16 training requires CUDA GradScaler")
+        if precision == "float16" and self.device.type not in ("cuda", "mps"):
+            raise ValueError("float16 training requires CUDA or MPS GradScaler")
+        if (
+            self.device.type == "mps" and precision == "bfloat16"
+            and not torch.backends.mps.is_macos_or_newer(14, 0)
+        ):
+            raise ValueError("MPS bfloat16 requires macOS 14+; select mixed_precision=none")
         self.precision = precision
         self.owns_group = (self.world_size > 1 or self.sharded) and not dist.is_initialized()
         plugin = None
@@ -290,7 +306,7 @@ class Execution:
             raise ValueError("Loss reduction terms must be identical across microbatches")
         counts = torch.tensor(
             [[counts[key] for key in keys] for counts in local_counts],
-            device=self.device,
+            device=reduction_device(self.device),
             dtype=torch.float64,
         )
         if not torch.isfinite(counts).all() or (counts < 0).any():
@@ -301,7 +317,7 @@ class Execution:
         # An optional objective can have no valid targets in an update (e.g. a
         # frequency loss that excludes incomplete chunks). Its contribution is zero.
         weights = (self.world_size * counts / torch.where(totals > 0, totals, 1)).tolist()
-        metrics = torch.zeros((), device=self.device, dtype=torch.float64)
+        metrics = torch.zeros((), device=reduction_device(self.device), dtype=torch.float64)
         diagnostics = MetricAccumulator(metric_specs, device=self.device)
         for index, raw in enumerate(batches):
             batch = processor(raw)
@@ -318,7 +334,7 @@ class Execution:
                 finite = self.accelerator.reduce(finite, reduction="sum")
                 if finite.item() != self.world_size:
                     raise RuntimeError("Non-finite loss; no optimizer step performed")
-                metrics += loss.detach().double()
+                metrics += loss.detach().to(metrics.device).double()
                 self.accelerator.backward(loss)
         norm = self.accelerator.clip_grad_norm_(
             model.parameters(),

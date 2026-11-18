@@ -77,6 +77,11 @@ def make_loader(
         raise ValueError("Unsupported dataloader_multiprocessing_context")
     if batch_sampler is None and (type(batch_size) is not int or batch_size < 1):
         raise ValueError("batch_size must be a positive integer")
+    if (
+        torch.device(device).type == "mps" and num_workers
+        and (multiprocessing_context or multiprocessing.get_start_method()) == "fork"
+    ):
+        raise ValueError("MPS DataLoader workers require spawn or forkserver, not fork")
     return DataLoader(
         samples,
         **(

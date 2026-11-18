@@ -1,17 +1,18 @@
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Migrated from lerobot_find_cameras.py and OpenCVCamera.find_cameras().
-"""Local V4L2 discovery and snapshots, independent of LeRobot and desktop OpenCV."""
+"""Local camera discovery and snapshots on Linux and macOS."""
 
 import logging
 import math
 import multiprocessing
 import os
+import platform
 import time
 from pathlib import Path
 from typing import Any
 
-from alohamini.hardware.camera import CameraConfig, OpenCVCamera
+from alohamini.hardware.camera import CameraConfig, OpenCVCamera, camera_backend
 from alohamini.paths import WorkspacePaths
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def _probe_opencv(target, connection):
     try:
         import cv2
 
-        camera = cv2.VideoCapture(target, cv2.CAP_V4L2)
+        camera = cv2.VideoCapture(target, camera_backend())
         if not camera.isOpened():
             connection.send(None)
             return
@@ -88,6 +89,15 @@ def _probe_one(target):
 def find_all_opencv_cameras() -> list[dict[str, Any]]:
     logger.info("Searching for OpenCV cameras...")
     found = []
+    if platform.system() == "Darwin":
+        # LeRobot also enumerates numeric OpenCV device indices on macOS.
+        for index in range(60):
+            info = _probe_one(index)
+            if info is not None:
+                found.append(info)
+        return found
+    if platform.system() != "Linux":
+        raise ValueError("Local camera discovery supports Linux and macOS")
     aliases = list(Path("/dev").glob("am_camera_*"))
     # Enumerate actual local device nodes, never IP addresses or network cameras.
     for target in sorted(Path("/dev").glob("video[0-9]*"), key=lambda p: p.name):
@@ -200,7 +210,7 @@ def cleanup_cameras(cameras_to_use):
 
 def save_images_from_all_cameras(output_dir=None, record_time_s=6.0, camera_type=None):
     if camera_type not in (None, "opencv"):
-        raise ValueError("Camera discovery supports local OpenCV/V4L2 cameras")
+        raise ValueError("Camera discovery supports local OpenCV cameras")
     if not math.isfinite(record_time_s) or record_time_s < 0:
         raise ValueError("record-time-s must be finite and non-negative")
     metadata = find_and_print_cameras(camera_type)

@@ -217,10 +217,8 @@ def leader_calibration_directory(workspace, leader_id, ports, active_sides=("lef
     return legacy / "usb" / _pair_key(matches[0])
 
 
-def _ensure_leader_ports(workspace, aliases):
-    directory = workspace.calibration / "devices"
-    known = _known_leaders(directory)
-    available = usb_ports()
+def _connected_pair(known, available):
+    """Match registered controller identities independently of current port names."""
     matches = []
     for bindings in known.values():
         try:
@@ -232,10 +230,25 @@ def _ensure_leader_ports(workspace, aliases):
         raise ValueError(
             "Multiple registered leader pairs connected; connect only one or specify both ports"
         )
-    if matches:
-        bindings, matched = matches[0]
+    return matches[0] if matches else None
+
+
+def connected_leader_ports(workspace, active_sides=("left", "right")):
+    known = _known_leaders(workspace.calibration / "devices")
+    selected = {key: {side: pair[side] for side in active_sides} for key, pair in known.items()}
+    pair = _connected_pair(selected, usb_ports())
+    return pair[1] if pair else {}
+
+
+def _ensure_leader_ports(workspace, aliases):
+    directory = workspace.calibration / "devices"
+    known = _known_leaders(directory)
+    available = usb_ports()
+    pair = _connected_pair(known, available)
+    if pair:
+        bindings, matched = pair
     else:
-        if all(alias.exists() for alias in aliases.values()) and not known:
+        if aliases and all(alias.exists() for alias in aliases.values()) and not known:
             selected = {
                 side: available.get(str(alias.resolve())) for side, alias in aliases.items()
             }
@@ -255,9 +268,11 @@ def _ensure_leader_ports(workspace, aliases):
             bindings = capture_bindings("leader")
         matched = _matched_ports(bindings, usb_ports())
     known[_pair_key(bindings)] = bindings
-    rules = _leader_rules(known)
     prepared = directory / "leader.rules"
-    payloads = {directory / "leader.json": json_bytes(_binding_document(bindings)), prepared: rules}
+    payloads = {directory / "leader.json": json_bytes(_binding_document(bindings))}
+    if aliases:
+        rules = _leader_rules(known)
+        payloads[prepared] = rules
     anchor = directory / "leader-legacy.json"
     active = directory / "leader.json"
     if active.exists() and not anchor.exists() and not any((directory / "leaders").glob("*.json")):
@@ -275,6 +290,8 @@ def _ensure_leader_ports(workspace, aliases):
     }
     if changed:
         save_bundle(changed, {})
+    if not aliases:
+        return matched["left"], matched["right"]
     if not _rules_installed("leader", rules) or any(
         not alias.exists() or alias.resolve() != Path(matched[side]).resolve()
         for side, alias in aliases.items()
@@ -361,6 +378,8 @@ def ensure_arm_ports(role, *, workspace=None, device_dir=Path("/dev")):
     """Reuse installed aliases, or capture, persist and install missing USB identities."""
     if role not in ("leader", "follower"):
         raise ValueError("USB role must be leader or follower")
+    if role == "leader" and sys.platform == "darwin":
+        return _ensure_leader_ports(workspace or WorkspacePaths(), {})
     if sys.platform != "linux":
         raise RuntimeError("Automatic USB aliases require Linux; specify both serial ports")
     aliases = {side: device_dir / f"am_arm_{role}_{side}" for side in ("left", "right")}

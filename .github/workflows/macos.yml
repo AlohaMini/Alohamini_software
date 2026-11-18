@@ -1,0 +1,81 @@
+name: macOS native compatibility
+
+on:
+  pull_request:
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/workflows/macos.yml"]
+  push:
+    branches: [main]
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/workflows/macos.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  serial:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+          - runner: macos-15-intel
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb
+        with:
+          miniforge-version: latest
+          activate-environment: alohamini
+          python-version: "3.12"
+          auto-activate-base: false
+      - name: Install and verify hardware dependencies
+        run: |
+          python -m pip install --require-hashes --no-build-isolation -r env/hardware.lock
+          python -m pip install 'setuptools>=77' wheel pytest==8.4.2
+          python -m pip install --no-deps --no-build-isolation -e .
+          python -m pip check
+          python -m pytest -q tests/test_macos_serial.py tests/test_calibration_procedure.py --tb=short
+          python -m pytest -q tests/test_usb_setup.py --tb=short \
+            -k 'capture_assigns_sides or ambiguous_insertion or unsafe_or_missing_serial or current_usb_pair_overrides_last_selected_pair'
+  pc:
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      HF_HUB_OFFLINE: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb
+        with:
+          miniforge-version: latest
+          activate-environment: alohamini
+          environment-file: environment.yml
+          auto-activate-base: false
+      - name: Install native Apple Silicon dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          python -m pip install --require-hashes --no-build-isolation -r env/pc-osx-arm64.lock
+          python -m pip install --no-deps --no-build-isolation -e '.[pc]'
+          python -m pip check
+          python env/dependencies.py check
+      - name: Platform, training and checkpoint checks
+        run: |
+          python -m pytest -q --tb=short \
+            tests/test_macos.py tests/test_macos_hardware.py tests/test_macos_serial.py tests/test_macos_training.py \
+            tests/test_environment_manifests.py tests/test_dependency_maintenance.py \
+            tests/test_environment_sync.py tests/test_training_precision.py \
+            tests/test_loss_metrics.py tests/test_cli.py
+          python -m pytest -q --tb=short \
+            'tests/test_training.py::test_periodic_checkpoint_resume_exact_and_no_data_mutation[cpu-none-1-1-0]'
