@@ -2,6 +2,7 @@
 
 import importlib.util
 import math
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -187,10 +188,10 @@ def test_reader_default_environment_and_explicit_python(python):
     assert worker[-4:-2] == ["-m", "alohamini.kinematics.worker"]
     if python:
         assert command[0] == python
-        assert len(command) == 4
+        assert len(command) == 5
     else:
         assert command[1:6] == ["run", "--no-capture-output", "-n", "alohamini", "python"]
-    assert command[-3].endswith("/scripts/joycon_native_reader.py")
+    assert command[-4:-2] == ["-m", "alohamini.inputs.joycon"]
     assert command[-2:] == ["--endpoint", "tcp://127.0.0.1:5567"]
 
 
@@ -265,6 +266,27 @@ def test_moveit_launch_uses_the_matching_physical_or_planning_tree(filename, roo
     virtual = {"root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint"}
     assert joints & virtual == (virtual if virtual_base else set())
     assert {joint.attrib["name"] for joint in semantic.findall("group_state/joint")} <= joints
+
+
+@pytest.mark.parametrize("filename", ["move_group.launch.py", "plan_only.launch.py"])
+def test_moveit_pipeline_uses_the_installed_distributions_adapters(filename):
+    nodes, _ = launch_graph("alohamini_moveit_config", filename, use_rviz="false")
+    params = next(params for package, _, params in nodes if package == "moveit_ros_move_group")
+    if os.environ["ROS_DISTRO"] == "jazzy":
+        assert list(params["ompl.planning_plugins"]) == ["ompl_interface/OMPLPlanner"]
+        assert "default_planning_request_adapters/CheckStartStateCollision" in params[
+            "ompl.request_adapters"
+        ]
+        assert "default_planning_response_adapters/AddTimeOptimalParameterization" in params[
+            "ompl.response_adapters"
+        ]
+    else:
+        assert params["ompl.planning_plugin"] == "ompl_interface/OMPLPlanner"
+        assert "default_planner_request_adapters/FixStartStateCollision" in params[
+            "ompl.request_adapters"
+        ]
+    for group in ("left_arm", "right_arm", "dual_arms", "lift"):
+        assert list(params[f"ompl.{group}.planner_configs"]) == ["RRTConnect"]
 
 
 def test_hardware_planning_goals_respect_factory_travel_and_execution_margin():

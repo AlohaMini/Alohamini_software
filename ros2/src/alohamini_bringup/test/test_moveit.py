@@ -15,8 +15,8 @@ from alohamini_validation.validate_moveit import Validator, check_collision_stat
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
 from moveit_msgs.action import ExecuteTrajectory
-from moveit_msgs.msg import Constraints, JointConstraint, MoveItErrorCodes
-from moveit_msgs.srv import GetMotionPlan, GetPositionFK, GetPositionIK
+from moveit_msgs.msg import Constraints, JointConstraint, MoveItErrorCodes, PlanningSceneComponents
+from moveit_msgs.srv import GetMotionPlan, GetPlanningScene, GetPositionFK, GetPositionIK
 from rcl_interfaces.srv import GetParameters
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -85,6 +85,7 @@ def test_offline_rviz_targets_only_offline_move_group():
 def test_moveit_executes_through_the_native_host_bridge(robot, tmp_path):
     node, _, state, until = robot
     client = ActionClient(node, ExecuteTrajectory, "/execute_trajectory")
+    state_client = node.create_client(GetPlanningScene, "/get_planning_scene")
     log_path = tmp_path / "moveit_execution.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(
@@ -138,7 +139,27 @@ def test_moveit_executes_through_the_native_host_bridge(robot, tmp_path):
             ):
                 goal = ExecuteTrajectory.Goal()
                 joints = node.commands.resources[resource].joints
-                start = [node.commands.positions[joint] for joint in joints]
+                # Validation above spins a separate node. Resume the bridge's
+                # executor and wait for MoveIt's state monitor to catch up.
+                until(state_client.service_is_ready)
+                deadline = time.monotonic() + 5
+                while True:
+                    observed = node.observation_count
+                    until(lambda: node.observation_count > observed)
+                    query = GetPlanningScene.Request()
+                    query.components.components = PlanningSceneComponents.ROBOT_STATE
+                    current = state_client.call_async(query)
+                    until(current.done)
+                    state_message = current.result().scene.robot_state.joint_state
+                    reported = dict(zip(state_message.name, state_message.position, strict=True))
+                    if all(
+                        joint in reported
+                        and abs(reported[joint] - node.commands.positions[joint]) < 0.001
+                        for joint in joints
+                    ):
+                        break
+                    assert time.monotonic() < deadline, "MoveIt state monitor did not catch up"
+                start = [reported[joint] for joint in joints]
                 end = [target, *start[1:]]
                 goal.trajectory.joint_trajectory.joint_names = list(joints)
                 goal.trajectory.joint_trajectory.points = [

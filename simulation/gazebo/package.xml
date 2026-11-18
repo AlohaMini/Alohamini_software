@@ -2,11 +2,9 @@
 <package format="3">
   <name>alohamini_gazebo</name>
   <version>0.1.0</version>
-  <description>Gazebo Fortress integration and deterministic acceptance demos for AlohaMini.</description>
+  <description>Gazebo integration and deterministic acceptance demos for AlohaMini.</description>
   <maintainer email="anncatto@users.noreply.github.com">anncatto</maintainer>
   <license>Apache-2.0</license>
-
-  <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>alohamini_core</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
@@ -31,8 +29,9 @@
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>tf2_msgs</exec_depend>
 
-  <test_depend>ament_pytest</test_depend>
   <test_depend>python3-pytest</test_depend>
+  <test_depend>controller_manager_msgs</test_depend>
+  <test_depend>builtin_interfaces</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

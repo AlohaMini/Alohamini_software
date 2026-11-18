@@ -22,7 +22,7 @@ setup(
     zip_safe=True,
     maintainer="anncatto",
     maintainer_email="anncatto@users.noreply.github.com",
-    description="Gazebo Fortress integration and deterministic acceptance demos for AlohaMini.",
+    description="Gazebo integration and deterministic acceptance demos for AlohaMini.",
     license="Apache-2.0",
     tests_require=["pytest"],
     entry_points={

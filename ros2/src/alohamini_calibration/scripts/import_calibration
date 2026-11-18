@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """Copy an existing ROS calibration config into a new, inactive workspace profile."""
 
 import argparse

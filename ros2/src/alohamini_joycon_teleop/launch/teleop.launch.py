@@ -13,7 +13,7 @@ from launch_ros.actions import Node
 from alohamini.model import get_robot_model
 
 
-def _start_reader(context, package):
+def _start_reader(context):
     python = LaunchConfiguration("native_python").perform(context)
     command = (
         [python]
@@ -31,10 +31,14 @@ def _start_reader(context, package):
         ExecuteProcess(
             cmd=[
                 *command,
-                str(package / "scripts" / "joycon_native_reader.py"),
+                "-m",
+                "alohamini.inputs.joycon",
                 "--endpoint",
                 "tcp://127.0.0.1:5567",
             ],
+            additional_env={
+                "PYTHONPATH": "", "PYTHONHOME": "", "LD_LIBRARY_PATH": "", "VIRTUAL_ENV": ""
+            },
             output="screen",
         )
     ]
@@ -73,7 +77,6 @@ def generate_launch_description() -> LaunchDescription:
             ),
             OpaqueFunction(
                 function=_start_reader,
-                args=[package],
                 condition=IfCondition(LaunchConfiguration("start_native_reader")),
             ),
             Node(

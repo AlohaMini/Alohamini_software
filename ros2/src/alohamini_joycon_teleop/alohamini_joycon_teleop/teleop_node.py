@@ -683,7 +683,7 @@ class JoyConTeleop(Node):
 
     def retry_ik_mode(self, side: str, proposed_pose: dict, reason: str) -> None:
         self.get_logger().info(
-            f"[{side}] {reason}; retrying with LMA IK "
+            f"[{side}] {reason}; retrying with cached IK "
             f"pos={[round(v, 4) for v in proposed_pose['position']]} "
             f"orient={[round(v, 4) for v in proposed_pose['orientation']]} "
             f"seed={[round(v, 4) for v in self.arm_seed(side) or []]}"

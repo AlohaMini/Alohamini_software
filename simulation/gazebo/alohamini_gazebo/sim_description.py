@@ -5,6 +5,9 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .collision_mesh import collision_stl
+from .runtime import GazeboRuntime, gazebo_runtime
+
 ARM_JOINTS = [
     *(
         f"left_{name}"
@@ -75,7 +78,8 @@ INITIAL_POSITION = {
     "root_x_axis_joint": 0.0,
     "root_y_axis_joint": 0.0,
     "root_z_rotation_joint": 0.0,
-    "vertical_move": -0.3,
+    # DART in Fortress can lock a prismatic joint reset exactly onto its stop.
+    "vertical_move": -0.29,
     "left_wrist_flex": 1.435806017460960,
     "right_wrist_flex": 1.5,
     "left_gripper": 0.32,
@@ -130,16 +134,26 @@ def _set_visual_material(link: ET.Element, name: str, rgba: str) -> None:
         _sub(material, "color", rgba=rgba)
 
 
-def make_sim_description(authoritative_urdf: Path, controllers_yaml: Path) -> str:
+def make_sim_description(
+    authoritative_urdf: Path,
+    controllers_yaml: Path,
+    *,
+    runtime: GazeboRuntime | None = None,
+    collision_directory: Path | None = None,
+) -> str:
     """Return a simulation overlay without changing the authoritative file."""
+    runtime = runtime or gazebo_runtime()
     tree = ET.parse(authoritative_urdf)
     robot = tree.getroot()
 
     asset_root = authoritative_urdf.resolve().parent.parent
+    collision_meshes = set(robot.findall("./link/collision/geometry/mesh"))
     for mesh in robot.findall(".//mesh"):
         path = (authoritative_urdf.parent / mesh.get("filename", "")).resolve()
         if not path.is_relative_to(asset_root) or not path.is_file():
             raise ValueError(f"Missing or external model mesh: {path}")
+        if collision_directory is not None and mesh in collision_meshes and path.suffix.lower() == ".obj":
+            path = collision_stl(path, collision_directory)
         mesh.set("filename", path.as_uri())
 
     existing_links = {link.get("name"): link for link in robot.findall("link")}
@@ -214,8 +228,7 @@ def make_sim_description(authoritative_urdf: Path, controllers_yaml: Path) -> st
     grasp_plugin = _sub(
         gazebo,
         "plugin",
-        filename="ignition-gazebo-detachable-joint-system",
-        name="ignition::gazebo::systems::DetachableJoint",
+        **runtime.system_plugin("detachable-joint", "DetachableJoint"),
     )
     _sub(grasp_plugin, "parent_link").text = "right_Fixed_Jaw"
     _sub(grasp_plugin, "child_model").text = "demo_object"

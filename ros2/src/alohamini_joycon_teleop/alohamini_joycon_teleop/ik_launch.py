@@ -29,7 +29,9 @@ def start_worker(context, endpoint):
     )
     process = ExecuteProcess(
         cmd=[*command, "-m", "alohamini.kinematics.worker", "--endpoint", endpoint],
-        additional_env={"PYTHONPATH": "", "PYTHONHOME": "", "LD_LIBRARY_PATH": ""},
+        additional_env={
+            "PYTHONPATH": "", "PYTHONHOME": "", "LD_LIBRARY_PATH": "", "VIRTUAL_ENV": ""
+        },
         output="screen",
     )
     return [
