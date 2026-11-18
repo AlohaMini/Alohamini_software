@@ -25,7 +25,7 @@ AM-ARM（`alohamini2`、`alohamini2pro`）按以下 Home 流程标定。先停�
 
 已有标定时按 Enter 复用，输入 `c` 重做。标定掉电保留，正常开机无需重新置零。
 
-首次使用需设置设备权限，重新登录后生效：
+首次使用需设置设备权限，完整注销桌面并重新登录后生效；仅新开终端不会刷新权限：
 
 ```bash
 sudo usermod -aG dialout,video "$USER"

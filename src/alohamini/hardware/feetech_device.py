@@ -186,6 +186,11 @@ class FeetechBusDevice(MotorsBus):
         return self._actuators
 
     @property
+    def is_open(self) -> bool:
+        """Whether the serial port opened, even if motor verification later failed."""
+        return self._serial is not None and self._serial.is_open
+
+    @property
     def velocity_limits(self) -> Mapping[str, int]:
         return MappingProxyType(self._velocities)
 

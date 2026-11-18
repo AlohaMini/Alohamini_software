@@ -73,7 +73,11 @@ def _connected_bus(bus, session):
         raise
     finally:
         failures = {}
-        for label, operation in (("disable torque", bus.disable_torque), ("close", bus.close)):
+        operations = []
+        if bus.is_open:
+            operations.append(("disable torque", bus.disable_torque))
+        operations.append(("close", bus.close))
+        for label, operation in operations:
             try:
                 operation()
             except BaseException as error:

@@ -285,6 +285,54 @@ class CalibrationProcedureTests(unittest.TestCase):
         self.assertFalse(any(serial.requests for serial in self.serials.values()))
         self.assertFalse(list(self.root.rglob("*.json")))
 
+    def test_closed_port_failure_preserves_permission_or_lock_error(self):
+        from serial import SerialException
+
+        for code in (13, 11):
+            for side in ("left", "right"):
+                with self.subTest(errno=code, side=side):
+                    self.configure()
+                    failed = self.serials[f"/dev/test-{side}"]
+                    error = SerialException(
+                        code, "Permission denied" if code == 13 else "Port busy"
+                    )
+                    with patch.object(failed, "open", side_effect=error):
+                        with self.assertRaises(SerialException) as raised:
+                            self.run_calibration()
+                    self.assertIs(raised.exception, error)
+                    self.assertFalse(failed.requests)
+                    for bus_side in ("left", "right"):
+                        serial = self.serials[f"/dev/test-{bus_side}"]
+                        self.assertFalse(serial.is_open)
+                        if side == "right" and bus_side == "left":
+                            # Opening the second bus failed; the first must still unload.
+                            for motor_id in serial.registers:
+                                self.assertEqual(serial.get(motor_id, 40, 1), 0)
+                            self.assert_restored(("left",))
+                        else:
+                            self.assertEqual(
+                                {i: bytes(v) for i, v in serial.registers.items()},
+                                self.original[bus_side],
+                            )
+                    self.assertFalse(list(self.root.rglob("*.json")))
+
+    def test_partial_motor_verification_still_unloads_verified_motors(self):
+        from alohamini.hardware.feetech_device import DeviceOperationError
+
+        self.configure()
+        serial = self.serials["/dev/test-left"]
+        serial.set(1, 40, 1, 1)
+        serial.set(2, 3, 2, 0)  # The first motor verifies, the second has the wrong model.
+        with self.assertRaisesRegex(DeviceOperationError, "Motor model mismatch"):
+            self.run_calibration()
+        self.assertEqual(serial.get(1, 40, 1), 0)
+        writes = [packet for packet in serial.requests if packet[4] == 3]
+        self.assertTrue(writes)
+        self.assertTrue(all(packet[2] == 1 and packet[5] == 40 for packet in writes))
+        self.assertFalse(serial.is_open)
+        self.assertFalse(self.serials["/dev/test-right"].requests)
+        self.assertFalse(list(self.root.rglob("*.json")))
+
     def test_default_storage_and_runtime_follow_the_connected_leader_set(self):
         from alohamini.hardware import usb_setup
         from alohamini.hardware.leader import BimanualLeader
