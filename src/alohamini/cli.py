@@ -312,11 +312,15 @@ def _main(argv: list[str] | None = None) -> int:
         "calibrate", help="自动绑定 USB、一次姿态置零并生成设备配置；不使能或自动运动"
     )
     calibration.add_argument("target", choices=("leader", "robot"))
-    calibration.add_argument("--robot_model", required=True, choices=("alohamini2", "alohamini2pro"))
+    calibration.add_argument(
+        "--robot_model", required=True, choices=("alohamini2", "alohamini2pro")
+    )
     calibration.add_argument(
         "--id", "--teleop.id", dest="device_id", help="与遥操或 Host 一致的标定 ID"
     )
-    calibration.add_argument("--calibration_dir", help="标定 JSON 所在目录；默认使用工作目录")
+    calibration.add_argument(
+        "--calibration_dir", help="指定标定目录；默认按主臂 USB 身份或整机 ID 保存"
+    )
     calibration.add_argument("--left_port", help="左侧串口；默认使用对应主臂/从臂设备名")
     calibration.add_argument("--right_port", help="右侧串口；默认使用对应主臂/从臂设备名")
     calibration.add_argument(

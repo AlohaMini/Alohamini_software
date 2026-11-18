@@ -129,12 +129,28 @@ def calibrate(
         if calibration_dir is not None
         else workspace.calibration / role
     )
+    if leader:
+        from alohamini.hardware.usb_setup import (
+            ensure_arm_ports,
+            leader_calibration_directory,
+            preserve_legacy_leader_calibration,
+        )
+
+        # Associate the old flat files before selecting another USB pair.
+        if calibration_dir is None:
+            preserve_legacy_leader_calibration(workspace, device_id)
+        if left_port is None and right_port is None:
+            left_port, right_port = ensure_arm_ports("leader", workspace=workspace)
     ports = (
         left_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_left",
         right_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_right",
     )
     if Path(ports[0]).resolve() == Path(ports[1]).resolve():
         raise ValueError("Left and right buses must use different serial devices")
+    if leader and calibration_dir is None:
+        directory = leader_calibration_directory(
+            workspace, device_id, dict(zip(("left", "right"), ports, strict=True))
+        )
     paths, actuators, existing = {}, {}, {}
     for side in ("left", "right"):
         file_id = f"{device_id}_{side}" if leader else device_id
@@ -163,10 +179,6 @@ def calibrate(
         if reuse:
             for path in set(paths.values()):
                 load_reference_profile(path, robot_model)
-    if leader and left_port is None and right_port is None:
-        from alohamini.hardware.usb_setup import ensure_arm_ports
-
-        ports = ensure_arm_ports("leader", workspace=workspace)
     with ExitStack() as cleanup:
         buses = {}
         for side, port in zip(("left", "right"), ports, strict=True):

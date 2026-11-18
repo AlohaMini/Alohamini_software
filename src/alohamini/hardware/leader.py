@@ -13,6 +13,7 @@ from alohamini.calibration.procedure import ensure_calibration
 from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.hardware.feetech_device import FeetechBusDevice
+from alohamini.hardware.usb_setup import leader_calibration_directory
 from alohamini.model import ActuatorSpec, get_robot_model
 from alohamini.paths import WorkspacePaths
 
@@ -51,13 +52,24 @@ class BimanualLeader:
         self._ports = {"left": left_port, "right": right_port}
         self._resources = ExitStack()
         self._connected = self._used = False
+        directory = (
+            Path(calibration_dir).expanduser()
+            if calibration_dir is not None
+            else paths.calibration / "teleoperators"
+        )
+        if calibration_dir is None and robot_model != "alohamini1":
+            directory = leader_calibration_directory(paths, leader_id, self._ports, active_sides)
         for side, port in (("left", left_port), ("right", right_port)):
             if side not in active_sides:
                 continue
             # The old BiSOLeader stores <id>_left/right.json with unprefixed joints.
-            filename = paths.calibration_file("teleoperators", f"{leader_id}_{side}")
-            if calibration_dir is not None:
-                filename = Path(calibration_dir).expanduser() / filename.name
+            filename = (
+                directory / paths.calibration_file("teleoperators", f"{leader_id}_{side}").name
+            )
+            if calibration_dir is None and not filename.exists():
+                raise ValueError(
+                    f"当前主臂尚未标定（{leader_id}）；请运行 alohamini calibrate leader"
+                )
             actuators = tuple(
                 ActuatorSpec(m.name.removeprefix(f"arm_{side}_"), side, m.motor_id, "sts3215")
                 for m in model.actuators

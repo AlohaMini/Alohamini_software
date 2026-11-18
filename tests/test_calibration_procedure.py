@@ -5,7 +5,9 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from test_feetech_device import DelayedRegisterSerial, RegisterSerial
@@ -282,6 +284,110 @@ class CalibrationProcedureTests(unittest.TestCase):
             calibrate("leader", self.model_name, calibration_dir=self.root)
         self.assertFalse(any(serial.requests for serial in self.serials.values()))
         self.assertFalse(list(self.root.rglob("*.json")))
+
+    def test_default_storage_and_runtime_follow_the_connected_leader_set(self):
+        from alohamini.hardware import usb_setup
+        from alohamini.hardware.leader import BimanualLeader
+        from alohamini.paths import WorkspacePaths
+
+        self.configure()
+        workspace = WorkspacePaths(self.root)
+        bindings = {
+            name: {
+                side: usb_setup.USBController(f"{name}-{side}", 1, 2) for side in ("left", "right")
+            }
+            for name in ("A", "B")
+        }
+        for name, pair in bindings.items():
+            # The most recently selected pair is B, even while A is attached.
+            path = (
+                workspace.calibration
+                / "devices"
+                / (f"leaders/{usb_setup._pair_key(pair)}.json" if name == "A" else "leader.json")
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    dict(
+                        schema_version=1,
+                        role="leader",
+                        sides={side: asdict(board) for side, board in pair.items()},
+                    )
+                )
+            )
+        current = "A"
+
+        def available():
+            return {
+                f"/dev/test-{side}": SimpleNamespace(**asdict(board))
+                for side, board in bindings[current].items()
+            }
+
+        ports = dict(left_port="/dev/test-left", right_port="/dev/test-right")
+        with (
+            patch.dict(os.environ, ALOHAMINI_WORKSPACE=str(self.root)),
+            patch.object(usb_setup, "usb_ports", side_effect=available),
+            patch("builtins.input", return_value="") as prompt,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            calibrate("leader", self.model_name, **ports)
+            first_serials = self.serials
+            first = BimanualLeader(self.model_name, **ports)
+            first_files = {p: p.read_bytes() for p in first._calibration_paths.values()}
+            first_offset = first.calibrations["left"]["shoulder_pan"].homing_offset
+
+            current = "B"
+            self.configure()
+            for serial in self.serials.values():
+                for motor_id in serial.registers:
+                    serial.set(motor_id, 56, 2, 2000)
+            calibrate("leader", self.model_name, **ports)
+            second = BimanualLeader(self.model_name, **ports)
+            self.assertNotEqual(
+                second.calibrations["left"]["shoulder_pan"].homing_offset, first_offset
+            )
+            self.assertNotEqual(first._calibration_paths, second._calibration_paths)
+            self.assertEqual(prompt.call_count, 2)  # One Home capture per new pair.
+
+            current, self.serials = "A", first_serials
+            with patch(
+                "alohamini.calibration.procedure._capture",
+                side_effect=AssertionError("must reuse A without Home capture"),
+            ):
+                calibrate("leader", self.model_name, **ports)
+            selected = BimanualLeader(self.model_name, **ports)
+            self.assertEqual(selected.calibrations, first.calibrations)
+            self.assertEqual({p: p.read_bytes() for p in first_files}, first_files)
+            self.assertEqual(prompt.call_count, 3)
+        self.assert_passive_and_closed()
+
+    def test_explicit_directory_does_not_touch_default_calibration_storage(self):
+        from alohamini.hardware.usb_setup import USBController
+
+        self.configure()
+        workspace = self.root / "unused-workspace"
+        flat = workspace / "calibration/teleoperators"
+        flat.mkdir(parents=True)
+        for side in ("left", "right"):
+            (flat / f"am_leader_bi_{side}.json").write_text("unrelated legacy calibration")
+        binding = workspace / "calibration/devices/leader.json"
+        binding.parent.mkdir()
+        binding.write_text(
+            json.dumps(
+                dict(
+                    schema_version=1,
+                    role="leader",
+                    sides={
+                        side: asdict(USBController(f"old-{side}", 1, 2))
+                        for side in ("left", "right")
+                    },
+                )
+            )
+        )
+        before = {p: p.read_bytes() for p in workspace.rglob("*.json")}
+        with patch.dict(os.environ, ALOHAMINI_WORKSPACE=str(workspace)):
+            self.run_calibration()
+        self.assertEqual({p: p.read_bytes() for p in workspace.rglob("*.json")}, before)
 
     def test_follower_uses_existing_ports_without_usb_binding(self):
         self.configure("robot")

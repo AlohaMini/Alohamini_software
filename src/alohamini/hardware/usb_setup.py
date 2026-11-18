@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -107,6 +109,169 @@ def render_rules(role, bindings):
     return ("\n".join(lines) + "\n").encode()
 
 
+def _binding_document(bindings):
+    return dict(
+        schema_version=1,
+        role="leader",
+        sides={side: asdict(board) for side, board in bindings.items()},
+    )
+
+
+def _pair_key(bindings):
+    return hashlib.sha256(
+        json.dumps(_binding_document(bindings), sort_keys=True).encode()
+    ).hexdigest()[:20]
+
+
+def _known_leaders(directory):
+    paths = [directory / "leader.json", *sorted((directory / "leaders").glob("*.json"))]
+    known = {}
+    for path in paths:
+        if path.exists():
+            bindings = _load_bindings(path, "leader")
+            known[_pair_key(bindings)] = bindings
+    return known
+
+
+def _leader_rules(known):
+    identities, lines = {}, []
+    for _, bindings in sorted(known.items()):
+        for side, board in bindings.items():
+            previous = identities.setdefault(board, side)
+            if previous != side:
+                raise ValueError("同一 USB 控制板不能同时登记为左、右主臂")
+        for line in render_rules("leader", bindings).decode().splitlines():
+            if line not in lines:
+                lines.append(line)
+    return ("\n".join(lines) + "\n").encode()
+
+
+def preserve_legacy_leader_calibration(workspace, leader_id):
+    """Copy the old flat files to their recorded USB pair exactly once."""
+    directory = workspace.calibration / "devices"
+    anchor = directory / "leader-legacy.json"
+    active = directory / "leader.json"
+    sources = [
+        workspace.calibration_file("teleoperators", f"{leader_id}_{side}")
+        for side in ("left", "right")
+    ]
+    if not all(path.exists() for path in sources) or not active.exists():
+        return
+    if anchor.exists():
+        bindings = _load_bindings(anchor, "leader")
+    else:
+        if any((directory / "leaders").glob("*.json")):
+            # A new registry cannot establish which device produced older flat files.
+            return
+        bindings = _load_bindings(active, "leader")
+    target = workspace.calibration / "teleoperators" / "usb" / _pair_key(bindings)
+    destinations = [target / path.name for path in sources]
+    if any(path.exists() for path in destinations):
+        if not all(path.exists() for path in destinations):
+            raise ValueError(f"主臂标定不完整：{target}")
+        if not anchor.exists():
+            save_bundle({anchor: json_bytes(_binding_document(bindings))}, {})
+        return
+    payloads = {anchor: json_bytes(_binding_document(bindings))}
+    for source, destination in zip(sources, destinations, strict=True):
+        if source.is_symlink():
+            raise ValueError("Use a shared calibration directory, not a linked JSON file")
+        payloads[destination] = source.read_bytes()
+        reference = source.with_name(f"{source.stem}.reference.json")
+        if reference.exists():
+            payloads[target / reference.name] = reference.read_bytes()
+    save_bundle(payloads, {})
+
+
+def leader_calibration_directory(workspace, leader_id, ports, active_sides=("left", "right")):
+    """Resolve connected USB identities without opening a motor port or changing zero."""
+    available = usb_ports()
+    present = {side: available.get(str(Path(ports[side]).resolve())) for side in active_sides}
+    legacy = workspace.calibration / "teleoperators"
+    if not present or all(port is None for port in present.values()):
+        return legacy  # Explicit non-USB ports retain their supplied legacy configuration.
+    if any(port is None for port in present.values()):
+        raise ValueError("请连接当前主臂的左右 USB 控制板")
+    identities = {
+        side: USBController(port.serial_number, port.vid, port.pid)
+        for side, port in present.items()
+    }
+    known = _known_leaders(workspace.calibration / "devices")
+    matches = [
+        pair
+        for pair in known.values()
+        if all(pair[side] == board for side, board in identities.items())
+    ]
+    if not matches:
+        raise ValueError("当前主臂尚未登记；请运行 alohamini calibrate leader")
+    if len(matches) != 1:
+        raise ValueError("当前单臂对应多套标定；请连接双主臂或指定标定目录")
+    preserve_legacy_leader_calibration(workspace, leader_id)
+    return legacy / "usb" / _pair_key(matches[0])
+
+
+def _ensure_leader_ports(workspace, aliases):
+    directory = workspace.calibration / "devices"
+    known = _known_leaders(directory)
+    available = usb_ports()
+    matches = []
+    for bindings in known.values():
+        try:
+            matched = _matched_ports(bindings, available)
+        except ValueError:
+            continue
+        matches.append((bindings, matched))
+    if len(matches) > 1:
+        raise ValueError("检测到多套已登记主臂；请只连接一套，或指定左右串口")
+    if matches:
+        bindings, matched = matches[0]
+    else:
+        if all(alias.exists() for alias in aliases.values()) and not known:
+            selected = {
+                side: available.get(str(alias.resolve())) for side, alias in aliases.items()
+            }
+            if all(port is not None for port in selected.values()):
+                bindings = {
+                    side: USBController(port.serial_number, port.vid, port.pid)
+                    for side, port in selected.items()
+                }
+            else:
+                bindings = capture_bindings("leader")
+        else:
+            if known:
+                print("当前 USB 与已登记主臂不同，请按提示登记这套主臂；已有标定会保留。")
+            bindings = capture_bindings("leader")
+        matched = _matched_ports(bindings, usb_ports())
+    known[_pair_key(bindings)] = bindings
+    rules = _leader_rules(known)
+    prepared = directory / "leader.rules"
+    rules_changed = not prepared.exists() or prepared.read_bytes() != rules
+    payloads = {directory / "leader.json": json_bytes(_binding_document(bindings)), prepared: rules}
+    anchor = directory / "leader-legacy.json"
+    active = directory / "leader.json"
+    if active.exists() and not anchor.exists() and not any((directory / "leaders").glob("*.json")):
+        payloads[anchor] = json_bytes(_binding_document(_load_bindings(active, "leader")))
+    payloads.update(
+        {
+            directory / "leaders" / f"{key}.json": json_bytes(_binding_document(pair))
+            for key, pair in known.items()
+        }
+    )
+    changed = {
+        path: content
+        for path, content in payloads.items()
+        if not path.exists() or path.read_bytes() != content
+    }
+    if changed:
+        save_bundle(changed, {})
+    if rules_changed or any(
+        not alias.exists() or alias.resolve() != Path(matched[side]).resolve()
+        for side, alias in aliases.items()
+    ):
+        _install_rules("leader", prepared, matched, aliases, directory)
+    return tuple(str(aliases[side]) for side in ("left", "right"))
+
+
 def _matched_ports(bindings, ports):
     matched = {}
     for side, identity in bindings.items():
@@ -174,6 +339,8 @@ def ensure_arm_ports(role, *, workspace=None, device_dir=Path("/dev")):
     if sys.platform != "linux":
         raise RuntimeError("Automatic USB aliases require Linux; specify both serial ports")
     aliases = {side: device_dir / f"am_arm_{role}_{side}" for side in ("left", "right")}
+    if role == "leader":
+        return _ensure_leader_ports(workspace or WorkspacePaths(), aliases)
     directory = (workspace or WorkspacePaths()).calibration / "devices"
     path = directory / f"{role}.json"
     if all(alias.exists() for alias in aliases.values()):
@@ -210,8 +377,6 @@ def ensure_arm_ports(role, *, workspace=None, device_dir=Path("/dev")):
 
 
 def _load_bindings(path, role):
-    import json
-
     data = json.loads(path.read_text())
     if (
         not isinstance(data, dict)
