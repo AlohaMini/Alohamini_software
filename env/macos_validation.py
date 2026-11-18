@@ -27,7 +27,8 @@ SUITES = {
     "cache": [
         "test_data_store.py", "test_disk_dataset.py", "test_video_reader.py",
         "test_frozen_features.py", "test_bounded_numeric_statistics.py",
-        "test_bounded_policy_statistics.py", "test_data_pipeline.py", "test_streaming.py", "test_streaming_config.py",
+        "test_bounded_policy_statistics.py", "test_data_pipeline.py", "test_streaming.py",
+        "test_streaming_config.py",
         "test_recording_stats_cache.py", "test_recording_stats_incremental.py",
     ],
     "data": [
