@@ -28,10 +28,7 @@ source ros2/env.bash
 
 适用 `alohamini2`、`alohamini2pro`。先按[主从臂标定](alohamini.md#2-主从臂标定)完成从臂 Home 标定，再启动 Host。ROS 自动读取 Host 的标定，无需复制映射文件；更换同型号机器人时使用新机器的 Host 地址。
 
-真机与离线规划共享同一份关节、碰撞几何、惯量和 SRDF。真机以 `base_link` 为根；离线 `plan_only` 自动附加 X／Y／偏航虚拟关节，以 `root` 为根。
-
 ```bash
-export ROS_LOG_DIR="${ALOHAMINI_WORKSPACE:-$HOME/Alohamini_workspace}/logs/ros2"
 ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号>
 ```
 
@@ -167,7 +164,6 @@ cd ~/Alohamini/ros2
 /usr/bin/python3 -m colcon build --base-paths src ../simulation/gazebo \
   --packages-up-to alohamini_gazebo
 source install/local_setup.bash
-export ROS_LOG_DIR="${ALOHAMINI_WORKSPACE:-$HOME/Alohamini_workspace}/logs/ros2"
 ros2 launch alohamini_gazebo simulation.launch.py
 ```
 
@@ -178,7 +174,6 @@ ros2 launch alohamini_gazebo simulation.launch.py
 ## 单独订阅相机
 
 ```bash
-export ROS_LOG_DIR="${ALOHAMINI_WORKSPACE:-$HOME/Alohamini_workspace}/logs/ros2"
 ros2 launch alohamini_camera camera.launch.py host:=<PI_IP>
 ```
 
