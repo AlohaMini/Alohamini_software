@@ -68,7 +68,8 @@ class BimanualLeader:
             )
             if calibration_dir is None and not filename.exists():
                 raise ValueError(
-                    f"当前主臂尚未标定（{leader_id}）；请运行 alohamini calibrate leader"
+                    f"No calibration for the connected leader ({leader_id}); "
+                    "run alohamini calibrate leader"
                 )
             actuators = tuple(
                 ActuatorSpec(m.name.removeprefix(f"arm_{side}_"), side, m.motor_id, "sts3215")

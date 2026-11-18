@@ -185,7 +185,7 @@ class CalibrationProcedureTests(unittest.TestCase):
             prompts.append(prompt)
             self.assertFalse(list(self.root.rglob("*.json")))
             left, right = self.serials["/dev/test-left"], self.serials["/dev/test-right"]
-            self.assertIn("双臂", prompt)
+            self.assertIn("both follower arms", prompt)
             left.set(1, 56, 2, 1930)
             right.set(1, 56, 2, 2400)
             return ""

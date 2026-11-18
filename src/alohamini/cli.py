@@ -309,26 +309,31 @@ def _main(argv: list[str] | None = None) -> int:
         "--display_data", "--display-data", type=parse_bool, nargs="?", const=True, default=False
     )
     calibration = commands.add_parser(
-        "calibrate", help="自动绑定 USB、一次姿态置零并生成设备配置；不使能或自动运动"
+        "calibrate", help="Bind USB controllers and calibrate both arms at Home"
     )
     calibration.add_argument("target", choices=("leader", "robot"))
     calibration.add_argument(
         "--robot_model", required=True, choices=("alohamini2", "alohamini2pro")
     )
     calibration.add_argument(
-        "--id", "--teleop.id", dest="device_id", help="与遥操或 Host 一致的标定 ID"
+        "--id", "--teleop.id", dest="device_id", help="Calibration ID used by teleoperation or Host"
     )
     calibration.add_argument(
-        "--calibration_dir", help="指定标定目录；默认按主臂 USB 身份或整机 ID 保存"
+        "--calibration_dir",
+        help="Calibration directory; defaults to the leader USB pair or robot ID",
     )
-    calibration.add_argument("--left_port", help="左侧串口；默认使用对应主臂/从臂设备名")
-    calibration.add_argument("--right_port", help="右侧串口；默认使用对应主臂/从臂设备名")
+    calibration.add_argument(
+        "--left_port", help="Left serial port; defaults to the arm's USB alias"
+    )
+    calibration.add_argument(
+        "--right_port", help="Right serial port; defaults to the arm's USB alias"
+    )
     calibration.add_argument(
         "--teleop.arm_profile",
         "--arm_profile",
         dest="arm_profile",
         choices=("am-leader-6dof",),
-        help="主臂型号，默认按整机选择",
+        help="Leader profile; defaults to the selected robot model",
     )
     host = commands.add_parser(
         "host", help="启动硬件 Host：使能并回零；启动前支撑双臂、清空升降下降路径"

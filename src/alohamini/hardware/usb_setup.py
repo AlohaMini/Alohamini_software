@@ -79,17 +79,17 @@ def _wait_added(previous, *, timeout_s=120):
 def capture_bindings(role):
     if not sys.stdin.isatty():
         raise RuntimeError("First USB setup requires an interactive terminal")
-    label = "主臂" if role == "leader" else "从臂"
-    print("先停止 Host 和遥操，确认双臂稳固、升降已支撑。")
-    response = input(f"拔下左右{label} USB 后按 Enter（输入其他内容取消）：")
+    print("Stop Host and teleoperation. Secure both arms before disconnecting USB.")
+    response = input(
+        f"Unplug both {role} USB controllers, then press ENTER (any other input cancels): "
+    )
     if response.strip():
         raise InterruptedError("USB setup cancelled; no rules installed")
     current, bindings = usb_ports(), {}
     for side in ("left", "right"):
-        side_label = "左" if side == "left" else "右"
-        print(f"请插入{side_label}{label} USB，等待自动识别。", flush=True)
+        print(f"Connect the {side} {role} USB controller and wait for detection.", flush=True)
         current, bindings[side] = _wait_added(current)
-        print(f"{side_label}{label}已识别：{bindings[side].serial_number}", flush=True)
+        print(f"{side.capitalize()} {role} detected: {bindings[side].serial_number}", flush=True)
     return bindings
 
 
@@ -139,7 +139,9 @@ def _leader_rules(known):
         for side, board in bindings.items():
             previous = identities.setdefault(board, side)
             if previous != side:
-                raise ValueError("同一 USB 控制板不能同时登记为左、右主臂")
+                raise ValueError(
+                    "A USB controller cannot be registered as both left and right leader"
+                )
         for line in render_rules("leader", bindings).decode().splitlines():
             if line not in lines:
                 lines.append(line)
@@ -168,7 +170,7 @@ def preserve_legacy_leader_calibration(workspace, leader_id):
     destinations = [target / path.name for path in sources]
     if any(path.exists() for path in destinations):
         if not all(path.exists() for path in destinations):
-            raise ValueError(f"主臂标定不完整：{target}")
+            raise ValueError(f"Incomplete leader calibration: {target}")
         if not anchor.exists():
             save_bundle({anchor: json_bytes(_binding_document(bindings))}, {})
         return
@@ -191,7 +193,7 @@ def leader_calibration_directory(workspace, leader_id, ports, active_sides=("lef
     if not present or all(port is None for port in present.values()):
         return legacy  # Explicit non-USB ports retain their supplied legacy configuration.
     if any(port is None for port in present.values()):
-        raise ValueError("请连接当前主臂的左右 USB 控制板")
+        raise ValueError("Connect both USB controllers for the current leader")
     identities = {
         side: USBController(port.serial_number, port.vid, port.pid)
         for side, port in present.items()
@@ -203,9 +205,11 @@ def leader_calibration_directory(workspace, leader_id, ports, active_sides=("lef
         if all(pair[side] == board for side, board in identities.items())
     ]
     if not matches:
-        raise ValueError("当前主臂尚未登记；请运行 alohamini calibrate leader")
+        raise ValueError("Connected leader is not registered; run alohamini calibrate leader")
     if len(matches) != 1:
-        raise ValueError("当前单臂对应多套标定；请连接双主臂或指定标定目录")
+        raise ValueError(
+            "This arm belongs to multiple leader pairs; connect both or specify calibration_dir"
+        )
     preserve_legacy_leader_calibration(workspace, leader_id)
     return legacy / "usb" / _pair_key(matches[0])
 
@@ -222,7 +226,9 @@ def _ensure_leader_ports(workspace, aliases):
             continue
         matches.append((bindings, matched))
     if len(matches) > 1:
-        raise ValueError("检测到多套已登记主臂；请只连接一套，或指定左右串口")
+        raise ValueError(
+            "Multiple registered leader pairs connected; connect only one or specify both ports"
+        )
     if matches:
         bindings, matched = matches[0]
     else:
@@ -239,7 +245,10 @@ def _ensure_leader_ports(workspace, aliases):
                 bindings = capture_bindings("leader")
         else:
             if known:
-                print("当前 USB 与已登记主臂不同，请按提示登记这套主臂；已有标定会保留。")
+                print(
+                    "New leader USB controllers detected. "
+                    "Register this pair; existing calibrations are kept."
+                )
             bindings = capture_bindings("leader")
         matched = _matched_ports(bindings, usb_ports())
     known[_pair_key(bindings)] = bindings
@@ -296,7 +305,9 @@ def _install_rules(role, prepared, matched, aliases, backup_dir):
     if destination.exists() and destination.read_bytes() != prepared.read_bytes():
         backup = backup_dir / f"{destination.stem}.{time.time_ns()}.backup.rules"
         backup.write_bytes(destination.read_bytes())
-    print(f"保存 USB 设备名：{destination}；sudo 可能要求输入系统密码。", flush=True)
+    print(
+        f"Installing USB aliases: {destination}; sudo may request your system password.", flush=True
+    )
     subprocess.run(
         [
             *prefix,

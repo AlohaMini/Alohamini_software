@@ -172,7 +172,9 @@ def calibrate(
         )
     reuse = False
     if all(existing.values()):
-        response = input(f"{device_id} 已有标定：按 Enter 复用，输入 c 重新摆位标定：").strip()
+        response = input(
+            f"{device_id} has saved calibration. Press ENTER to reuse, or c to recalibrate: "
+        ).strip()
         if response not in ("", "c"):
             raise InterruptedError("Calibration cancelled; no serial port opened")
         reuse = response == ""
@@ -196,11 +198,13 @@ def calibrate(
                     values = {m.name: existing[side][m.name] for m in bus.actuators}
                     bus.write_calibration(values)
                 return
-            label = "主臂" if leader else "从臂"
+            label = "leader" if leader else "follower"
+            lift_hint = "" if leader else " Support the lift."
             response = input(
-                f"将双{label}摆到 Home：1/5/6 对齐中位，2/3/4 蜷缩轻靠接触面，夹爪合拢。\n"
-                "不要挤压外壳；确认双臂稳固、升降已支撑。\n"
-                "双臂保持静止，按 Enter 标定（输入其他内容取消）："
+                f"Place both {label} arms at Home: J1/J5/J6 centered; "
+                "J2/J3/J4 folded to light contact; grippers closed.\n"
+                f"Keep both arms stable; do not force the housings.{lift_hint}\n"
+                "Press ENTER to calibrate (any other input cancels): "
             )
             if response.strip():
                 raise InterruptedError("Reference capture cancelled")
@@ -238,7 +242,7 @@ def calibrate(
                             f"(expected={expected}, actual={actual}); hold the supported arm "
                             "still and retry; if this persists, power-cycle servo power"
                         )
-                print(f"{'左' if side == 'left' else '右'}{label}已写入并核对。")
+                print(f"{side.capitalize()} {label} calibration written and verified.")
             if leader:
                 motor_payloads = {paths[side]: calibration_bytes(values[side]) for side in buses}
                 motor_files = {paths[side]: actuators[side] for side in buses}
@@ -272,5 +276,4 @@ def calibrate(
                 payloads[path.with_name(f"{path.stem}.reference.json")] = json_bytes(profile)
             save_bundle(payloads, motor_files)
             for path in motor_payloads:
-                print(f"标定已保存：{path}")
-            print("双臂保持扭矩关闭；标定掉电保留。")
+                print(f"Calibration saved: {path}")

@@ -231,10 +231,10 @@ def test_current_usb_pair_overrides_last_selected_pair_and_supports_one_side(tmp
     assert usb_setup.leader_calibration_directory(workspace, "id", ports) == expected
     available.pop("/dev/right")
     assert usb_setup.leader_calibration_directory(workspace, "id", ports, ("left",)) == expected
-    with pytest.raises(ValueError, match="左右 USB"):
+    with pytest.raises(ValueError, match="both USB"):
         usb_setup.leader_calibration_directory(workspace, "id", ports)
     available["/dev/right"] = port(second["right"].serial_number)
-    with pytest.raises(ValueError, match="尚未登记"):
+    with pytest.raises(ValueError, match="not registered"):
         usb_setup.leader_calibration_directory(workspace, "id", ports)
 
 
@@ -253,9 +253,9 @@ def test_multiple_connected_sets_and_conflicting_sides_are_rejected(tmp_path, mo
     )
     capture = Mock(side_effect=AssertionError("must not guess sides"))
     monkeypatch.setattr(usb_setup, "capture_bindings", capture)
-    with pytest.raises(ValueError, match="多套已登记"):
+    with pytest.raises(ValueError, match="Multiple registered"):
         usb_setup.ensure_arm_ports("leader", workspace=workspace, device_dir=tmp_path / "dev")
-    with pytest.raises(ValueError, match="左、右"):
+    with pytest.raises(ValueError, match="both left and right"):
         usb_setup._leader_rules({"A": first, "B": dict(left=second["left"], right=first["left"])})
 
 
