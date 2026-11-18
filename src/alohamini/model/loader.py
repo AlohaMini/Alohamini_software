@@ -133,8 +133,14 @@ def load_robot_model(directory: str | Path) -> RobotModel:
     derived = {}
     for name, settings in views.items():
         identifier(name, "description view name")
-        if name in descriptions or not isinstance(settings, dict) or not (
-            {"source"} <= settings.keys() <= {"source", "overlay", "root_link", "geometry"}
+        if (
+            name in descriptions
+            or not isinstance(settings, dict)
+            or not (
+                {"source"}
+                <= settings.keys()
+                <= {"source", "overlay", "root_link", "geometry", "exclude_joints"}
+            )
         ):
             raise ValueError("Invalid or shadowed description view")
         if not isinstance(settings["source"], str) or settings["source"] not in descriptions:
@@ -147,6 +153,17 @@ def load_robot_model(directory: str | Path) -> RobotModel:
             identifier(settings["root_link"], "description view root")
         if settings.get("overlay") is not None and settings.get("root_link") is not None:
             raise ValueError("Subtree views cannot attach a planar base")
+        settings = dict(settings)
+        excluded = settings.get("exclude_joints", [])
+        if (
+            not isinstance(excluded, list)
+            or not all(isinstance(joint, str) for joint in excluded)
+            or len(set(excluded)) != len(excluded)
+        ):
+            raise ValueError("Excluded joints must be a list of unique joint names")
+        for joint in excluded:
+            identifier(joint, "excluded joint")
+        settings["exclude_joints"] = tuple(excluded)
         derived[name] = DescriptionView(**settings)
     kinematics = {}
     for section in ("kinematic_chains", "kinematic_presets"):

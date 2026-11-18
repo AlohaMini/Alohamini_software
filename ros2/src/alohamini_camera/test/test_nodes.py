@@ -17,6 +17,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image
+from std_msgs.msg import String
 from test_protocol import camera_info
 
 from alohamini.hardware.camera import JpegSnapshot
@@ -200,11 +201,12 @@ def test_zmq_to_real_ros_messages_preserves_rgb_topics_and_capture_time(ros, pub
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     executor.add_node(observer)
-    received = {"compressed": [], "raw": [], "info": []}
+    received = {"compressed": [], "raw": [], "info": [], "clock": []}
     for message_type, topic, key in (
         (CompressedImage, "/alohamini/cameras/forward/image_raw/compressed", "compressed"),
         (Image, "/alohamini/cameras/forward/image_raw", "raw"),
         (CameraInfo, "/alohamini/cameras/forward/camera_info", "info"),
+        (String, "/alohamini/camera_clock", "clock"),
     ):
         observer.create_subscription(message_type, topic, received[key].append, 2)
     try:
@@ -228,6 +230,10 @@ def test_zmq_to_real_ros_messages_preserves_rgb_topics_and_capture_time(ros, pub
         assert info.header.frame_id == "forward_camera_optical"
         ns = compressed.header.stamp.sec * 1_000_000_000 + compressed.header.stamp.nanosec
         assert ns == json.loads(message[1])["capture_unix_ns"]
+        anchor = json.loads(received["clock"][0].data)
+        original = json.loads(message[1])
+        for key in ("host_session_id", "capture_unix_ns", "capture_monotonic_s"):
+            assert anchor[key] == original[key]
     finally:
         executor.shutdown()
         observer.destroy_node()

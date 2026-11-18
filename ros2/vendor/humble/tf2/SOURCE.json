@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/ros2/geometry2",
+  "revision": "404b7224d623d614f18fa9738dbf1716403d857e",
+  "tag": "0.25.24",
+  "path": "tf2",
+  "license": "BSD-3-Clause (tf2); Zlib (bundled LinearMath source headers)",
+  "changes": [
+    "Include cstdint when compiling the Humble gtest sources with current compilers.",
+    "Normalize lambda formatting for the installed Humble uncrustify version."
+  ],
+  "fix": "Includes upstream #990: invoke transformable callbacks after releasing internal mutexes."
+}

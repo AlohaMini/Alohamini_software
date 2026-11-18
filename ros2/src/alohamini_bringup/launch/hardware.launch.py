@@ -40,10 +40,11 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
             DeclareLaunchArgument("host", default_value="127.0.0.1"),
+            DeclareLaunchArgument("robot_model", default_value="alohamini2pro"),
             DeclareLaunchArgument(
                 "robot_model",
                 default_value="alohamini2pro",
-                choices=["alohamini2", "alohamini2pro"],
+                choices=["alohamini2", "alohamini2pro", "alohamini2edu"],
             ),
             DeclareLaunchArgument("observation_port", default_value="5556"),
             DeclareLaunchArgument("command_port", default_value="5555"),
@@ -71,7 +72,10 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("camera_extrinsics", default_value=""),
             DeclareLaunchArgument("allow_candidate_camera_extrinsics", default_value="false"),
             # Exactly one authoritative description and robot_state_publisher.
-            IncludeLaunchDescription(_launch("alohamini_description", "description.launch.py")),
+            IncludeLaunchDescription(
+                _launch("alohamini_description", "description.launch.py"),
+                launch_arguments={"robot_model": LaunchConfiguration("robot_model")}.items(),
+            ),
             # Commands remain disabled until an explicit ROS service request.
             IncludeLaunchDescription(
                 _launch("alohamini_bridge", "bridge.launch.py"),

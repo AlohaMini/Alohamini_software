@@ -137,6 +137,8 @@ class Validator(Node):
         # The default targets the isolated offline launch. ROS __ns remapping
         # can select another MoveIt graph, including the physical model at /.
         super().__init__("alohamini_moveit_validation", namespace=namespace)
+        self.declare_parameter("robot_model", "alohamini2pro")
+        self.robot_model = str(self.get_parameter("robot_model").value)
         try:
             self.parameters_client = self.create_client(GetParameters, "move_group/get_parameters")
             self.fk_client = self.create_client(GetPositionFK, "compute_fk")
@@ -249,7 +251,7 @@ class Validator(Node):
 def check_collision_states(node, collision):
     from alohamini.model import get_robot_model
 
-    model = get_robot_model("alohamini2pro")
+    model = get_robot_model(node.robot_model)
     view = "planning" if VIRTUAL_BASE_JOINTS <= node.default_state.keys() else "collision"
     assert ET.canonicalize(node.description_xml, strip_text=True) == ET.canonicalize(
         model.description_xml(view), strip_text=True

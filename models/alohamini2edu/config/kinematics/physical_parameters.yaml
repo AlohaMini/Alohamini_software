@@ -1,0 +1,49 @@
+schema_version: 1
+source: cad_mass_overrides_and_nominal_wheel_inertia_split
+calibrated: false
+estimated_assembly_masses_kg:
+  whole_robot: 16.0
+  lifted_subtree_with_two_arms_and_t_carriage: 5.1
+  left_arm_assembly: 2.0
+  right_arm_assembly: 2.0
+  fixed_non_lifted_subtree_derived: 10.9
+  t_carriage_without_arms_derived: 1.1
+  source: engineering_estimates
+  note: Reference values only; do not rescale independently verified CAD mass properties
+    to these totals.
+mass_distribution_kg:
+  base_link: 5.60562
+  vertical_link: 1.1246500000000001
+  wheel1: 0.3
+  wheel2: 0.3
+  wheel3: 0.3
+  left_Base: 0.557515311983734
+  left_Rotation_Pitch: 0.2713066873729841
+  left_Upper_Arm: 0.33534
+  left_Lower_Arm: 0.23725331262701596
+  left_Wrist_Pitch_Roll: 0.03222937603253181
+  left_wrist_yaw: 0.2256206239674682
+  left_Fixed_Jaw: 0.16937
+  left_Moving_Jaw: 0.0209846880162659
+  right_Base: 0.557515311983734
+  right_Rotation_Pitch: 0.2713066873729841
+  right_Upper_Arm: 0.33534
+  right_Lower_Arm: 0.23725331262701596
+  right_Wrist_Pitch_Roll: 0.03222937603253181
+  right_wrist_yaw: 0.2256206239674682
+  right_Fixed_Jaw: 0.16937
+  right_Moving_Jaw: 0.0209846880162659
+  known_subtotal: 11.32951
+mass_policy:
+  source: urdf
+  override_all_links: false
+known_issues:
+- Stationary column electronics, battery and cabling remain outside the reported mass
+  subtotal.
+- Wheel mass uses the existing 0.3 kg engineering reference and a uniform collision-cylinder
+  inertia; fixed combined mass, COM and tensor are preserved.
+- Motor dynamics, omni-roller contact, friction and delay require physical identification.
+collision:
+  profile: shared_structural_contact_geometry
+  complete_link_coverage: true
+  contact_calibrated: false

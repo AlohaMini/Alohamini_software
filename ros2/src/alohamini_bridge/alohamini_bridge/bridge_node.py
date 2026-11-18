@@ -14,7 +14,7 @@ import rclpy
 from builtin_interfaces.msg import Time as TimeMsg
 from control_msgs.msg import JointJog
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from geometry_msgs.msg import Twist, TwistStamped
+from geometry_msgs.msg import Twist, TwistStamped, TwistWithCovarianceStamped
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
@@ -148,9 +148,13 @@ class AlohaMiniBridge(Node):
             "observation_timeout_sec": 0.5,
             "max_state_response_age_sec": 0.25,
             "expected_robot_model": "alohamini2pro",
+            "base_only": False,
             "state_timestamp_mode": "receipt",
             "joint_states_topic": "/joint_states",
             "base_velocity_topic": "/alohamini/base_velocity",
+            "wheel_twist_topic": "/wheel/twist",
+            "wheel_velocity_variance_xy": 0.04,
+            "wheel_velocity_variance_yaw": 0.09,
             "base_frame": "base_link",
             "max_clock_offset_ms": 250.0,
             "command_timeout_sec": 0.5,
@@ -178,8 +182,9 @@ class AlohaMiniBridge(Node):
             "linear_y_scale": 1.0,
             "angular_z_scale": 1.0,
             "swap_xy": False,
-            "wheel_radius": 0.063,
-            "base_radius": 0.195,
+            # Zero selects the registered model geometry.
+            "wheel_radius": 0.0,
+            "base_radius": 0.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -188,6 +193,7 @@ class AlohaMiniBridge(Node):
             return self.get_parameter(name).value
 
         self.model = get_robot_model(parameter("expected_robot_model"))
+        self.base_only = parameter("base_only")
         geometry = ModelJointSpecification.from_model(self.model).geometry_model
         joints = ET.parse(geometry.description_path("collision")).findall("joint")
         joint_names = {joint.get("name") for joint in joints}
@@ -196,7 +202,7 @@ class AlohaMiniBridge(Node):
             for name in ("root_x_axis_joint", "root_y_axis_joint", "root_z_rotation_joint")
             if name in joint_names
         )
-        self.mapper = JointMapper()
+        self.mapper = None if self.base_only else JointMapper()
         self.obs_timeout = finite_number(
             parameter("observation_timeout_sec"), "observation timeout"
         )
@@ -229,7 +235,7 @@ class AlohaMiniBridge(Node):
         self.commands = RobotCommands(
             self.max_age,
             command_timeout,
-            mapper=JointMapper(),
+            mapper=None if self.base_only else JointMapper(),
             observation_timeout=self.obs_timeout,
             arm_tracking_error=parameter("arm_path_tolerance_rad"),
             lift_tracking_error=parameter("lift_path_tolerance_m"),
@@ -265,7 +271,16 @@ class AlohaMiniBridge(Node):
             raise ValueError("Jog limits must be positive; arm timeout must be in (0,1]")
         self.command_enabled_at_ns = 0
         self.jog_subscriptions = []
-        self.kinematics = OmniBaseKinematics(parameter("wheel_radius"), parameter("base_radius"))
+        self.kinematics = OmniBaseKinematics(
+            parameter("wheel_radius") or self.model.wheel_radius_m,
+            parameter("base_radius") or self.model.base_radius_m,
+        )
+        self.wheel_variances = tuple(
+            finite_number(parameter(name), name)
+            for name in ("wheel_velocity_variance_xy", "wheel_velocity_variance_yaw")
+        )
+        if any(value <= 0 for value in self.wheel_variances):
+            raise ValueError("Wheel velocity variances must be positive")
         self.last_observation_monotonic = None
         self.last_state_clock_offset_ms = math.nan
         self.last_observation_error = ""
@@ -283,12 +298,15 @@ class AlohaMiniBridge(Node):
         self.base_velocity_pub = self.create_publisher(
             TwistStamped, parameter("base_velocity_topic"), 10
         )
+        self.wheel_twist_pub = self.create_publisher(
+            TwistWithCovarianceStamped, parameter("wheel_twist_topic"), 10
+        )
         self.raw_pub = self.create_publisher(String, "~/state_json", 10)
         self.diagnostics_pub = self.create_publisher(DiagnosticArray, "/diagnostics", 10)
         self.cmd_vel_topic = parameter("cmd_vel_topic")
         self.cmd_subscription = None
         self.create_service(SetBool, "~/command_enable", self.on_command_enable)
-        self.actions = ControllerActions(self)
+        self.actions = None if self.base_only else ControllerActions(self)
         self.create_timer(1 / rate, self.on_timer)
         self.create_timer(1.0, self.publish_diagnostics)
         self.receiver = StateReceiver(
@@ -333,7 +351,7 @@ class AlohaMiniBridge(Node):
             ):
                 response.success, response.message = (
                     False,
-                    "Fresh valid ROS joint feedback is required",
+                    "Fresh valid Host feedback is required",
                 )
             else:
                 response.success, response.message = self.commands.enable()
@@ -360,7 +378,7 @@ class AlohaMiniBridge(Node):
                             lambda message, resource=name: self.on_jog(message, resource, epoch),
                             1,
                         )
-                        for name in ("left_arm", "right_arm", "lift")
+                        for name in (() if self.base_only else ("left_arm", "right_arm", "lift"))
                     ]
         else:
             self.commands.disable()
@@ -416,7 +434,8 @@ class AlohaMiniBridge(Node):
 
     def reject(self, reason):
         self.commands.fail(reason)
-        self.mapper.reset()
+        if self.mapper is not None:
+            self.mapper.reset()
         # Keep the sample watermark so stale replies cannot become fresh after rejection.
         self.last_observation_monotonic = None
         self.invalid_observations += 1
@@ -484,7 +503,8 @@ class AlohaMiniBridge(Node):
             return
         stream = session, generation
         if stream != self._stream:
-            self.mapper.reset()
+            if self.mapper is not None:
+                self.mapper.reset()
             self.wheel_positions = [0.0, 0.0, 0.0]
             # Reconnection breaks continuity, not the Host's monotonic clock.
             if self._stream is None or session != self._stream[0]:
@@ -500,7 +520,8 @@ class AlohaMiniBridge(Node):
             self._last_host_sample is not None
             and sample - self._last_host_sample > self.obs_timeout
         ):
-            self.mapper.reset()
+            if self.mapper is not None:
+                self.mapper.reset()
         stamp = self.observation_stamp(observation)
         x = finite_number(observation["x.vel"], "x.vel")
         y = finite_number(observation["y.vel"], "y.vel")
@@ -512,7 +533,11 @@ class AlohaMiniBridge(Node):
             math.radians(finite_number(observation["theta.vel"], "theta.vel"))
             / self.base_scales[2],
         )
-        positions = self.mapper.observation_to_joint_positions(observation, metadata)
+        positions = (
+            {}
+            if self.mapper is None
+            else self.mapper.observation_to_joint_positions(observation, metadata)
+        )
         wheels = self.kinematics.body_to_wheels(velocity)
         dt = (
             0
@@ -539,12 +564,25 @@ class AlohaMiniBridge(Node):
         measured.twist.linear.x, measured.twist.linear.y = velocity.x_m_s, velocity.y_m_s
         measured.twist.angular.z = velocity.yaw_rad_s
         self.base_velocity_pub.publish(measured)
+        # Measured wheel-derived body velocity only: no integrated pose or
+        # commanded-velocity fallback. robot_localization owns odom -> base_link.
+        wheel_twist = TwistWithCovarianceStamped()
+        wheel_twist.header = measured.header
+        wheel_twist.twist.twist = measured.twist
+        wheel_twist.twist.covariance = [0.0] * 36
+        for index in (0, 7):
+            wheel_twist.twist.covariance[index] = self.wheel_variances[0]
+        wheel_twist.twist.covariance[35] = self.wheel_variances[1]
+        for index in (14, 21, 28):
+            wheel_twist.twist.covariance[index] = 1e6
+        self.wheel_twist_pub.publish(wheel_twist)
         self.raw_pub.publish(String(data=json.dumps(observation, separators=(",", ":"))))
         message = JointState()
         message.header.stamp = stamp
         message.name, message.position = list(positions), list(positions.values())
-        self.joint_pub.publish(message)
-        self.measured_joint_pub.publish(message)
+        if positions:
+            self.joint_pub.publish(message)
+            self.measured_joint_pub.publish(message)
         derived = JointState()
         derived.header.stamp = stamp
         # Integrated wheel angles are not measured odometry. Only legacy models

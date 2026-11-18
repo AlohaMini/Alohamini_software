@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "frame": "left_Base",
+  "dh": "config/kinematics/right_arm_kinematics.yaml",
+  "tool": "config/kinematics/kinematics.yaml",
+  "limits_description": "kinematic",
+  "joint_names": [
+    "left_shoulder_pan",
+    "left_shoulder_lift",
+    "left_elbow_flex",
+    "left_wrist_flex",
+    "left_wrist_yaw_joint",
+    "left_wrist_roll"
+  ]
+}

@@ -17,7 +17,7 @@
 source ~/Alohamini/ros2/env.bash
 ```
 
-脚本激活 `alohamini_ros` 并加载当前发行版的工作区。不要同时加载系统 `/opt/ros` 或 Python venv。Python 与 ROS 依赖的检查命令见[安装](install.md#5-ros2-环境)。
+脚本激活 `alohamini_ros` 并加载当前发行版的工作区，默认使用 Cyclone DDS。可通过 `RMW_IMPLEMENTATION` 和 `CYCLONEDDS_URI` 使用自定义通信配置。不要同时加载系统 `/opt/ros` 或 Python venv。Python 与 ROS 依赖的检查命令见[安装](install.md#5-ros2-环境)。
 
 ## 构建
 
@@ -37,7 +37,9 @@ source ros2/env.bash
 
 ```bash
 cd ~/Alohamini/ros2
-"$ALOHAMINI_ROS_PYTHON" -m colcon --log-base "log/$ROS_DISTRO" test \
+test_paths=(src)
+if [[ "$ROS_DISTRO" == humble ]]; then test_paths+=(vendor/humble); fi
+"$ALOHAMINI_ROS_PYTHON" -m colcon --log-base "log/$ROS_DISTRO" test --base-paths "${test_paths[@]}" \
   --build-base "build/$ROS_DISTRO" --install-base "install/$ROS_DISTRO" \
   --executor sequential --event-handlers console_direct+
 "$ALOHAMINI_ROS_PYTHON" -m colcon test-result --test-result-base "build/$ROS_DISTRO" --verbose
@@ -47,7 +49,7 @@ Bridge、轨迹及 MoveIt 集成测试使用本机模拟 Host；这些测试不�
 
 ## 整机状态与 TF
 
-适用 `alohamini2`、`alohamini2pro`。先按[主从臂标定](alohamini.md#2-主从臂标定)完成从臂 Home 标定，再启动 Host。ROS 自动读取 Host 的标定，无需复制映射文件；更换同型号机器人时使用新机器的 Host 地址。
+适用 `alohamini2`、`alohamini2pro`、`alohamini2edu`。先按[主从臂标定](alohamini.md#2-主从臂标定)完成从臂 Home 标定，再启动 Host。ROS 自动读取 Host 的标定，无需复制映射文件；更换同型号机器人时使用新机器的 Host 地址。
 
 ```bash
 ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号>
@@ -136,7 +138,7 @@ ros2 run alohamini_validation validate_tf
 
 ## Joy-Con 遥操
 
-适用 `alohamini2`、`alohamini2pro`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
+适用 `alohamini2`、`alohamini2pro`、`alohamini2edu`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
 
 ```bash
 source ~/Alohamini/ros2/env.bash
@@ -299,3 +301,7 @@ ros2 run alohamini_calibration calibrate_hand_eye \
 通过已有控制方式改变手臂姿态，每个姿态稳定后自动采样；须包含多个旋转轴。固定相机使用 `eye_to_hand`：标定板固定在手臂上，采集期间保持相机、底盘与升降不动，并填写对应话题及坐标系。工具按图像时间查询 TF，不自动确认时钟同步或时间戳配置。
 
 候选结果保存在 `intrinsics/`、`extrinsics/`。检查重投影误差、独立姿态下的对齐和实际尺寸后，再将状态标记为 `accepted_` 开头并按上一节安装；内参命名为 `<相机名>.yaml`。不要仅凭求解成功就启用外参。
+
+## EDU 导航
+
+雷达、IMU、建图、定位及自主导航的安装和使用见 [EDU 导航](ros2-navigation.md)。

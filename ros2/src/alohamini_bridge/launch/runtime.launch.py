@@ -19,7 +19,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "robot_model",
                 default_value="alohamini2pro",
-                choices=["alohamini2", "alohamini2pro"],
+                choices=["alohamini2", "alohamini2pro", "alohamini2edu"],
             ),
             DeclareLaunchArgument("enable_cameras", default_value="true"),
             DeclareLaunchArgument("camera_stream_port", default_value="5557"),

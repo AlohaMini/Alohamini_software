@@ -9,6 +9,7 @@ import sys
 
 from alohamini.client import HostClient
 from alohamini.errors import AlohaMiniError
+from alohamini.model import robot_models
 from alohamini.paths import WorkspacePaths
 
 
@@ -143,7 +144,7 @@ def _main(argv: list[str] | None = None) -> int:
         "--robot.robot_model",
         dest="robot_model",
         required=True,
-        choices=("alohamini1", "alohamini2", "alohamini2pro"),
+        choices=robot_models(),
     )
     replayer.add_argument("--episode", "--dataset.episode", dest="episode", type=int, default=0)
     replayer.add_argument("--fps", "--replay.fps", dest="fps", type=float)
@@ -156,7 +157,7 @@ def _main(argv: list[str] | None = None) -> int:
         "--robot.robot_model",
         dest="robot_model",
         required=True,
-        choices=("alohamini1", "alohamini2", "alohamini2pro"),
+        choices=robot_models(),
     )
     policy_source = evaluator.add_mutually_exclusive_group(required=True)
     policy_source.add_argument(
@@ -243,7 +244,7 @@ def _main(argv: list[str] | None = None) -> int:
         "--robot.robot_model",
         dest="robot_model",
         required=True,
-        choices=("alohamini1", "alohamini2", "alohamini2pro"),
+        choices=robot_models(),
     )
     recorder.add_argument("--task", "--dataset.single_task", dest="task", required=True)
     recorder.add_argument("--fps", "--dataset.fps", dest="fps", type=int, default=30)
@@ -339,7 +340,7 @@ def _main(argv: list[str] | None = None) -> int:
         "host", help="启动硬件 Host：使能并回零；启动前支撑双臂、清空升降下降路径"
     )
     host.add_argument(
-        "--robot_model", required=True, choices=("alohamini1", "alohamini2", "alohamini2pro")
+        "--robot_model", required=True, choices=robot_models()
     )
     host.add_argument(
         "--calibration", help="本机标定 JSON；默认取工作目录 calibration/robots/AlohaMiniRobot.json"
@@ -375,7 +376,7 @@ def _main(argv: list[str] | None = None) -> int:
         "--robot.robot_model",
         dest="robot_model",
         required=True,
-        choices=("alohamini1", "alohamini2", "alohamini2pro"),
+        choices=robot_models(),
     )
     teleop.add_argument(
         "--leader_id",

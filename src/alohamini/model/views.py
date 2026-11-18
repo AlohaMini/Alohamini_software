@@ -29,10 +29,14 @@ def attach_planar_base(tree, overlay):
         raise ValueError("Planar-base joint names must be unique")
     parent = root_link(overlay)
     visited = {parent}
-    for index, (joint, kind, axis) in enumerate(zip(
-        joints, ("prismatic", "prismatic", "revolute"), ("1 0 0", "0 1 0", "0 0 1"),
-        strict=True,
-    )):
+    for index, (joint, kind, axis) in enumerate(
+        zip(
+            joints,
+            ("prismatic", "prismatic", "revolute"),
+            ("1 0 0", "0 1 0", "0 0 1"),
+            strict=True,
+        )
+    ):
         if (
             joint.attrib.get("type") != kind
             or joint.find("parent").attrib["link"] != parent
@@ -44,8 +48,10 @@ def attach_planar_base(tree, overlay):
         limit = joint.find("limit")
         values = [float(limit.attrib[k]) for k in ("lower", "upper", "effort", "velocity")]
         if not all(math.isfinite(v) for v in values) or not (
-            values[0] <= 0 <= values[1] and values[0] < values[1]
-            and values[2] > 0 and values[3] > 0
+            values[0] <= 0 <= values[1]
+            and values[0] < values[1]
+            and values[2] > 0
+            and values[3] > 0
         ):
             raise ValueError("Planar-base limits must be finite and include zero")
         parent = joint.find("child").attrib["link"]
@@ -61,6 +67,29 @@ def attach_planar_base(tree, overlay):
 
 
 def derive_tree(tree, view, overlay=None):
+    if view.exclude_joints:
+        joints = {joint.attrib["name"]: joint for joint in tree.findall("joint")}
+        missing = set(view.exclude_joints) - joints.keys()
+        if missing:
+            raise ValueError(f"Unknown excluded joints: {sorted(missing)}")
+        removed = set()
+        pending = [joints[name].find("child").attrib["link"] for name in view.exclude_joints]
+        while pending:
+            parent = pending.pop()
+            if parent in removed:
+                continue
+            removed.add(parent)
+            pending.extend(
+                joint.find("child").attrib["link"]
+                for joint in joints.values()
+                if joint.find("parent").attrib["link"] == parent
+            )
+        for link in tree.findall("link"):
+            if link.attrib["name"] in removed:
+                tree.remove(link)
+        for joint in tree.findall("joint"):
+            if joint.find("child").attrib["link"] in removed:
+                tree.remove(joint)
     if view.root_link is not None:
         links = {link.attrib["name"]: link for link in tree.findall("link")}
         if view.root_link not in links:
@@ -72,7 +101,8 @@ def derive_tree(tree, view, overlay=None):
                 raise ValueError("Cycle in derived-description subtree")
             retained.add(parent)
             pending.extend(
-                j.find("child").attrib["link"] for j in tree.findall("joint")
+                j.find("child").attrib["link"]
+                for j in tree.findall("joint")
                 if j.find("parent").attrib["link"] == parent
             )
         for link in tree.findall("link"):

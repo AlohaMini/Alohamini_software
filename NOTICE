@@ -471,6 +471,17 @@ The retained license is policies/lewm/LICENSE.lewm; source metadata is in
 policies/lewm/SOURCE.json. Distributed regularization and visual-goal control
 use native platform adapters. No pretrained weights are distributed.
 
+The ROS C1 LiDAR and Hiwonder IMU adapters originate from
+AlohaMini/alohamini_lidar_imu at 052b6f9c01935f76ed89a486b046559ce251097c
+(package declarations: BSD-3-Clause). The C1 package retains the Slamtec
+SDK's BSD-2-Clause license in SLAMTEC_SDK_LICENSE and source headers.
+Source metadata is retained in each imported package's SOURCE.json.
+EDU mechanics derive from the platform's Pro model; models/alohamini2edu/
+provenance.json records its baseline and sensor configuration sources.
+The navigation RViz preset adapts the same upstream repository's
+alohamini_bringup/rviz/alohamini_nav.rviz (BSD-3-Clause package declaration).
+Its source revision and adaptations are recorded beside navigation.rviz.
+
 The Xiaomi-Robotics-1 model and Qwen3-VL extensions adapt XiaomiRobotics/
 Xiaomi-Robotics-1 at 0dd7aef8dc87296246aae812a1f59ccb708e5546
 (Apache-2.0, Copyright 2026 Xiaomi Corporation and the Qwen/Hugging Face teams).
@@ -480,6 +491,14 @@ and the Robbyant Team). Native platform data, trainer and checkpoint adapters
 replace the upstream framework wrappers. Retained licenses and full source
 metadata are in policies/xiaomi_robotics1/ and policies/lingbot_vla_v2/.
 No pretrained weights are distributed.
+
+ros2/src/third_party/nav2_rviz_plugins vendors Navigation2 1.1.20 at
+a097086719c88f781aa59788eca29ac6ca5e56db (Apache-2.0 package declaration;
+particle-cloud files also retain BSD-3-Clause notices from Willow Garage and
+Bosch). Source: https://github.com/ros-navigation/navigation2
+Local changes own and join panel workers, bound service waits, deliver status
+updates on the GUI thread and add shutdown regression tests. The package retains
+its upstream license and source headers; SOURCE.json identifies the pinned source.
 
 Native FAST tokenizer fitting follows physical-intelligence/fast at
 ec4d7aa71691cac0b8bed6942be45684db2110f4. It fits only selected training
@@ -564,3 +583,10 @@ by Galaxea. “Galaxea” and related marks are trademarks of Galaxea or its
 affiliates. The complete license, modification notices and source versions
 are in policies/g05/. This project is not endorsed by Galaxea.
 No pretrained weights are distributed.
+
+ros2/vendor/humble/tf2 retains the BSD-3-Clause source headers from
+ros2/geometry2 0.25.24 at 404b7224d623d614f18fa9738dbf1716403d857e.
+The pinned TF core includes the upstream transform callback mutex fix.
+ROS package schemas in nav2_rviz_plugins/schema derive from REP-149,
+which places its specification in the public domain; SOURCE.json records
+the exact source revision.

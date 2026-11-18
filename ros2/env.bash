@@ -48,6 +48,10 @@ _alohamini_ros_environment() {
         return 1
     fi
     export PYTHONNOUSERSITE=1
+    export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+    if [[ "$RMW_IMPLEMENTATION" == rmw_cyclonedds_cpp ]]; then
+        export CYCLONEDDS_URI="${CYCLONEDDS_URI:-file://$workspace/cyclonedds.xml}"
+    fi
     if ! "$CONDA_PREFIX/bin/python" -c '
 import sys
 from pathlib import Path

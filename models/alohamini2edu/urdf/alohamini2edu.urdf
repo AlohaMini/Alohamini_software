@@ -1,0 +1,1593 @@
+<robot name="alohamini2edu_moveit">
+  <material name="white">
+    <color rgba="1 1 1 1" />
+  </material>
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.019611358269245489 0.00022001968931149561 0.31482816421145621" rpy="0 0 0" />
+      <mass value="5.60562" />
+      <inertia ixx="0.61368956183710965" ixy="-2.6794925770876765e-05" ixz="0.037971838620779054" iyy="0.62011642004227219" iyz="0.0011064347335253556" izz="0.067176001152985873" />
+    </inertial>
+  </link>
+  <link name="base_cad_link">
+    <visual name="base_cad_link__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/base_link.STL" scale="1 1 1" />
+      </geometry>
+      <material name="base_cad_link__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="base_cad_link__collision_0">
+      <origin xyz="-0.0012977495789527893 -0.024801187217235565 0.06918119452893734" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.42033715546131134 0.38038010895252228 0.073652837425470352" />
+      </geometry>
+    </collision>
+    <collision name="base_cad_link__collision_1">
+      <origin xyz="1.3187527656555176e-06 -1.430511474609375e-06 0.10893292166292667" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.13222113251686096 0.11458330601453781 0.13986135646700859" />
+      </geometry>
+    </collision>
+    <collision name="base_cad_link__collision_2">
+      <origin xyz="-2.5227665901184082e-05 0.13250009343028069 0.20510473102331161" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.16311508417129517 0.19035167247056961 0.10204775631427765" />
+      </geometry>
+    </collision>
+    <collision name="base_cad_link__collision_3">
+      <origin xyz="-5.6736171245574951e-06 0.051187155768275261 0.1970023550093174" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.1508130207657814 0.21895510330796242 0.25199960917234421" />
+      </geometry>
+    </collision>
+    <collision name="base_cad_link__collision_4">
+      <origin xyz="-2.689659595489502e-06 0.064034325070679188 0.41525159776210785" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.14481131732463837 0.1805181261152029 0.21490135788917542" />
+      </geometry>
+    </collision>
+    <collision name="base_cad_link__collision_5">
+      <origin xyz="4.8048794269561768e-05 0.058210530318319798 0.71530172228813171" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.10184336453676224 0.16887061111629009 0.41500002145767212" />
+      </geometry>
+    </collision>
+    <collision name="base_cad_link__collision_6">
+      <origin xyz="3.9000064134597778e-05 0.057701259851455688 0.95789501070976257" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.090599998831748962 0.25517219305038452 0.33674007654190063" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="base_cad_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 1.5707963267948966" />
+    <parent link="base_link" />
+    <child link="base_cad_link" />
+  </joint>
+  <link name="vertical_link">
+    <inertial>
+      <origin xyz="0.0054566502259265626 -0.043036664118786705 0.4210293129209009" rpy="0 -0 0" />
+      <mass value="1.1246500000000001" />
+      <inertia ixx="0.002114559645612385" ixy="1.6349876068636928e-05" ixz="0.00024640163308205828" iyy="0.014709391539925051" iyz="0.00012751044317775182" izz="0.013214739454462577" />
+    </inertial>
+    <visual name="vertical_link__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/vertical_link.STL" scale="1 1 1" />
+      </geometry>
+      <material name="vertical_link__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="vertical_link__collision_0">
+      <origin xyz="5.437806248664856e-05 -0.037287309532985091 0.39923721551895142" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.14168239384889603 0.063223347533494234 0.14360052347183228" />
+      </geometry>
+    </collision>
+    <collision name="vertical_link__collision_1">
+      <origin xyz="4.8302114009857178e-05 -0.044726436957716942 0.44782501459121704" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.23999999463558197 0.019815001636743546 0.039805829524993896" />
+      </geometry>
+    </collision>
+    <collision name="vertical_link__collision_2">
+      <origin xyz="3.0165538191795349e-05 -0.072884690016508102 0.44590056993545302" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.040647663176059723 0.0079714134335517883 0.039571723500514133" />
+      </geometry>
+    </collision>
+    <collision name="vertical_link__collision_3">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/424aec83c8512829713775a085e273e21738ee7b2d8beddc7f9699f264cbff35.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="vertical_link__collision_4">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ee65836fdf51771e6988ef70297138a37c685871f29196becdb4eb9088341908.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="vertical_move" type="prismatic">
+    <origin xyz="0 0 0.096196" rpy="0 0 0" />
+    <parent link="base_cad_link" />
+    <child link="vertical_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.3" upper="0.3" effort="74.2" velocity="0.05" />
+  </joint>
+  <link name="chest_camera">
+    <visual name="chest_camera__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/chest_camera.STL" scale="1 1 1" />
+      </geometry>
+      <material name="chest_camera__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="chest_camera__collision_0">
+      <origin xyz="8.3819031715399998e-09 9.3132257461499999e-10 0.0073743271641433239" rpy="0 0 0" />
+      <geometry>
+        <box size="0.036968274042024525 0.036000000312938603 0.019109142012908368" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="chest_camera_joint7_dp" type="fixed">
+    <origin xyz="-0.000225761875701821 -0.0690163597583236 0.447985436693376" rpy="1.57079632679491 1.5707963267949 0" />
+    <parent link="vertical_link" />
+    <child link="chest_camera" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="wheel1">
+    <visual name="wheel1__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/indexed/f31785cf8c7de7f73b4b8d8a9972ae0332393e99a06b6ed9e01efc8e199ecd77.obj" scale="1 1 1" />
+      </geometry>
+      <material name="wheel1__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="wheel1__collision_0">
+      <origin xyz="1.17346644402e-06 0 0.025500002872604455" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.063464865931296799" length="0.051002771414019328" />
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="1.17346644402e-06 0 0.025500002872604455" rpy="0 0 0" />
+      <mass value="0.29999999999999999" />
+      <inertia ixx="0.00036711625787357846" ixy="0" ixz="0" iyy="0.00036711625787357846" iyz="0" izz="0.00060416838115162153" />
+    </inertial>
+  </link>
+  <joint name="wheel1_joint" type="continuous">
+    <origin xyz="-0.130229464 0.074533188 0.063355" rpy="3.3411E-05 1.5707 2.618" />
+    <parent link="base_cad_link" />
+    <child link="wheel1" />
+    <axis xyz="-8.7287E-05 0 -1" />
+    <limit effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="wheel2">
+    <visual name="wheel2__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/indexed/21cf45083704f66ad2cbae590a4a61f3fda17dc8646b8909b3ab8638aa803803.obj" scale="1 1 1" />
+      </geometry>
+      <material name="wheel2__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="wheel2__collision_0">
+      <origin xyz="3.72529029846e-09 0 0.025499999327128098" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.063462819907609894" length="0.051000014339570583" />
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="3.72529029846e-09 0 0.025499999327128098" rpy="0 0 0" />
+      <mass value="0.29999999999999999" />
+      <inertia ixx="0.00036708974986283965" ixy="0" ixz="0" iyy="0.00036708974986283965" iyz="0" izz="0.00060412942659385899" />
+    </inertial>
+  </link>
+  <joint name="wheel2_joint" type="continuous">
+    <origin xyz="-0.001402062 -0.149010130 0.063355" rpy="1.5708 1.5708 0" />
+    <parent link="base_cad_link" />
+    <child link="wheel2" />
+    <axis xyz="0 0 -1" />
+    <limit effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="wheel3">
+    <visual name="wheel3__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/indexed/2e09e4ca99f98e7cdc116f74e0a83fe46dce0395baac7be0aa6351e33211eddc.obj" scale="1 1 1" />
+      </geometry>
+      <material name="wheel3__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="wheel3__collision_0">
+      <origin xyz="0 0 0.025499999667456974" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.063462819287683783" length="0.051000013658912831" />
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0.025499999667456974" rpy="0 0 0" />
+      <mass value="0.29999999999999999" />
+      <inertia ixx="0.00036708974222582303" ixy="0" ixz="0" iyy="0.00036708974222582303" iyz="0" izz="0.00060412941479118124" />
+    </inertial>
+  </link>
+  <joint name="wheel3_joint" type="continuous">
+    <origin xyz="0.127692644 0.074396362 0.063355" rpy="-1.5708 0 -1.0472" />
+    <parent link="base_cad_link" />
+    <child link="wheel3" />
+    <axis xyz="0 0 -1" />
+    <limit effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="back_camera">
+    <visual name="back_camera__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/back_camera.STL" scale="1 1 1" />
+      </geometry>
+      <material name="back_camera__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="back_camera__collision_0">
+      <origin xyz="8.3819031715399998e-09 9.3132257461499999e-10 0.0086759919940959662" rpy="0 0 0" />
+      <geometry>
+        <box size="0.036968274042024525 0.036000000312938603 0.019109142071116029" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="back_camera_joint5_dp" type="fixed">
+    <origin xyz="0.00034085 0.16827 1.0972" rpy="-3.1416 -0.63429 1.5708" />
+    <parent link="base_cad_link" />
+    <child link="back_camera" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="front_camera">
+    <visual name="front_camera__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/front_camera.STL" scale="1 1 1" />
+      </geometry>
+      <material name="front_camera__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="front_camera__collision_0">
+      <origin xyz="8.3819031715399998e-09 9.3132257461499999e-10 0.0086829732754267752" rpy="0 0 0" />
+      <geometry>
+        <box size="0.036968274042024525 0.036000000312938603 0.019109141896493046" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_camera_joint6_dp" type="fixed">
+    <origin xyz="0.000309285647814801 -0.0549084504780031 1.10145847792887" rpy="-3.14159265358978 0.78538567812397 1.5707963267949" />
+    <parent link="base_cad_link" />
+    <child link="front_camera" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="left_Base">
+    <inertial>
+      <origin xyz="-3.7199765375194767e-06 0.0043240155593512802 0.043911774045013521" rpy="0 -0 0" />
+      <mass value="0.55751531198373405" />
+      <inertia ixx="0.0004854396512482753" ixy="1.0854637579682238e-07" ixz="-2.1114995911377152e-08" iyy="0.00049450073562005699" iyz="4.4175436373122705e-05" izz="0.00063949402661950521" />
+    </inertial>
+    <visual name="left_Base__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/left_Base.STL" scale="1 1 1" />
+      </geometry>
+      <material name="left_Base__visual_0_material">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision name="left_Base__collision_0">
+      <origin xyz="0 0 0.041255945339798927" rpy="0 -0 0" />
+      <geometry>
+        <cylinder radius="0.040016774088144483" length="0.042611103504896164" />
+      </geometry>
+    </collision>
+    <collision name="left_Base__collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Base__collision_2">
+      <origin xyz="9.6326693892478943e-06 0.047302300383767822 0.042273615021258593" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.04200018011033535 0.026489000220852418 0.067254952155053616" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_base_joint" type="fixed">
+    <origin xyz="0.18726 -0.0599 0.4775" rpy="0 0 0" />
+    <parent link="vertical_link" />
+    <child link="left_Base" />
+  </joint>
+  <link name="left_Rotation_Pitch">
+    <inertial>
+      <origin xyz="-0.0052304495456466831 -0.024737651495172465 0.033642167390655578" rpy="0 -0 0" />
+      <mass value="0.27130668737298408" />
+      <inertia ixx="0.00014469951312445762" ixy="-6.4504788727813988e-06" ixz="1.2245341935491568e-05" iyy="0.00011774008053991558" iyz="3.1533388059888366e-05" izz="0.00010136934956574249" />
+    </inertial>
+    <visual name="left_Rotation_Pitch__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/indexed/76810b7735511d970da06de382088ac803926f2206c77a809866e53322bed3bd.obj" scale="1 1 1" />
+      </geometry>
+      <material name="left_Rotation_Pitch__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_Rotation_Pitch__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/c17e57a686c521d935f73d3acadec43aed5a962af605cf239854438f47b1d9b0.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Rotation_Pitch__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/e8ee94f36768e712af66d5ef800c1e6cfbab75bb1acdacaf9a71e7563c596086.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Rotation_Pitch__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/4a1c2fc60147d7f689da21e37c371032a3210f674e2334fb0dbbfc26af572ac8.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Rotation_Pitch__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/258cc154ae6e3fa15def02821734dd16c47fa2c8238b9de94fc299349bec53b5.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Rotation_Pitch__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3db2141ff90d8aa2b3edad1c2a8c4f54950044a6055052a05df1bf668126e355.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Rotation_Pitch__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/895908605c2cd95c38829bfe78522fe2d7a5f90ac642ce5582c51384e2c7a713.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_shoulder_pan" type="revolute">
+    <origin xyz="0 0 0.062556" rpy="0 0 0" />
+    <parent link="left_Base" />
+    <child link="left_Rotation_Pitch" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-2.196660488252487" upper="2.208932334555513" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="left_Upper_Arm">
+    <inertial>
+      <origin xyz="-0.015706737115734292 0.10020968988860517 -0.0034819003586370268" rpy="0 -0 0" />
+      <mass value="0.33534000000000003" />
+      <inertia ixx="0.00081989813202852342" ixy="0.00012454305544831371" ixz="-1.3433719040218051e-05" iyy="0.00019094514624232512" iyz="4.1276709154137745e-05" izz="0.0007557209833133397" />
+    </inertial>
+    <visual name="left_Upper_Arm__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/indexed/4b017e7c695693186afb4cd22ddf0b76f9a8d82efda2130f0ac6ad95c5be346f.obj" scale="1 1 1" />
+      </geometry>
+      <material name="left_Upper_Arm__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_Upper_Arm__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/57e0a790b8badaf042c76f1496acf996fd6baf5292049a42c5bbd3bcb76903c1.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Upper_Arm__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/d3159c07dd72742293b33d8c2448bfe4d36a4206df7d41c612ca049e89b60edc.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Upper_Arm__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/610240f64c3877d3490662cf54fc2c4405b673bfadfd3fe2466e78933ced47e4.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Upper_Arm__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/e3d69e2a3cb0dcb765de246bdeaaab99909ba755f024cdc832b785151fed86c1.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Upper_Arm__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/177225f19902f7524a128d836525835f8e5dc35520b9a2bba87c1915951bc46f.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Upper_Arm__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/9ac1303d4654d9eda9d49d041768e8e3326ed903d4519eea071f490a12f307f1.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Upper_Arm__collision_6">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/dc630d77a8d5096d47cb6283d8d79a15c023e2ca297da0b0cea581954d6cd2f7.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Upper_Arm__collision_7">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/7557fa4b61f6a68a36ffca789337929de74a5be07abde68b6875c1a40f7d0ad0.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_shoulder_lift" type="revolute">
+    <origin xyz="0 -0.029035 0.058223" rpy="0 1.5708 0" />
+    <parent link="left_Rotation_Pitch" />
+    <child link="left_Upper_Arm" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-3.505146100318774" upper="0.018407769454226" effort="2.21" velocity="2.48" />
+  </joint>
+  <link name="left_Lower_Arm">
+    <inertial>
+      <origin xyz="0.0035750019848305114 -0.10539184936995302 -0.00075630739683424397" rpy="0 -0 0" />
+      <mass value="0.23725331262701596" />
+      <inertia ixx="0.0012826615613324209" ixy="5.0469235726699246e-06" ixz="1.9602938484767709e-07" iyy="0.0001383756429409135" iyz="-2.0490687354318172e-06" izz="0.0011750446838296182" />
+    </inertial>
+    <visual name="left_Lower_Arm__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/left_Lower_Arm.STL" scale="1 1 1" />
+      </geometry>
+      <material name="left_Lower_Arm__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_Lower_Arm__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/bbbd85127f619ed607e9ae933e9c193482aedf02cf6026ce6f3360d5765a3907.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Lower_Arm__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/fdf9c45806b2ebdea840458dad02d25dacc0b3cbcd851be44ec160c095360c82.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Lower_Arm__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/72e9be1cb7f0153a4f29fac7bb0d57c4f697e675afccb9c1661da04dbc843bfc.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Lower_Arm__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/0d47dd55282bc01ebc961707d66d94c3e936e2798b5139dbdb77444017d21075.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Lower_Arm__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/9bc6b99fd7d482aebf4007a5c41eac36dbb4e30262b86f0318e156dc774ad3ae.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Lower_Arm__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/5aac0401ce2a5790990a967c1db0b4f2f78e1bd51ceb4e91467e8838957a4c48.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Lower_Arm__collision_6">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3555c0fe60a965ec8b91c759fd634b064b5788455da3ed346e60458b780baea9.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Lower_Arm__collision_7">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1fc04b2c54d4b2151499cdb04188a8bc8b25a662b179960e18ac8b7def0ed834.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_elbow_flex" type="revolute">
+    <origin xyz="-0.041170749065642 0.128514358904429 0" rpy="0 0 0" />
+    <parent link="left_Upper_Arm" />
+    <child link="left_Lower_Arm" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-0.010737865514856" upper="3.258175193469144" effort="2.21" velocity="2.48" />
+  </joint>
+  <link name="left_Wrist_Pitch_Roll">
+    <inertial>
+      <origin xyz="-0.0039922080217066024 -0.014512610546375168 -0.00087039283698314338" rpy="0 -0 0" />
+      <mass value="0.032229376032531808" />
+      <inertia ixx="1.4769708740415909e-05" ixy="-1.7088551190606935e-06" ixz="7.4652318434360733e-09" iyy="1.4434339311565764e-05" iyz="4.5969593190158211e-07" izz="1.2320848358639469e-05" />
+    </inertial>
+    <visual name="left_Wrist_Pitch_Roll__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/left_Wrist_Pitch_Roll.STL" scale="1 1 1" />
+      </geometry>
+      <material name="left_Wrist_Pitch_Roll__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_Wrist_Pitch_Roll__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/debe0013a453df0cb779a10d259e92e29d41292c6ef148e2c387e14ee82f40cd.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Wrist_Pitch_Roll__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/27afaea55575a8f0aee51d037cee08600e4b5e857660df0efc56141fcae7ef07.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Wrist_Pitch_Roll__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ffc95e709d887db4aa2063dc12f7d88731bf675dcbdf335311e892ba6ef46235.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Wrist_Pitch_Roll__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/7c9fc10651c221928b2f439940b7befcacef54ae45f92fcd8c5fe637e87eac68.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_wrist_flex" type="revolute">
+    <origin xyz="0.00320470342874501 -0.198428485161884 0" rpy="0 0 0" />
+    <parent link="left_Lower_Arm" />
+    <child link="left_Wrist_Pitch_Roll" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.776349752372000" upper="1.524776903158000" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="left_wrist_yaw">
+    <inertial>
+      <origin xyz="-6.1578545540634435e-05 0.026389351308722532 0.0046862775478960584" rpy="0 -0 0" />
+      <mass value="0.22562062396746821" />
+      <inertia ixx="0.00022667716213727238" ixy="2.6646269665816279e-08" ixz="-1.6486522577772962e-07" iyy="0.00017581108674640439" iyz="5.2310513807800423e-05" izz="8.8968106816037439e-05" />
+    </inertial>
+    <visual name="left_wrist_yaw__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/left_wrist_yaw.STL" scale="1 1 1" />
+      </geometry>
+      <material name="left_wrist_yaw__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_wrist_yaw__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/f9010e73c38995195c7420e1a27abab167c8c0e643b91f807ee71ac419284fbc.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_wrist_yaw__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/f6bca89e1b48228ed9e2c19df8f0a39a7e637ba765c90b87b69105431bb164b7.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_wrist_yaw__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/8adbe5366c3215e2f39bfa5c457904a5ea386288e506f613b3a2e545c93fbd92.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_wrist_yaw__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/389061abaf91dd6b8ad6b4afcae01b1dcf311e4d5320430c9bdb06d630df7865.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_wrist_yaw__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1750df191692e5df839b84959b5fdaa2b4633b87106c7cb08e75e9633421c781.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_wrist_yaw__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1dff10015044b302dd36682eb07960acb4fc97f2732d911438634f398329e1c6.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_wrist_yaw_joint" type="revolute">
+    <origin xyz="-0.000915704840558335 -0.0281295188165527 -0.000966380385420608" rpy="3.14159257760848 1.5707963267949 0" />
+    <parent link="left_Wrist_Pitch_Roll" />
+    <child link="left_wrist_yaw" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-1.437339998248976" upper="1.529378845522024" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="left_Fixed_Jaw">
+    <inertial>
+      <origin xyz="0.0011147045082540667 -0.022268166745781571 0.015520852245912629" rpy="0 -0 0" />
+      <mass value="0.16936999999999999" />
+      <inertia ixx="0.00022403264670616858" ixy="1.3822323516760951e-06" ixz="1.064919823414562e-05" iyy="8.6115447092958872e-05" iyz="-5.4841802525757287e-05" izz="0.0001994490986361161" />
+    </inertial>
+    <visual name="left_Fixed_Jaw__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/left_Fixed_Jaw.STL" scale="1 1 1" />
+      </geometry>
+      <material name="left_Fixed_Jaw__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_Fixed_Jaw__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/09a4cd7ca59f035a3bdd6797c94e33f0f9021600fbd50d1d0863045e2174dbb4.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/c28b730d268bb71b189aa717d7f856e514c58d8edf6a617192504f516089ce1d.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/a31da562e54013136d854665fc7192a94d964f7321f9e753ffceb8850f9a50a9.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3c6df4df7d6f16da7e3f348ed2301250a916859c2351047c4f7f348291f35751.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/091a6af8d138d4d3835f6720b00083b74f1c64e739215719aea3ce6461735004.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1754bb796def836465dac9e70cf7e6e02fe0e7e639071b99cea156245748ab56.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_6">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1f8d84cba3910096c47f8e25110b6b85bc58d6f9c4155afbbb70c68c6be5b91b.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_007">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_008">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_009">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_010">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_011">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_012">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_013">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_014">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_015">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_016">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_017">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_018">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Fixed_Jaw__collision_019">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_wrist_roll" type="revolute">
+    <origin xyz="0 0.0609927440831215 -0.0242385261486938" rpy="-1.57079640339869 0 0" />
+    <parent link="left_wrist_yaw" />
+    <child link="left_Fixed_Jaw" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.14159265359" upper="3.14159265359" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="left_Moving_Jaw">
+    <inertial>
+      <origin xyz="-0.0015978597792730797 -0.026062033845103527 0.0034061943178957518" rpy="0 -0 0" />
+      <mass value="0.0209846880162659" />
+      <inertia ixx="1.641406856880122e-05" ixy="-5.4063694131770916e-07" ixz="-1.9050883990145717e-08" iyy="4.7279766006326626e-06" iyz="-2.9956053365456191e-07" izz="1.2640973134097912e-05" />
+    </inertial>
+    <visual name="left_Moving_Jaw__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/left_Moving_Jaw.STL" scale="1 1 1" />
+      </geometry>
+      <material name="left_Moving_Jaw__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_Moving_Jaw__collision_000">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_001">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_002">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_003">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_004">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_005">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_006">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_007">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_008">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_009">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_010">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_011">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_012">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_013">
+      <origin xyz="-0.002588191069662571 0.00081489933654665947 0.029806004837155342" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.015056589618325233 0.018600717186927795 0.0022494606673717499" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_014">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="left_Moving_Jaw__collision_015">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_gripper" type="revolute">
+    <origin xyz="0.02021444438295 0.0033063194616967 0.021614179864005" rpy="-1.5707963267949 0 3.14159265358979" />
+    <parent link="left_Fixed_Jaw" />
+    <child link="left_Moving_Jaw" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.8030294104" upper="0.32" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="left_camera">
+    <visual name="left_camera__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/left_camera.STL" scale="1 1 1" />
+      </geometry>
+      <material name="left_camera__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="left_camera__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/b036471f178a1f0a65542f49aa750871f09555214b8ded7ec1d8eccb8baad8cd.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="left_camera__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/8bbee6e285425b43e7f0458b9c19c2bb00812cc20c150e5549e2b9e5388cda3b.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_camera_joint8" type="fixed">
+    <origin xyz="0.00251113132165192 -0.071341148343549 -0.00430701398654823" rpy="-0.436362675423314 0 0" />
+    <parent link="left_Fixed_Jaw" />
+    <child link="left_camera" />
+    <axis xyz="0 0.906294954903738 0.422645779247862" />
+  </joint>
+  <link name="right_Base">
+    <inertial>
+      <origin xyz="-3.7199765375191985e-06 0.0043240155593512923 0.043911774045013521" rpy="0 -0 0" />
+      <mass value="0.55751531198373405" />
+      <inertia ixx="0.00048543965124827552" ixy="1.0854637579682189e-07" ixz="-2.1114995911378747e-08" iyy="0.00049450073562005699" iyz="4.4175436373122996e-05" izz="0.00063949402661950521" />
+    </inertial>
+    <visual name="right_Base__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/right_Base.STL" scale="1 1 1" />
+      </geometry>
+      <material name="right_Base__visual_0_material">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision name="right_Base__collision_0">
+      <origin xyz="0 0 0.041255945339798927" rpy="0 -0 0" />
+      <geometry>
+        <cylinder radius="0.040016774088144483" length="0.042611103504896164" />
+      </geometry>
+    </collision>
+    <collision name="right_Base__collision_1">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/bb64bb633467637722aa5041f2a91fe463d9f1c26c77ca97eb60561af005d3b8.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Base__collision_2">
+      <origin xyz="9.6326693892478943e-06 0.047302300383767822 0.042273615021258593" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.04200018011033535 0.026489000220852418 0.067254952155053616" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_base_joint" type="fixed">
+    <origin xyz="-0.18726 -0.0599 0.4775" rpy="0 0 0" />
+    <parent link="vertical_link" />
+    <child link="right_Base" />
+  </joint>
+  <link name="right_Rotation_Pitch">
+    <inertial>
+      <origin xyz="-0.0052304495456466892 -0.024737651495172458 0.033642167390655578" rpy="0 -0 0" />
+      <mass value="0.27130668737298408" />
+      <inertia ixx="0.00014469951312445762" ixy="-6.4504788727814107e-06" ixz="1.2245341935491564e-05" iyy="0.00011774008053991558" iyz="3.1533388059888366e-05" izz="0.00010136934956574255" />
+    </inertial>
+    <visual name="right_Rotation_Pitch__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/indexed/76810b7735511d970da06de382088ac803926f2206c77a809866e53322bed3bd.obj" scale="1 1 1" />
+      </geometry>
+      <material name="right_Rotation_Pitch__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_Rotation_Pitch__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/c17e57a686c521d935f73d3acadec43aed5a962af605cf239854438f47b1d9b0.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Rotation_Pitch__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/e8ee94f36768e712af66d5ef800c1e6cfbab75bb1acdacaf9a71e7563c596086.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Rotation_Pitch__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/4a1c2fc60147d7f689da21e37c371032a3210f674e2334fb0dbbfc26af572ac8.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Rotation_Pitch__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/258cc154ae6e3fa15def02821734dd16c47fa2c8238b9de94fc299349bec53b5.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Rotation_Pitch__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3db2141ff90d8aa2b3edad1c2a8c4f54950044a6055052a05df1bf668126e355.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Rotation_Pitch__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/895908605c2cd95c38829bfe78522fe2d7a5f90ac642ce5582c51384e2c7a713.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_shoulder_pan" type="revolute">
+    <origin xyz="0 0 0.062556" rpy="0 0 0" />
+    <parent link="right_Base" />
+    <child link="right_Rotation_Pitch" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-2.219670200070399" upper="2.184388641949601" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="right_Upper_Arm">
+    <inertial>
+      <origin xyz="-0.015706737115734299 0.10020968988860519 -0.0034819003586370216" rpy="0 -0 0" />
+      <mass value="0.33534000000000003" />
+      <inertia ixx="0.00081989813202852321" ixy="0.00012454305544831338" ixz="-1.3433719040218027e-05" iyy="0.00019094514624232487" iyz="4.1276709154137799e-05" izz="0.00075572098331334013" />
+    </inertial>
+    <visual name="right_Upper_Arm__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/indexed/4b017e7c695693186afb4cd22ddf0b76f9a8d82efda2130f0ac6ad95c5be346f.obj" scale="1 1 1" />
+      </geometry>
+      <material name="right_Upper_Arm__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_Upper_Arm__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/57e0a790b8badaf042c76f1496acf996fd6baf5292049a42c5bbd3bcb76903c1.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Upper_Arm__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/d3159c07dd72742293b33d8c2448bfe4d36a4206df7d41c612ca049e89b60edc.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Upper_Arm__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/610240f64c3877d3490662cf54fc2c4405b673bfadfd3fe2466e78933ced47e4.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Upper_Arm__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/e3d69e2a3cb0dcb765de246bdeaaab99909ba755f024cdc832b785151fed86c1.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Upper_Arm__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/177225f19902f7524a128d836525835f8e5dc35520b9a2bba87c1915951bc46f.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Upper_Arm__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/9ac1303d4654d9eda9d49d041768e8e3326ed903d4519eea071f490a12f307f1.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Upper_Arm__collision_6">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/dc630d77a8d5096d47cb6283d8d79a15c023e2ca297da0b0cea581954d6cd2f7.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Upper_Arm__collision_7">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/7557fa4b61f6a68a36ffca789337929de74a5be07abde68b6875c1a40f7d0ad0.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_shoulder_lift" type="revolute">
+    <origin xyz="0 -0.029035 0.058223" rpy="0 1.5708 0" />
+    <parent link="right_Rotation_Pitch" />
+    <child link="right_Upper_Arm" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-3.482136388500722" upper="0.009203884727279" effort="2.21" velocity="2.48" />
+  </joint>
+  <link name="right_Lower_Arm">
+    <inertial>
+      <origin xyz="0.003575001984830527 -0.10539184936995301 -0.00075630739683424483" rpy="0 -0 0" />
+      <mass value="0.23725331262701596" />
+      <inertia ixx="0.0012826615613324213" ixy="5.0469235726698297e-06" ixz="1.9602938484768588e-07" iyy="0.00013837564294091355" iyz="-2.0490687354318184e-06" izz="0.0011750446838296185" />
+    </inertial>
+    <visual name="right_Lower_Arm__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/right_Lower_Arm.STL" scale="1 1 1" />
+      </geometry>
+      <material name="right_Lower_Arm__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_Lower_Arm__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/bbbd85127f619ed607e9ae933e9c193482aedf02cf6026ce6f3360d5765a3907.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Lower_Arm__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/fdf9c45806b2ebdea840458dad02d25dacc0b3cbcd851be44ec160c095360c82.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Lower_Arm__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/72e9be1cb7f0153a4f29fac7bb0d57c4f697e675afccb9c1661da04dbc843bfc.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Lower_Arm__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/0d47dd55282bc01ebc961707d66d94c3e936e2798b5139dbdb77444017d21075.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Lower_Arm__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/9bc6b99fd7d482aebf4007a5c41eac36dbb4e30262b86f0318e156dc774ad3ae.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Lower_Arm__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/5aac0401ce2a5790990a967c1db0b4f2f78e1bd51ceb4e91467e8838957a4c48.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Lower_Arm__collision_6">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3555c0fe60a965ec8b91c759fd634b064b5788455da3ed346e60458b780baea9.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Lower_Arm__collision_7">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1fc04b2c54d4b2151499cdb04188a8bc8b25a662b179960e18ac8b7def0ed834.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_elbow_flex" type="revolute">
+    <origin xyz="-0.041170749065642 0.128514358904429 0" rpy="0 0 0" />
+    <parent link="right_Upper_Arm" />
+    <child link="right_Lower_Arm" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-0.012271846303223" upper="3.330272290499778" effort="2.21" velocity="2.48" />
+  </joint>
+  <link name="right_Wrist_Pitch_Roll">
+    <inertial>
+      <origin xyz="-0.0039922080217066388 -0.014512610546375147 -0.00087039283698314316" rpy="0 -0 0" />
+      <mass value="0.032229376032531808" />
+      <inertia ixx="1.4769708740415886e-05" ixy="-1.7088551190606846e-06" ixz="7.4652318434353537e-09" iyy="1.4434339311565765e-05" iyz="4.5969593190158137e-07" izz="1.2320848358639476e-05" />
+    </inertial>
+    <visual name="right_Wrist_Pitch_Roll__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/right_Wrist_Pitch_Roll.STL" scale="1 1 1" />
+      </geometry>
+      <material name="right_Wrist_Pitch_Roll__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_Wrist_Pitch_Roll__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/debe0013a453df0cb779a10d259e92e29d41292c6ef148e2c387e14ee82f40cd.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Wrist_Pitch_Roll__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/27afaea55575a8f0aee51d037cee08600e4b5e857660df0efc56141fcae7ef07.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Wrist_Pitch_Roll__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ffc95e709d887db4aa2063dc12f7d88731bf675dcbdf335311e892ba6ef46235.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Wrist_Pitch_Roll__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/7c9fc10651c221928b2f439940b7befcacef54ae45f92fcd8c5fe637e87eac68.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_wrist_flex" type="revolute">
+    <origin xyz="0.00320470342874501 -0.198428485161884 0" rpy="0 0 0" />
+    <parent link="right_Lower_Arm" />
+    <child link="right_Wrist_Pitch_Roll" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.669204307772067" upper="1.582834962545933" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="right_wrist_yaw">
+    <inertial>
+      <origin xyz="-6.1578545540637647e-05 0.026389351308722532 0.0046862775478960618" rpy="0 -0 0" />
+      <mass value="0.22562062396746821" />
+      <inertia ixx="0.00022667716213727257" ixy="2.6646269665806154e-08" ixz="-1.6486522577775665e-07" iyy="0.00017581108674640449" iyz="5.2310513807800389e-05" izz="8.896810681603748e-05" />
+    </inertial>
+    <visual name="right_wrist_yaw__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/right_wrist_yaw.STL" scale="1 1 1" />
+      </geometry>
+      <material name="right_wrist_yaw__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_wrist_yaw__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/f9010e73c38995195c7420e1a27abab167c8c0e643b91f807ee71ac419284fbc.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_wrist_yaw__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/f6bca89e1b48228ed9e2c19df8f0a39a7e637ba765c90b87b69105431bb164b7.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_wrist_yaw__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/8adbe5366c3215e2f39bfa5c457904a5ea386288e506f613b3a2e545c93fbd92.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_wrist_yaw__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/389061abaf91dd6b8ad6b4afcae01b1dcf311e4d5320430c9bdb06d630df7865.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_wrist_yaw__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1750df191692e5df839b84959b5fdaa2b4633b87106c7cb08e75e9633421c781.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_wrist_yaw__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1dff10015044b302dd36682eb07960acb4fc97f2732d911438634f398329e1c6.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_wrist_yaw_joint" type="revolute">
+    <origin xyz="-0.000915704840558335 -0.0281295188165527 -0.000966380385420608" rpy="3.14159257760848 1.5707963267949 0" />
+    <parent link="right_Wrist_Pitch_Roll" />
+    <child link="right_wrist_yaw" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-1.477223498733657" upper="1.475689517946343" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="right_Fixed_Jaw">
+    <inertial>
+      <origin xyz="0.0011147045082541083 -0.022268166745781571 0.015520852245912627" rpy="0 -0 0" />
+      <mass value="0.16936999999999999" />
+      <inertia ixx="0.00022403264670616864" ixy="1.3822323516763611e-06" ixz="1.0649198234145715e-05" iyy="8.6115447092958831e-05" iyz="-5.4841802525757246e-05" izz="0.00019944909863611618" />
+    </inertial>
+    <visual name="right_Fixed_Jaw__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/right_Fixed_Jaw.STL" scale="1 1 1" />
+      </geometry>
+      <material name="right_Fixed_Jaw__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_Fixed_Jaw__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/09a4cd7ca59f035a3bdd6797c94e33f0f9021600fbd50d1d0863045e2174dbb4.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/c28b730d268bb71b189aa717d7f856e514c58d8edf6a617192504f516089ce1d.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_2">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/a31da562e54013136d854665fc7192a94d964f7321f9e753ffceb8850f9a50a9.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_3">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3c6df4df7d6f16da7e3f348ed2301250a916859c2351047c4f7f348291f35751.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_4">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/091a6af8d138d4d3835f6720b00083b74f1c64e739215719aea3ce6461735004.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_5">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1754bb796def836465dac9e70cf7e6e02fe0e7e639071b99cea156245748ab56.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_6">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/1f8d84cba3910096c47f8e25110b6b85bc58d6f9c4155afbbb70c68c6be5b91b.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_007">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/d96b332fe66ce762036cd3b15ecdf6dbe0fb3717db02e95baa6c75b806e41dc2.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_008">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/c28512439244a70fc97f4e66026235c28e975ad4cb819ab0e12acf139a333c9f.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_009">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/54f5f9a011cf58895c9e8fd04c151d4635f3ef4ec29d748090281feb7b0ceefe.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_010">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/5afc70b1dd968795933c5e40e31b7628499eedba37f2183bb7dcab0c1204b7b9.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_011">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/de33a556ea1a9ddab1a3abe8d0f0001a3d7286f12807d1008bb6b13a04b40549.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_012">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/e1d768cda3fc81cb6ded8d7a72f616d56d5b948321237f1b97fa918a3e5a4ab6.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_013">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/4893d7dc3d05d4da32320c633cfdcc709aa8195f666907d16e3e77f038bf5ed8.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_014">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/6368d6e1a655b4326229d33b51b3d41b5acf1ae3ef0c2b45cc804e6f7a2d1f57.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_015">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/bc6c2414c5617641b1e824d185bae56173b51a7d93ccc9ec5c2cff7db1adf8b3.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_016">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/30b694fa656d3f8f5cce918caca91769232f91652881f71e19b27a0fd21c4e46.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_017">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/723b0e2d8c21695f5aba64f3a55629e52df013e2a79ea99dc5d7e2c6ffec8461.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_018">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/19ad3fe3869c7c21cadf1550abf2df92de8be0f8e79a9949d6a8094f43604db8.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Fixed_Jaw__collision_019">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3130770340cd553dcae9bcf875a3b693ee8fbb7480418ad3c5188e376174a338.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_wrist_roll" type="revolute">
+    <origin xyz="0 0.0609927440831215 -0.0242385261486938" rpy="-1.57079640339869 0 0" />
+    <parent link="right_wrist_yaw" />
+    <child link="right_Fixed_Jaw" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.14159265359" upper="3.14159265359" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="right_Moving_Jaw">
+    <inertial>
+      <origin xyz="-0.0015978597792730797 -0.026062033845103534 0.00340619431789577" rpy="0 -0 0" />
+      <mass value="0.0209846880162659" />
+      <inertia ixx="1.6414068568801203e-05" ixy="-5.4063694131770927e-07" ixz="-1.9050883990146452e-08" iyy="4.7279766006326651e-06" iyz="-2.9956053365457122e-07" izz="1.2640973134097905e-05" />
+    </inertial>
+    <visual name="right_Moving_Jaw__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/right_Moving_Jaw.STL" scale="1 1 1" />
+      </geometry>
+      <material name="right_Moving_Jaw__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_Moving_Jaw__collision_000">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ccf5fe2dad445c05143da0756aaaffd255ea6c620975ab75a3408b59c0f7da3b.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_001">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/644e398d0933deac40c06200640aa6dc9083373e2eaa9e98ce52866af33a623c.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_002">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/805a53375fa40236bd8905ac081aee4f237d7bed7c68d0bfaa71e6cd300b7b3c.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_003">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/4544306e87f11094483f577abf0deca580003378354e7e6ffe541fa9e2cfb954.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_004">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/b270a4dbca241d44196bcff48bfb30d7d952e9334602e272877869ce9fe21749.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_005">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ba404bd97466b03d8928020ffb4efbd3d2218bf45db1e970a440ae692787fce0.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_006">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/73de8caaac6bf5f6de63ceb84f0f0621d17935ba48bf2e9dbc5665890ce78bdf.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_007">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/d958faa7c99cee71d961872f00103ff4d1efb91f6326d3fb630324b1a5d00165.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_008">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/3e403d8101e57b6a63a71f51acee90c807d084e8fc056927154eba30720a4e50.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_009">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/7cae811d04b1831070e5213565ac689bdcad52ae1d5e42b588b83f676d2b5c5f.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_010">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/b9f7a2d5c8d20d9e5da734a05fe4a3848df2017a6450eb4eff0d95141c33e35f.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_011">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/ae5a0922b481369602f69e3588e63bc8b5a9414f66317c4789619ffa928e51f0.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_012">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/fca33c2e1d99044e5f162ff50755d2a962a2d09d661a71d36dbd584f4ebf107b.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_013">
+      <origin xyz="-0.002588191069662571 0.00081489933654665947 0.029806004837155342" rpy="0 -0 0" />
+      <geometry>
+        <box size="0.015056589618325233 0.018600717186927795 0.0022494606673717499" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_014">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/176f6fdbc01cd5e67073db732cdf7b4f0f02216e51d14585888c31e72cd4ca28.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+    <collision name="right_Moving_Jaw__collision_015">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/74f59897a61ee7c19cbb12b23a33335eea735909e5bafa9135fde16454c980bb.obj" scale="0.001 0.001 0.001" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_gripper" type="revolute">
+    <origin xyz="0.02021444438295 0.0033063194616967 0.021614179864005" rpy="-1.5707963267949 0 3.14159265358979" />
+    <parent link="right_Fixed_Jaw" />
+    <child link="right_Moving_Jaw" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.8030294104" upper="0.32" effort="1.57" velocity="4.2" />
+  </joint>
+  <link name="right_camera">
+    <visual name="right_camera__visual_0">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/visual/right_camera.STL" scale="1 1 1" />
+      </geometry>
+      <material name="right_camera__visual_0_material">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision name="right_camera__collision_0">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/b036471f178a1f0a65542f49aa750871f09555214b8ded7ec1d8eccb8baad8cd.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+    <collision name="right_camera__collision_1">
+      <origin xyz="0 0 0" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="../meshes/collision/structural/8bbee6e285425b43e7f0458b9c19c2bb00812cc20c150e5549e2b9e5388cda3b.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_camera_joint8" type="fixed">
+    <origin xyz="0.00251113132165192 -0.071341148343549 -0.00430701398654823" rpy="-0.436362675423314 0 0" />
+    <parent link="right_Fixed_Jaw" />
+    <child link="right_camera" />
+    <axis xyz="0 0.906294954903738 0.422645779247862" />
+  </joint>
+  <link name="left_tcp" />
+  <joint name="left_tcp_joint" type="fixed">
+    <origin xyz="-0.004 0.00126 0.09999" rpy="-1.57079632679 -1.57079632679 0" />
+    <parent link="left_Fixed_Jaw" />
+    <child link="left_tcp" />
+  </joint>
+  <link name="right_tcp" />
+  <joint name="right_tcp_joint" type="fixed">
+    <origin xyz="-0.004 0.00126 0.09999" rpy="-1.57079632679 -1.57079632679 0" />
+    <parent link="right_Fixed_Jaw" />
+    <child link="right_tcp" />
+  </joint>
+  <mujoco>
+    <compiler strippath="false" discardvisual="false" fusestatic="false" inertiafromgeom="false" angle="radian" autolimits="true" />
+    <option timestep="0.001" integrator="implicitfast" gravity="0 0 -9.8066499999999994" />
+  </mujoco>
+  <link name="lidar_housing">
+    <visual>
+      <geometry>
+        <box size="0.056 0.056 0.042" />
+      </geometry>
+      <material name="lidar_black">
+        <color rgba="0.08 0.08 0.08 1" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.056 0.056 0.042" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.11" />
+      <inertia ixx="4.4916666666666677e-05" iyy="4.4916666666666677e-05" izz="5.749333333333334e-05" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+  </link>
+  <joint name="lidar_housing_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="lidar_housing" />
+    <origin xyz="0.2 0.0 0.11084999999999999" rpy="0.0 0.0 3.141592653589793" />
+  </joint>
+</robot>

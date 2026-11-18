@@ -31,3 +31,14 @@ dependencies:
   - ros-jazzy-diagnostic-msgs
   - ros-jazzy-joint-state-publisher
   - ros-jazzy-tf2-ros
+  - pyserial
+  - ros-jazzy-nav2-bringup
+  - ros-jazzy-slam-toolbox
+  - ros-jazzy-robot-localization
+  - ros-jazzy-rosbag2-py
+  - ros-jazzy-rosbag2-transport
+  - ros-jazzy-ros2bag
+  - ros-jazzy-rosbag2-storage-default-plugins
+  - ros-jazzy-compressed-image-transport
+  - ros-jazzy-rmw-cyclonedds-cpp
+  - python-xlib

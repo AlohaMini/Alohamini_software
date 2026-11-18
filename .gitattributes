@@ -1,0 +1,2 @@
+# Keep the original formatting of upstream LinearMath sources.
+ros2/vendor/humble/tf2/include/tf2/LinearMath/* -whitespace

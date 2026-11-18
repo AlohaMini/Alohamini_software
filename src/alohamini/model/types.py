@@ -24,6 +24,7 @@ class DescriptionView:
     overlay: str | None = None
     root_link: str | None = None
     geometry: bool = True
+    exclude_joints: tuple[str, ...] = ()
 
 
 def asset_path(directory: Path, relative: str) -> Path:
@@ -90,7 +91,8 @@ class RobotModel:
         """Build an independent tree from a source and a declared nonphysical overlay."""
         sources = (
             {path: path.read_bytes() for path in self.description_sources(name)}
-            if _sources is None else _sources
+            if _sources is None
+            else _sources
         )
         source = self.description_source_path(name)
         tree = ET.fromstring(sources[source])
