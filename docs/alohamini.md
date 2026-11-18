@@ -174,6 +174,7 @@ alohamini record \
 | 参数 | 用途 |
 | --- | --- |
 | `--video-encoder nvenc` | 使用 NVIDIA GPU 编码 H.264，需驱动和 PyAV NVENC 支持；默认 `cpu` |
+| `--video-encoder videotoolbox` | macOS Apple VideoToolbox 硬件编码，不可用时回退 CPU |
 | `--no-background-video-encoding` | 关闭后台编码，默认开启 |
 | `--video-encoding-workers 2` | 限制同时编码的相机数量，默认按启用相机数 |
 | `--video-encoding-memory-mib 2048` | 编码子进程的内存限额（MiB）；不包含整个录制程序或 GPU 显存 |

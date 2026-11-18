@@ -245,9 +245,9 @@ tail -f ~/Alohamini_workspace/runs/act_01/metrics.jsonl
 未指定时沿用对应训练设置，worker 为 0 时关闭多进程预取。
 ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比较。
 
-未指定视频后端时，训练器检测到已安装 TorchCodec 就使用它，否则使用 PyAV。
+未指定视频后端时，训练器优先使用可加载的 TorchCodec，原生库加载失败时选择 PyAV；实际选择随训练配置保存。
 命令行或配置中显式指定的后端（包括 checkpoint 保存的设置）优先于自动选择；
-可通过 `--video_backend=pyav` 切换到 PyAV。后端加载或解码失败时直接报错，不自动切换。
+可通过 `--video_backend=pyav` 选择 PyAV。显式指定后端时按原设置运行；读取过程中的加载或解码错误直接报出。
 视频解码器使用每个 worker 独立的有界 LRU 缓存，淘汰时关闭解码器及文件；
 `--video_cache_size=0` 表示逐次打开、读取和关闭。缓存上限不保证底层库内存始终有界。
 需要调整读取性能时，可设置 `--video_backend=pyav|torchcodec`、`--camera_workers`、

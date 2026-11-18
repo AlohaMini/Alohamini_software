@@ -14,8 +14,11 @@ python env/dependencies.py refresh --group models --report /tmp/dependency-chang
 
 指定分组只更新该组及属于该组的间接依赖，其他组保持锁定；不自动降级或跨主版本。需要联动迁移多个组时，先显式修改项目声明或部署约束，再运行不带 `--group` 的 `refresh` 并执行回归。
 
+macOS ARM64 锁随 `refresh` 更新；单独重新解析使用 `python env/dependencies.py mac-lock`。
+
 ## GitHub Actions
 
+- `macOS native compatibility`：Mac 分支、main 和相关 PR 运行；验证原生依赖、串口、通信、缓存、数据处理、视频和训练，上传分项日志、JSON 与 JUnit 报告。MPS 和 VideoToolbox 硬件测试在能力可用时执行。
 - `Dependency validation`：相关 PR、main 提交及手动触发；检查清单，在新建 Conda 环境中安装 CPU 对应版本，运行算法、checkpoint、续训、精度和分布式验证回归；另在 x86_64、ARM64 runner 安装 Host 锁并检查串口库、图像及进程内通信。CPU 锁定文件仅作为 CI 产物，不替换 CUDA 部署锁。
 - `Dependency update candidates`：每季度首日（1、4、7、10 月 1 日）03:17 UTC，也可手动选择分组；只运行所选组，生成草稿 PR 并触发候选提交的 CPU、Host 检查。候选生成成功不代表兼容检查通过，检查入口见运行摘要，测试摘要列出失败用例。PR 记录版本差异，运行产物保留 30 天。
 - Dependabot：每季度检查 GitHub Actions 版本，同组更新合并为一个 PR。

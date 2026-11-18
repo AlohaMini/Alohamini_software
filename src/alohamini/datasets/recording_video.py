@@ -16,10 +16,12 @@ import threading
 import time
 from pathlib import Path
 
+from alohamini.datasets.encoding_process import resident_bytes, watch_parent
+
 
 def validate_video_options(encoder, background, memory_mib):
-    if encoder not in ("cpu", "nvenc"):
-        raise ValueError("Video encoder must be cpu or nvenc")
+    if encoder not in ("cpu", "nvenc", "videotoolbox"):
+        raise ValueError("Video encoder must be cpu, nvenc or videotoolbox")
     if type(background) is not bool:
         raise ValueError("background_video_encoding must be a bool")
     if type(memory_mib) is not int or memory_mib < 256:
@@ -39,7 +41,11 @@ def encoder_settings(encoder):
             "bf": "0",
             "gpu": "0",
         }
-    raise ValueError("Video encoder must be cpu or nvenc")
+    if encoder == "videotoolbox":
+        return "h264_videotoolbox", {
+            "b": "8000000", "g": "2", "bf": "0", "allow_sw": "0", "realtime": "1",
+        }
+    raise ValueError("Video encoder must be cpu, nvenc or videotoolbox")
 
 
 def _write(path, value):
@@ -59,6 +65,7 @@ class RecordingVideoEncoder:
         self.process = None
         self._stop = threading.Event()
         self._monitor = None
+        self._parent_pipe = None
         self._reason = None
         self._warned = False
         self._memory_bytes = memory_mib * 1024**2
@@ -73,7 +80,6 @@ class RecordingVideoEncoder:
             profile=profile,
             parent_pid=os.getpid(),
         )
-        _write(self.directory / "config.json", config)
         env = os.environ.copy()
         for key in (
             "OPENBLAS_NUM_THREADS",
@@ -84,7 +90,11 @@ class RecordingVideoEncoder:
             env[key] = "1"
         # Also work from an uninstalled checkout and under tests using PYTHONPATH.
         env["PYTHONPATH"] = os.pathsep.join(str(p) for p in sys.path if p)
+        parent_read = None
         try:
+            parent_read, self._parent_pipe = os.pipe()
+            config["parent_fd"] = parent_read
+            _write(self.directory / "config.json", config)
             with (self.directory / "worker.log").open("wb") as log:
                 self.process = subprocess.Popen(
                     [sys.executable, "-m", __name__, str(self.directory / "config.json")],
@@ -95,6 +105,7 @@ class RecordingVideoEncoder:
                     # Terminal Ctrl+C belongs to the recorder. Its cleanup
                     # publishes finished.json so the encoder can drain normally.
                     start_new_session=True,
+                    pass_fds=(parent_read,),
                 )
             self._monitor = threading.Thread(
                 target=self._watch, name="AlohaMiniVideoMemory", daemon=True
@@ -104,6 +115,9 @@ class RecordingVideoEncoder:
             self._reason = f"could not start encoder: {exc}"
             self.cancel()
             self._warning()
+        finally:
+            if parent_read is not None:
+                os.close(parent_read)
 
     def _warning(self):
         if not self._warned:
@@ -119,18 +133,19 @@ class RecordingVideoEncoder:
             if self.process.poll() is not None:
                 return
             try:
-                status = Path(f"/proc/{self.process.pid}/status").read_text()
-                rss = next(
-                    int(s.split()[1]) * 1024 for s in status.splitlines() if s.startswith("VmRSS:")
-                )
+                rss = resident_bytes(self.process.pid)
                 if rss > self._memory_bytes:
                     self._reason = "encoder exceeded its RAM budget"
                     self.process.kill()
                     self._warning()
                     return
-            except (OSError, StopIteration):
-                # The kernel DATA limit remains active if /proc is unavailable.
-                continue
+            except (OSError, ValueError) as exc:
+                if self.process.poll() is not None:
+                    return
+                self._reason = f"encoder memory monitoring unavailable: {exc}"
+                self.process.kill()
+                self._warning()
+                return
 
     def finish(self, length, references):
         """Drain disk backlog after capture, returning only a complete matching result."""
@@ -169,6 +184,9 @@ class RecordingVideoEncoder:
     def cancel(self):
         """Stop readers/writers before deleting or moving the pending directory."""
         self._stop.set()
+        if self._parent_pipe is not None:
+            os.close(self._parent_pipe)
+            self._parent_pipe = None
         if self.process is not None and self.process.poll() is None:
             self.process.terminate()
             try:
@@ -266,11 +284,14 @@ def _encode_camera(episode, camera, config, encoder):
             width=shape[1],
             height=shape[0],
             threads=_ENCODER_THREADS,
-            preset=options["preset"],
             gop=2,
             wall_s=time.perf_counter() - started,
         )
-        detail["crf" if encoder == "cpu" else "qp"] = 18
+        if encoder == "videotoolbox":
+            detail["bit_rate"] = int(options["b"])
+        else:
+            detail["preset"] = options["preset"]
+            detail["crf" if encoder == "cpu" else "qp"] = 18
     return camera, dict(
         frames=count, shape=shape, references_sha256=digest.hexdigest(), timings=detail
     )
@@ -287,6 +308,7 @@ def _worker(config_path):
     directory, episode = config_path.parent, config_path.parent.parent
     try:
         config = json.loads(config_path.read_text())
+        watch_parent(config["parent_fd"], config["parent_pid"])
         if sys.platform.startswith("linux"):
             # Do not leave an orphan encoder writing after a crashed recorder.
             if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM, 0, 0, 0):
@@ -296,15 +318,16 @@ def _worker(config_path):
         budget = config["memory_mib"] * 1024**2
         # DATA bounds writable allocations without blocking CUDA's large virtual
         # address reservations. RLIMIT_RSS is not enforced on modern Linux.
-        _, hard = resource.getrlimit(resource.RLIMIT_DATA)
-        budget = budget if hard == resource.RLIM_INFINITY else min(budget, hard)
-        resource.setrlimit(resource.RLIMIT_DATA, (budget, budget))
+        if sys.platform.startswith("linux"):
+            _, hard = resource.getrlimit(resource.RLIMIT_DATA)
+            budget = budget if hard == resource.RLIM_INFINITY else min(budget, hard)
+            resource.setrlimit(resource.RLIMIT_DATA, (budget, budget))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         os.nice(5)
         from alohamini.datasets.video import _encode_frames
 
         encoder, warning = config["encoder"], None
-        if encoder == "nvenc":
+        if encoder != "cpu":
             import av
             import numpy as np
 
@@ -325,7 +348,8 @@ def _worker(config_path):
                 )
             except Exception as exc:
                 encoder = "cpu"
-                warning = f"NVENC unavailable ({type(exc).__name__}: {exc}); using CPU H.264."
+                label = "NVENC" if config["encoder"] == "nvenc" else "VideoToolbox"
+                warning = f"{label} unavailable ({type(exc).__name__}: {exc}); using CPU H.264."
             finally:
                 probe.unlink(missing_ok=True)
         (episode / "videos").mkdir(exist_ok=True)

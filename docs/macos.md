@@ -185,6 +185,8 @@ alohamini record \
 
 默认 30 Hz 数采，使用 CPU 编码 H.264；加 `--display_data` 开启预览。`--video-encoding-workers 2` 可限制同时编码的相机数量。
 
+Apple Silicon 可加 `--video-encoder videotoolbox` 使用硬件编码，每路目标码率为 8 Mbit/s。编码器不可用时回退 CPU，保留帧数与时间顺序。硬件编码与 CPU 编码的像素和文件大小可能不同。
+
 | 按键 | 操作 |
 | --- | --- |
 | 右方向键 | 提前结束当前阶段 |
@@ -248,3 +250,23 @@ python examples/debug/test_cv.py --camera 0
 ```
 
 首次访问时允许终端或应用使用摄像头。Mac 使用数字索引，插拔或重启后重新核对索引；预览图片保存到工作目录的 `logs/debug/`。机器人相机通过 Ubuntu Host 读取。
+
+
+## 10. 安装与流程验证
+
+在已安装的 PC 环境中运行：
+
+```bash
+python env/verify_pc.py --device mps
+python env/macos_validation.py
+```
+
+完整验证覆盖通信、缓存、数据编辑与恢复、视频编码和训练续训，报告保存在工作目录的 `logs/macos-validation/`。每次运行使用独立子目录，包含 `report.json`、分项日志和 JUnit XML；硬件不可用的项目记录为跳过。
+
+需要同时检查 Ubuntu Host 的状态与图像连接时：
+
+```bash
+python env/macos_validation.py --host <机器人_IP> --model alohamini2pro
+```
+
+该连接检查只读取状态和图像。仅验证 Intel Mac 串口环境时，先安装 `pytest==8.4.2`，再运行 `python env/macos_validation.py --sections serial`。

@@ -1,10 +1,14 @@
 """Check PC development dependencies without downloading models or opening robot devices."""
 
+import argparse
 import tempfile
 from pathlib import Path
 
 
-def main() -> None:
+def main(argv=None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
+    args = parser.parse_args(argv)
     import av
     import cv2
     import numpy as np
@@ -12,13 +16,21 @@ def main() -> None:
     import pyarrow.parquet as pq
     import torch
     import torchvision
-    from torchcodec.decoders import VideoDecoder
 
     import alohamini
+    from alohamini.learning.loading import resolve_data_pipeline
 
-    if not torch.cuda.is_available():
+    selected = args.device
+    if selected == "auto":
+        selected = (
+            "cuda" if torch.cuda.is_available()
+            else "mps" if torch.backends.mps.is_available() else "cpu"
+        )
+    if selected == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA unavailable in this learning environment")
-    device = torch.device("cuda")
+    if selected == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("MPS unavailable in this learning environment")
+    device = torch.device(selected)
     # Exercise convolution, backpropagation and an optimizer, not just GPU enumeration.
     network = torch.nn.Sequential(torch.nn.Conv2d(3, 8, 3), torch.nn.ReLU(), torch.nn.Flatten())
     network.to(device)
@@ -26,13 +38,18 @@ def main() -> None:
     loss = network(torch.randn(2, 3, 32, 32, device=device)).square().mean()
     loss.backward()
     optimizer.step()
-    torch.cuda.synchronize()
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
     if not torch.isfinite(loss).item():
-        raise RuntimeError("Non-finite CUDA test result")
-    boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 9, 9]], dtype=torch.float32, device=device)
-    kept = torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device=device), 0.5)
+        raise RuntimeError(f"Non-finite {device.type} test result")
+    # Torchvision NMS is a compiled CPU/CUDA operator, independent of MPS policy execution.
+    ops_device = device if device.type == "cuda" else torch.device("cpu")
+    boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 9, 9]], dtype=torch.float32, device=ops_device)
+    kept = torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device=ops_device), 0.5)
     if kept.tolist() != [0]:
-        raise RuntimeError("Torchvision CUDA operator test failed")
+        raise RuntimeError("Torchvision operator test failed")
 
     with tempfile.TemporaryDirectory(prefix="alohamini-learning-check-") as directory:
         root = Path(directory)
@@ -57,16 +74,25 @@ def main() -> None:
                     container.mux(packet)
             for packet in stream.encode():
                 container.mux(packet)
-        decoder = VideoDecoder(str(root / "video.mp4"), device="cpu")
-        if len(decoder) != 3 or tuple(decoder[0].shape) != (3, 64, 64):
-            raise RuntimeError("Video round trip failed")
-        del decoder
+        backend = resolve_data_pipeline({})["video_backend"]
+        if backend == "torchcodec":
+            from torchcodec.decoders import VideoDecoder
+
+            decoder = VideoDecoder(str(root / "video.mp4"), device="cpu")
+            if len(decoder) != 3 or tuple(decoder[0].shape) != (3, 64, 64):
+                raise RuntimeError("Video round trip failed")
+            del decoder
+        else:
+            with av.open(str(root / "video.mp4")) as container:
+                decoded = [frame.to_ndarray(format="rgb24") for frame in container.decode(video=0)]
+            if len(decoded) != 3 or decoded[0].shape != (64, 64, 3):
+                raise RuntimeError("Video round trip failed")
 
     print(f"AlohaMini: {alohamini.__file__}")
-    print(f"PyTorch: {torch.__version__}; CUDA: {torch.version.cuda}")
-    print(f"GPU: {torch.cuda.get_device_name()}")
+    print(f"PyTorch: {torch.__version__}")
+    print(f"Device: {device}; video backend: {backend}; torchvision operators: {ops_device}")
     print(
-        "PASS: CUDA forward/backward/optimizer, local checkpoint, torchvision, JPEG, Parquet, video"
+        "PASS: forward/backward/optimizer, local checkpoint, torchvision, JPEG, Parquet, video"
     )
     print("Robot connections, dataset semantics and full policy training were not exercised.")
 
