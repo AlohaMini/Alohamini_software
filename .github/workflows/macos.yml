@@ -49,8 +49,18 @@ jobs:
           name: macos-serial-${{ runner.arch }}
           path: reports/macos-serial/
   pc:
+    name: pc (${{ matrix.group }})
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - group: core
+            sections: serial communication cache data video
+          - group: training
+            sections: training
     defaults:
       run:
         shell: bash -el {0}
@@ -58,6 +68,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
       TOKENIZERS_PARALLELISM: "false"
       OMP_NUM_THREADS: "2"
+      PIP_CACHE_DIR: ${{ runner.temp }}/alohamini-pip-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb
@@ -66,6 +77,11 @@ jobs:
           activate-environment: alohamini
           environment-file: environment.yml
           auto-activate-base: false
+      - name: Cache PC dependency downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: pip-${{ runner.os }}-${{ runner.arch }}-pc-${{ hashFiles('environment.yml', 'env/pc-osx-arm64.lock') }}
       - name: Install native Apple Silicon dependencies
         run: |
           test "$(uname -m)" = arm64
@@ -74,9 +90,9 @@ jobs:
           python -m pip check
           python env/dependencies.py check
       - name: Native PC validation
-        run: python env/macos_validation.py --output reports/macos-pc
+        run: python env/macos_validation.py --sections ${{ matrix.sections }} --output reports/macos-pc
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: macos-pc-${{ github.sha }}
+          name: macos-pc-${{ matrix.group }}-${{ github.sha }}
           path: reports/macos-pc/
