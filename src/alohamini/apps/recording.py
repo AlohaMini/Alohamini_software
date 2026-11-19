@@ -191,6 +191,7 @@ def record_loop(
     profile_timing=False,
     on_frame=None,
     fixed_dimensions=None,
+    on_progress=None,
 ):
     """Source observe -> fresh input -> send -> image/state pair -> save sequence.
 
@@ -265,6 +266,8 @@ def record_loop(
                 dataset.check_writer()
             remaining = max(0, math.ceil(deadline - start_loop_t))
             if remaining != last_remaining:
+                if on_progress is not None:
+                    on_progress(remaining, dataset.submitted if dataset is not None else 0)
                 print_countdown(
                     "RECORD" if dataset is not None else "RESET",
                     episode_number,
@@ -543,6 +546,8 @@ def record(
     video_encoder="cpu",
     background_video_encoding=True,
     video_encoding_memory_mib=2048,
+    interaction=None,
+    keyboard_enabled=True,
 ):
     from alohamini.datasets.record import LocalDataset, preserve_dataset
     from alohamini.datasets.recording_video import validate_video_options
@@ -612,7 +617,12 @@ def record(
         initial = client.connect_control()
         if ready_units(initial, robot_model, client.client_id) is None:
             raise RuntimeError("Host not ready after Leader setup; recording has not started")
-        keyboard = cleanup.enter_context(RecordingKeyboard())
+        if interaction is None:
+            keyboard = cleanup.enter_context(RecordingKeyboard())
+        if interaction is not None:
+            from alohamini.apps.recording_interaction import RecordingControls
+
+            keyboard = cleanup.enter_context(RecordingControls(interaction, keyboard_enabled=keyboard_enabled))
         metadata = initial.payload["_robot_metadata"]
         if selected_fixed and not resume:
             fixed_config = capture(initial, selected_fixed)
@@ -646,10 +656,17 @@ def record(
             init_rerun("alohamini_record")
             on_frame = log_snapshot
         recorded_episodes = 0
+        target_episodes = dataset.num_episodes + num_episodes if interaction is not None else num_episodes
         events = keyboard.events
         while recorded_episodes < num_episodes and not events["stop_recording"]:
+            if interaction is not None:
+                keyboard.read()
+                if events["stop_recording"]:
+                    break
             episode_number = dataset.num_episodes + 1
             dataset.begin_episode()
+            if interaction is not None:
+                keyboard.begin(episode_number, target_episodes, dataset.num_episodes)
             print(
                 f"Episode {episode_number} recording started. "
                 f"{num_episodes - recorded_episodes} episode(s) remaining. "
@@ -670,6 +687,7 @@ def record(
                 profile_timing=profile_timing,
                 on_frame=on_frame,
                 **({"fixed_dimensions": fixed_config} if fixed_config else {}),
+                **({"on_progress": keyboard.countdown} if interaction is not None else {}),
             )
             elapsed = time.monotonic() - started
             print(
@@ -678,8 +696,12 @@ def record(
                 flush=True,
             )
             print(f"Episode {episode_number} recording ended. Resetting before save.", flush=True)
+            if interaction is not None:
+                keyboard.read()
             if not events["stop_recording"] and reset_time_s:
                 events["exit_early"] = False
+                if interaction is not None:
+                    keyboard.report("resetting")
                 record_loop(
                     client,
                     robot_model,
@@ -691,7 +713,10 @@ def record(
                     episode_number=episode_number,
                     on_frame=on_frame,
                     **({"fixed_dimensions": fixed_config} if fixed_config else {}),
+                    **({"on_progress": keyboard.countdown} if interaction is not None else {}),
                 )
+            if interaction is not None:
+                keyboard.read()
             if events["rerecord_episode"]:
                 dataset.discard_episode()
                 print(
@@ -699,6 +724,8 @@ def record(
                     flush=True,
                 )
             else:
+                if interaction is not None:
+                    keyboard.report("saving_episode")
                 print(f"Saving episode {episode_number}; please wait...", flush=True)
                 save_started = time.perf_counter()
                 previous = dataset.num_episodes
@@ -736,5 +763,9 @@ def record(
                     )
                 else:
                     print("No frames collected; ready to record again.", flush=True)
+            if interaction is not None:
+                keyboard.report("episode_discarded" if events["rerecord_episode"] else "episode_saved",
+                                saved_episodes=dataset.num_episodes)
             events["exit_early"] = events["rerecord_episode"] = False
     print(f"Dataset saved at {path.resolve()}", flush=True)
+    return path.resolve()

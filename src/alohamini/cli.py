@@ -229,6 +229,9 @@ def _main(argv: list[str] | None = None) -> int:
     evaluator.add_argument("--dataset", dest="dataset_name", help="可选，本地评估数据集名称")
     evaluator.add_argument("--task", default="robot task")
     recorder = commands.add_parser("record", help="双主臂多频率数采，本地保存，不上传")
+    recorder.add_argument("--gui", action="store_true", help="通过逐行 JSON 控制采集并在结束后检查数据")
+    recorder.add_argument("--keyboard", dest="keyboard_enabled", action=argparse.BooleanOptionalAction,
+                          default=None, help="桌面采集时同时启用键盘遥操，默认只使用主臂")
     recorder.add_argument(
         "--dataset",
         "--dataset.repo_id",
@@ -582,6 +585,12 @@ def _main(argv: list[str] | None = None) -> int:
             logging.basicConfig(level=logging.WARNING, format="%(message)s")
             options = vars(args).copy()
             options.pop("command")
+            gui = options.pop("gui")
+            keyboard_enabled = options.pop("keyboard_enabled")
+            if gui:
+                from alohamini.apps.recording_interaction import run_gui_recording
+
+                return run_gui_recording(**options, keyboard_enabled=bool(keyboard_enabled))
             record(**options)
             return 0
         if args.command == "calibrate":

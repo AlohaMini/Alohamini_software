@@ -13,7 +13,7 @@ from unittest.mock import patch
 from test_feetech_device import DelayedRegisterSerial, RegisterSerial
 
 from alohamini.calibration.procedure import calibrate
-from alohamini.calibration.interaction import CalibrationInteraction
+from alohamini.interaction import DesktopInteraction
 from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.model import ActuatorSpec, get_robot_model
@@ -161,7 +161,7 @@ class CalibrationProcedureTests(unittest.TestCase):
                         ))) + "\n")
                         control.flush()
 
-            interaction = CalibrationInteraction(source, Output())
+            interaction = DesktopInteraction(source, Output())
             with patch("sys.stdin.isatty", return_value=False), patch(
                 "builtins.input", side_effect=AssertionError("桌面标定不得读取终端")
             ), contextlib.redirect_stdout(io.StringIO()):
