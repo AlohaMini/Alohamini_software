@@ -44,9 +44,17 @@ def side_calibration(spec, side, actuators, positions, *, leader):
             if math.isclose(row.reference - row.lower, row.upper - row.reference, abs_tol=1e-10):
                 radius = min(reference - lower, upper - reference)
                 lower, upper = reference - radius, reference + radius
-            capture_tick = max(
-                lower, min(upper, round(reference + (capture_q - row.reference) / scale))
-            )
+            capture_value = reference + (capture_q - row.reference) / scale
+            pose = spec.descriptor["calibration_pose"]["arm_joints"].get(suffix)
+            rounding = pose["encoder_rounding"] if isinstance(pose, dict) else "nearest"
+            # Explicit Home angles retain the original encoder quantization even
+            # when a travel endpoint moves beyond Home.
+            captured = {
+                "nearest": round(capture_value),
+                "floor": math.floor(capture_value + 1e-7),
+                "ceil": math.ceil(capture_value - 1e-7),
+            }[rounding]
+            capture_tick = max(lower, min(upper, captured))
             offset = (raw - capture_tick + 2048) % 4096 - 2048
             if offset != -2048:
                 break
@@ -107,7 +115,9 @@ def reference_coordinates(metadata):
     profile = metadata.get("reference_calibration")
     if not isinstance(profile, dict):
         raise ValueError("Model-coordinate binding requires both reference profiles")
-    spec = ModelJointSpecification.from_model(metadata["robot_model"])
+    spec = ModelJointSpecification.from_signature(
+        metadata["robot_model"], profile.get("specification_sha256")
+    )
     if (
         type(metadata.get("schema_version")) is not int
         or metadata["schema_version"] != 1
@@ -225,7 +235,7 @@ def save_bundle(payloads, motor_files):
             path.unlink(missing_ok=True)
 
 
-def load_reference_profile(calibration_path, robot_model):
+def load_reference_profile(calibration_path, robot_model, *, allow_previous=False):
     """An older motor JSON remains readable; an existing stale profile is rejected."""
     calibration_path = Path(calibration_path)
     path = calibration_path.with_name(f"{calibration_path.stem}.reference.json")
@@ -236,14 +246,24 @@ def load_reference_profile(calibration_path, robot_model):
     source_model = profile.get("robot_model")
     leader = profile.get("role") == "leader"
     spec = target
+    if allow_previous:
+        spec = ModelJointSpecification.from_signature(
+            source_model, profile.get("specification_sha256")
+        )
+        target = ModelJointSpecification.from_model(
+            robot_model, **({"version": 1} if spec.descriptor["specification_version"] == 1 else {})
+        )
     if leader and source_model != robot_model:
-        spec = ModelJointSpecification.from_model(source_model)
-        if (
-            spec.geometry_model.model_id != target.geometry_model.model_id
-            or spec.joints != target.joints
-            or spec.capture_positions != target.capture_positions
-        ):
-            raise ValueError("Reference profile belongs to an incompatible leader geometry")
+        if not allow_previous:
+            spec = ModelJointSpecification.from_model(source_model)
+        # Leaders encode joint coordinates, not the follower's asset identity.
+        # EDU has its own sensor-equipped description but shares Pro's arm
+        # coordinates and Home pose. Validate the saved profile against its
+        # original model below; never rewrite its model name or signature.
+        if spec.joints != target.joints or spec.capture_positions != target.capture_positions:
+            raise ValueError("Reference profile uses incompatible leader joint coordinates")
+    if not leader and source_model != robot_model:
+        raise ValueError("Reference profile differs from the requested robot model")
     digest = hashlib.sha256(calibration_path.read_bytes()).hexdigest()
     if (
         profile.get("schema_version") != 1
@@ -256,7 +276,9 @@ def load_reference_profile(calibration_path, robot_model):
         or profile.get("calibration_sha256", {}).get(calibration_path.name) != digest
     ):
         raise ValueError(
-            "Reference profile differs from the installed calibration or model; recalibrate"
+            "Reference profile differs from the installed calibration or model; "
+            "run alohamini calibrate and reuse to upgrade a supported old profile, "
+            "or recalibrate"
         )
     if profile.get("role") not in ("leader", "robot"):
         raise ValueError("Invalid reference calibration role")

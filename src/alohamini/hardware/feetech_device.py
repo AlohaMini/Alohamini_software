@@ -3,6 +3,8 @@
 # Register layout and command encoding adapted from LeRobot FeetechMotorsBus.
 """Host-owned STS bus with explicit connection, preparation and torque enable."""
 
+import logging
+import math
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -38,6 +40,7 @@ _GOAL_POSITION = 42
 _GOAL_VELOCITY = 46
 _OUTPUT_LIMIT = 48
 _TORQUE_ENABLE = 40
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,7 @@ class FeetechBusDevice(MotorsBus):
         velocity_limits: Mapping[str, int],
         position_units: Mapping[str, HostPositionUnits] | None = None,
         position_profiles: Mapping[str, PositionMotionProfile] | None = None,
+        hold_tolerance_rad: float = 0.0,
     ) -> None:
         if not isinstance(port, str) or not port or "\x00" in port:
             raise ValueError("Provide a serial device path")
@@ -142,6 +146,10 @@ class FeetechBusDevice(MotorsBus):
             if type(limit) is not int or not 1 <= limit <= 32767:
                 raise ValueError("Velocity limits must fit the signed STS register")
         self._path = port
+        finite_number(hold_tolerance_rad, "hold tolerance")
+        if hold_tolerance_rad < 0:
+            raise ValueError("Hold tolerance must be nonnegative")
+        self._hold_tolerance_rad = hold_tolerance_rad
         super().__init__(
             position_calibrations=position_calibrations, position_units=position_units
         )
@@ -878,7 +886,121 @@ class FeetechBusDevice(MotorsBus):
         # after all mode/Profile writes. Keep readiness false on any failure.
         for name in self._ids:
             self._write_verified(name, _TORQUE_ENABLE, 1, 0)
+        # Single-turn feedback can hide a retained firmware turn after manual
+        # movement/calibration. Do not let failed preparation or its cleanup
+        # write a hold goal using that misleading position.
+        self._modes.difference_update(self._positions)
+        self._ensure_single_turn_references()
+        self._modes.update(self._positions)
         self._prepared = self._ready = True
+
+    def _ensure_single_turn_references(self) -> None:
+        """Clear retained STS turns with torque off; restore the RAM Phase.
+
+        Phase bit 4 hides turns in feedback, but does not clear the controller's
+        turn count. A goal equal to wrapped feedback can therefore move a full
+        turn. RESET 0x0A clears that count, not EEPROM (RECOVERY 0x06). Keep
+        EEPROM locked, verify the result and never rewrite offsets or goals.
+        """
+        for name in self._positions:
+            if self._read_register(name, _TORQUE_ENABLE, 1) != 0:
+                raise ConnectionError(f"Position reference check requires torque OFF: {name}")
+            if self._read_register(name, 55, 1) != 1:
+                raise ConnectionError(f"Position reference check requires EEPROM locked: {name}")
+            phase = self._read_register(name, 18, 1)
+            primary = None
+            try:
+                if not phase & 0x10:
+                    self._write_verified(name, 18, 1, phase | 0x10)
+                    time.sleep(0.02)  # Let firmware refresh the feedback representation.
+                raw = self._read_register(name, _START, 2)
+                position = -(raw & 0x7FFF) if raw & 0x8000 else raw
+                if not 0 <= position < 4096:
+                    self._reset_retained_turn(name, position)
+            except BaseException as exc:
+                primary = exc
+                raise
+            finally:
+                if not phase & 0x10:
+                    try:
+                        self._write_verified(name, 18, 1, phase)
+                        time.sleep(0.02)
+                    except Exception as exc:
+                        if primary is None:
+                            raise
+                        if not isinstance(primary, Exception):
+                            primary.add_note(f"Phase restoration failed: {exc}")
+                        else:
+                            raise DeviceOperationError(
+                                {"position reference": str(primary), "restore Phase": str(exc)}
+                            ) from primary
+            if self._read_register(name, _TORQUE_ENABLE, 1) != 0:
+                raise ConnectionError(f"Torque changed during position reference check: {name}")
+
+    def _reset_retained_turn(self, name: str, previous: int) -> None:
+        """One acknowledged RESET, then check coordinates and torque before proceeding.
+
+        FEETECH magnetic-encoder protocol manual, section 1.3.9: RESET 0x0A.
+        No broadcast, retry, mode switch, factory reset or torque-enable fallback.
+        """
+        fields = ((9, 2), (11, 2), (18, 1), (31, 2), (33, 1), (40, 1), (42, 2), (55, 1))
+        before = {address: self._read_register(name, address, width) for address, width in fields}
+        if before[40] != 0 or before[33] != 0 or before[55] != 1 or not before[18] & 0x10:
+            raise ConnectionError(f"Unsafe turn-reset state: {name}; startup aborted")
+        port = self._packet_port(register=True)
+        motor_id = self._ids[name]
+        try:
+            # txPacket supplies header/checksum; _PacketPort bounds the ACK wait.
+            result = self._handler.txPacket(port, [0, 0, motor_id, 2, 0x0A, 0])
+            while result == 0:
+                packet, result = port.read_packet()
+                if result:
+                    break
+                if packet[2] != motor_id or len(packet) != 6:
+                    continue
+                if packet[4]:
+                    raise ConnectionError(f"RESET servo_error=0x{packet[4]:02x}")
+                break
+            if result:
+                raise ConnectionError(f"RESET transport={result}")
+            time.sleep(0.02)
+            for address, width in fields:
+                if self._read_register(name, address, width) != before[address]:
+                    raise ConnectionError(f"RESET changed register {address}")
+            current = self._read_register(name, _START, 2)
+            delta = (current - previous % 4096 + 2048) % 4096 - 2048
+            if not 0 <= current < 4096 or abs(delta) > 4:
+                raise ConnectionError(
+                    f"RESET position verification failed: {previous} -> {current}"
+                )
+        except Exception as exc:
+            raise ConnectionError(
+                f"Cannot clear retained encoder turn: {self._path} {name} (ID {motor_id}); "
+                f"{exc}. Power-cycle the motor supply (not just USB), then reuse calibration."
+            ) from exc
+        finally:
+            port.is_using = False
+        logger.info("Cleared retained encoder turn: %s, %s -> %s", name, previous, current)
+
+    def _hold_position_target(self, name: str, tick: int) -> int:
+        """Keep feedback unchanged; project only endpoint noise into legal goals."""
+        if type(tick) is not int or not 0 <= tick < 4096:
+            raise ConnectionError(f"Invalid single-turn position feedback: {name}")
+        calibration = self._positions[name]
+        position = calibration.position_from_tick(tick)
+        lower, upper = calibration.position_min_rad, calibration.position_max_rad
+        target = min(upper, max(lower, position))
+        if abs(target - position) > self._hold_tolerance_rad + 1e-12:
+            bounds = sorted(calibration.position_to_tick(value) for value in (lower, upper))
+            excess_deg = math.degrees(abs(target - position))
+            tolerance_deg = math.degrees(self._hold_tolerance_rad)
+            raise ConnectionError(
+                f"Cannot hold {self._path} {name} (ID {self._ids[name]}): "
+                f"position {tick} is outside the calibrated range [{bounds[0]}, {bounds[1]}] "
+                f"by {excess_deg:.2f} deg (endpoint tolerance {tolerance_deg:g} deg); "
+                "check joint position and calibration before enabling."
+            )
+        return tick if target == position else calibration.position_to_tick(target)
 
     def enable_torque(self) -> None:
         """Refresh and read back every safe target before enabling any motor.
@@ -1090,7 +1212,7 @@ class FeetechBusDevice(MotorsBus):
                 or not 0 <= tick < 4096
             ):
                 raise ConnectionError(f"Invalid watchdog position feedback: {name}")
-            positions[name] = tick
+            positions[name] = self._hold_position_target(name, tick)
         velocities = {name: 0 for name in self._velocities if name not in self._released_velocities}
         lift = velocities.pop("lift_axis", None)
         errors, interrupts = {}, []
@@ -1138,7 +1260,8 @@ class FeetechBusDevice(MotorsBus):
         """Zero velocity axes, then replace position targets using a fresh read.
 
         Each target is read back. This confirms the target register, not physical
-        standstill. Missing/faulted positions are never replaced with cached goals.
+        standstill. Endpoint noise uses the nearest legal goal within tolerance;
+        missing, faulted or farther out-of-range positions never become goals.
         """
         self._check_thread()
         errors, interrupts = {}, []
@@ -1186,8 +1309,7 @@ class FeetechBusDevice(MotorsBus):
                         if sample is None
                         else sample.registers.get("position_raw")
                     )
-                    if type(position) is not int or not 0 <= position < 4096:
-                        raise ConnectionError("Invalid single-turn position feedback")
+                    position = self._hold_position_target(name, position)
                     self._write_register(name, _GOAL_POSITION, 2, position)
                     if self._read_register(name, _GOAL_POSITION, 2) != position:
                         raise ConnectionError("Position hold target was not accepted")

@@ -561,7 +561,7 @@
     <parent link="left_Lower_Arm" />
     <child link="left_Wrist_Pitch_Roll" />
     <axis xyz="0 0 1" />
-    <limit lower="-1.776349752372000" upper="1.524776903158000" effort="1.57" velocity="4.2" />
+    <limit lower="-1.776349752372000" upper="1.588249619314840" effort="1.57" velocity="4.2" />
   </joint>
   <link name="left_wrist_yaw">
     <inertial>
@@ -1198,7 +1198,7 @@
     <parent link="right_Lower_Arm" />
     <child link="right_Wrist_Pitch_Roll" />
     <axis xyz="0 0 1" />
-    <limit lower="-1.669204307772067" upper="1.582834962545933" effort="1.57" velocity="4.2" />
+    <limit lower="-1.669204307772067" upper="1.588249619314840" effort="1.57" velocity="4.2" />
   </joint>
   <link name="right_wrist_yaw">
     <inertial>

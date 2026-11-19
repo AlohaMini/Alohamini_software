@@ -17,7 +17,8 @@ from alohamini.errors import CommandRejectedError
 from alohamini.hardware.feetech_device import FeetechBusDevice
 from alohamini.hardware.motors_bus import MotorsBus
 from alohamini.model import get_robot_model
-from alohamini.runtime.lifecycle import CommandSubmission, HostPhase
+from alohamini.model.joint_spec import ModelJointSpecification
+from alohamini.runtime.lifecycle import CommandSubmission, HostPhase, HostSupervisor
 from alohamini.runtime.startup import open_host
 from alohamini.schema import CommandIdentity, RobotCommand
 
@@ -271,6 +272,82 @@ class StartupTests(unittest.TestCase):
 
             serial.write = changed_after_profile
         return induced, rejected
+
+    def test_startup_recovers_hidden_turn_and_accepts_home_endpoint_noise(self):
+        spec = ModelJointSpecification.from_model(self.model.model_id)
+        profile = {
+            "specification_sha256": spec.signature,
+            "boundary_policy": spec.descriptor["boundary_policy"],
+        }
+        right = self.serials["/dev/am_arm_follower_right"]
+        right.set(7, 18, 1, 12)
+        right.set(7, 56, 2, 998)  # Two counts below the fixture's closed endpoint.
+        right.turn_counts[7] = -1
+        with patch("alohamini.runtime.startup.load_reference_profile", return_value=profile):
+            host = self.open()
+        try:
+            self.assertEqual(right.turn_counts[7], 0)
+            self.assertEqual(right.get(7, 56, 2), 998)
+            self.assertEqual(right.get(7, 42, 2), 1000)
+            self.assertEqual(right.get(7, 18, 1), 12)
+            reset = next(i for i, (bus, p) in enumerate(self.events)
+                         if bus == "right" and p[2] == 7 and p[4] == 0x0A)
+            first_enable = next(i for i, (_, p) in enumerate(self.events)
+                                if p[4:7] == b"\x03\x28\x01")
+            self.assertLess(reset, first_enable)
+            self.assertEqual(host.control.base_lift.lift_homing_phase, "seeking")
+        finally:
+            host.close()
+        self.assert_closed()
+
+    def test_failed_turn_reset_aborts_startup_and_unloads_both_buses(self):
+        right = self.serials["/dev/am_arm_follower_right"]
+        right.turn_counts[7] = -1
+        right.ignore_resets.add(7)
+        with self.assertRaisesRegex(ConnectionError, "Cannot clear retained"):
+            self.open()
+        self.assertFalse(any(p[5:7] == b"\x28\x01" for _, p in self.writes()))
+        self.assertFalse(any(bus == "right" and p[5] == 42 for bus, p in self.writes()))
+        self.assert_closed()
+
+    def test_out_of_tolerance_startup_unloads_without_retrying_position_hold(self):
+        name = "arm_right_wrist_flex"
+        self.calibrations[name] = MotorCalibration(4, 0, -1658, 967, 3036)
+        self.path.write_text(json.dumps({n: asdict(c) for n, c in self.calibrations.items()}))
+        right = self.serials["/dev/am_arm_follower_right"]
+        for address, value in (
+            (9, 967), (11, 3036), (31, self.calibrations[name].offset_register), (56, 3079),
+        ):
+            right.set(4, address, 2, value)
+        spec = ModelJointSpecification.from_model(self.model.model_id)
+        profile = {
+            "specification_sha256": spec.signature,
+            "boundary_policy": spec.descriptor["boundary_policy"],
+        }
+        original_close = HostSupervisor.close
+        cleanup = []
+
+        def close_without_new_goals(supervisor, **kwargs):
+            cleanup.append((len(self.events), kwargs))
+            return original_close(supervisor, **kwargs)
+
+        with (
+            patch("alohamini.runtime.startup.load_reference_profile", return_value=profile),
+            patch.object(HostSupervisor, "close", close_without_new_goals),
+            self.assertRaises(ConnectionError) as raised,
+        ):
+            self.open()
+        message = str(raised.exception)
+        self.assertIn("position 3079", message)
+        self.assertIn("[967, 3036] by 3.78 deg (endpoint tolerance 2 deg)", message)
+        self.assertNotIn("cleanup failed", message)
+        self.assertEqual(len(cleanup), 1)
+        offset, kwargs = cleanup[0]
+        self.assertEqual(kwargs, {"hold_positions": False})
+        self.assertFalse(any(p[4] in (3, 0x83) and p[5] == 42
+                             for _, p in self.events[offset:]))
+        self.assertFalse(any(p[5:7] == b"\x28\x01" for _, p in self.writes()))
+        self.assert_closed()
 
     def test_full_startup_initializes_both_buses_and_preserves_protection_and_calibration(self):
         host = self.open()

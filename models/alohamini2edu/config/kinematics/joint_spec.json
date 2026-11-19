@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "specification_version": 1,
+  "specification_version": 2,
   "robot_model": "alohamini2edu",
   "reference_pose": "upright_forward",
   "ticks_per_revolution": 4096,
@@ -11,7 +11,7 @@
       "shoulder_pan": "reference",
       "shoulder_lift": "upper",
       "elbow_flex": "lower",
-      "wrist_flex": "upper",
+      "wrist_flex": {"angle_deg": 87, "encoder_rounding": "floor"},
       "wrist_yaw": "reference",
       "wrist_roll": "reference"
     },
@@ -19,7 +19,7 @@
     "contact": "manual_light_link_or_housing_contact",
     "angle_basis": "nominal_model_endpoints_pending_hardware_qualification"
   },
-  "derivation": "left_right_source_range_intersection_rounded_inward_to_whole_degrees",
+  "derivation": "source_range_intersection_with_explicit_bilateral_wrist_upper_91_deg",
   "sources": [
     "urdf/alohamini2edu.urdf",
     "srdf/alohamini2edu.srdf",
@@ -44,7 +44,7 @@
     "shoulder_pan": {"limits_deg": [-125, 125], "reference_deg": 0, "direction": 1},
     "shoulder_lift": {"limits_deg": [-199, 0], "reference_deg": -90, "direction": -1},
     "elbow_flex": {"limits_deg": [0, 186], "reference_deg": 90, "direction": -1},
-    "wrist_flex": {"limits_deg": [-95, 87], "reference_deg": 0, "direction": 1},
+    "wrist_flex": {"limits_deg": [-95, 91], "reference_deg": 0, "direction": 1},
     "wrist_yaw": {"limits_deg": [-82, 82], "reference_deg": 0, "direction": 1},
     "wrist_roll": {"limits_deg": [-180, 180], "reference_deg": 0, "direction": -1}
   },

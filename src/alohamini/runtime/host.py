@@ -367,7 +367,7 @@ class NativeHost:
             self._close_after_error(exc)
             raise
 
-    def close(self) -> None:
+    def close(self, *, hold_positions: bool = True) -> None:
         self._check_thread()
         if self._closed:
             return
@@ -375,7 +375,7 @@ class NativeHost:
         errors = []
         try:
             # Mechanical cleanup precedes camera or network cleanup.
-            status = self.supervisor.close()
+            status = self.supervisor.close(hold_positions=hold_positions)
             if status.cleanup_failures:
                 errors.append(
                     RuntimeError(

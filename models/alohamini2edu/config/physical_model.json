@@ -162,7 +162,7 @@
     "meshes/visual/right_wrist_yaw.STL": "287208b4608245740a148f45c31668b3de975772fa15cdbfb910cd405d39b511",
     "meshes/visual/vertical_link.STL": "ca0df2d2b789b805c808a7550d2974bf005571db91b2ac3bb929df770011da66",
     "srdf/alohamini2edu.srdf": "2707701283ab550eb4638f456e7657e07d7add84ac2c9c9fcd398d20ff5903b7",
-    "urdf/alohamini2edu.urdf": "e7226dbb445938b9b94b524dc754db5a56fe062dd7a174bd01a8e3e19e8d1484"
+    "urdf/alohamini2edu.urdf": "2b9c638214b45918628925836c5dd4a97aa0ebae266fcd91336a4bc8d660867a"
   },
   "mesh_transport": {
     "meshes/visual/indexed/f31785cf8c7de7f73b4b8d8a9972ae0332393e99a06b6ed9e01efc8e199ecd77.obj": {

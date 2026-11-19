@@ -13,10 +13,10 @@ from alohamini.learning.calibration import reference_binding
 from alohamini.model.joint_spec import ModelJointSpecification
 
 
-def standard_robot(raw):
+def standard_robot(raw, *, version=None):
     snapshot = replay_snapshot()
     metadata = snapshot.payload["_robot_metadata"]
-    spec = ModelJointSpecification.from_model()
+    spec = ModelJointSpecification.from_model(version=version)
     arms, references, captures = {}, {}, {}
     for side in ("left", "right"):
         motors = tuple(
@@ -49,6 +49,15 @@ def standard_robot(raw):
         capture_ticks=captures,
     )
     return snapshot
+
+
+def test_old_checkpoint_remains_readable_but_is_not_bound_to_expanded_wrist_ranges():
+    trained = standard_robot(1300, version=1).payload["_robot_metadata"]
+    original = deepcopy(trained)
+    reference_binding(trained, standard_robot(4095, version=1))
+    with pytest.raises(ValueError, match="different model coordinate specifications"):
+        reference_binding(trained, standard_robot(4095))
+    assert trained == original
 
 
 def test_default_binding_accepts_device_offsets_and_the_shifted_encoder_branch():

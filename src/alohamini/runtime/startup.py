@@ -132,6 +132,11 @@ def _open_host(
         joints.append(ArmJointSpec(motor, encoder, contact))
         units[motor.name] = wire
     positions = {joint.actuator.name: joint.calibration for joint in joints}
+    reference_profile = load_reference_profile(path, robot_model)
+    hold_tolerance = (
+        math.radians(reference_profile["boundary_policy"]["feedback_tolerance_deg"])
+        if reference_profile is not None else 0.0
+    )
     devices = {}
     for source, port in (("left", left_port), ("right", right_port)):
         motors = [motor for motor in model.actuators if motor.bus == source]
@@ -142,6 +147,7 @@ def _open_host(
                 m.name: positions[m.name] for m in motors if m.name in positions
             },
             position_units={m.name: units[m.name] for m in motors if m.name in units},
+            hold_tolerance_rad=hold_tolerance,
             position_profiles={
                 m.name: (
                     _GRIPPER_MOTION_PROFILE
@@ -175,7 +181,7 @@ def _open_host(
         state_port=state_port,
         camera_port=camera_port,
         motor_calibrations=calibrations,
-        reference_calibration=load_reference_profile(path, robot_model),
+        reference_calibration=reference_profile,
     )
     logger.info("Connecting AlohaMini")
     try:
@@ -213,7 +219,9 @@ def _open_host(
         host.begin_lift_homing()
     except BaseException as exc:
         try:
-            host.close()
+            # Failed preparation/hold is not a valid source for another arm
+            # goal. Zero base/lift and unload both buses, including partial enable.
+            host.close(hold_positions=False)
         except BaseException as cleanup:
             raise RuntimeError(f"Host startup failed: {exc}; cleanup failed: {cleanup}") from exc
         if isinstance(exc, CalibrationMismatchError):

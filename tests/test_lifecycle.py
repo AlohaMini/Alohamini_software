@@ -639,6 +639,20 @@ class HostLifecycleTests(unittest.TestCase):
         self.assertEqual(unopened.close().phase, HostPhase.CLOSED)
         self.assertFalse(self.events)
 
+    def test_close_without_position_hold_zeroes_velocity_and_unloads_both_buses(self):
+        self.start()
+        self.events.clear()
+        for device in self.devices.values():
+            device.errors["stop"] = AssertionError("Must not write another arm target")
+        status = self.host.close(hold_positions=False)
+        self.assertEqual(status.phase, HostPhase.CLOSED)
+        self.assertFalse(status.cleanup_failures)
+        self.assertEqual(self.events, [
+            ("left", "stop_velocity"), ("right", "stop_velocity"),
+            ("left", "disable_torque"), ("right", "disable_torque"),
+            ("left", "close"), ("right", "close"),
+        ])
+
     def test_cross_thread_and_reentrant_calls_rejected(self):
         self.start()
         errors = []

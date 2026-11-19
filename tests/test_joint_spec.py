@@ -54,7 +54,7 @@ def test_fixed_common_intervals_and_reference_pose_are_source_validated(specific
         "shoulder_pan": (-125, 125),
         "shoulder_lift": (-199, 0),
         "elbow_flex": (0, 186),
-        "wrist_flex": (-95, 87),
+        "wrist_flex": (-95, 91),
         "wrist_yaw_joint": (-82, 82),
         "wrist_roll": (-180, 180),
     }
@@ -132,12 +132,37 @@ def test_folded_capture_is_separate_from_the_existing_model_coordinate_reference
         assert specification.joints[f"{side}_shoulder_lift"].reference == -math.pi / 2
         assert specification.joints[f"{side}_elbow_flex"].reference == math.pi / 2
         assert specification.joints[f"{side}_wrist_flex"].reference == 0
+        assert specification.joints[f"{side}_wrist_flex"].upper == math.radians(91)
     descriptor = specification.descriptor
     descriptor["calibration_pose"]["arm_joints"] = {
         name: "reference" for name in descriptor["arm_joints"]
     }
     other = ModelJointSpecification(specification.model, descriptor)
     assert other.joints == specification.joints
+
+
+@pytest.mark.parametrize("model", ["alohamini2", "alohamini2pro", "alohamini2edu"])
+def test_v1_contract_remains_available_without_changing_recorded_ranges(model):
+    current = ModelJointSpecification.from_model(model)
+    old = ModelJointSpecification.from_model(model, version=1)
+    assert ModelJointSpecification.from_signature(model, old.signature).signature == old.signature
+    assert current.signature != old.signature
+    assert current.capture_positions == old.capture_positions
+    for side in ("left", "right"):
+        assert old.joints[f"{side}_wrist_flex"].upper == math.radians(87)
+        for view in ("collision", "kinematic"):
+            node = current.geometry_model.description_tree(view).find(
+                f"joint[@name='{side}_wrist_flex']/limit"
+            )
+            assert float(node.get("upper")) == pytest.approx(math.radians(91))
+
+
+@pytest.mark.parametrize("angle", [True, float("nan"), -96, 92])
+def test_explicit_home_must_be_finite_and_within_limits(specification, angle):
+    descriptor = specification.descriptor
+    descriptor["calibration_pose"]["arm_joints"]["wrist_flex"]["angle_deg"] = angle
+    with pytest.raises(ValueError):
+        ModelJointSpecification(specification.model, descriptor)
 
 
 def test_new_specification_does_not_reinterpret_existing_checkpoint_ranges():

@@ -450,13 +450,14 @@ class HostSupervisor:
         finally:
             self._busy = False
 
-    def close(self) -> HostStatus:
+    def close(self, *, hold_positions: bool = True) -> HostStatus:
+        """Close devices; failed startup can unload without new arm goals."""
         self._enter()
         try:
             if self._phase in (HostPhase.CLOSED, HostPhase.FAULT):
                 return self.status
             self._phase = HostPhase.CLOSED
-            self._shutdown()
+            self._shutdown(velocity_only=not hold_positions)
             return self.status
         finally:
             self._busy = False

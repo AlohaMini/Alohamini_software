@@ -2,7 +2,7 @@
 
 import hashlib
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import numpy as np
 import pytest
@@ -13,10 +13,13 @@ from alohamini.calibration.reference import (
     PROTOCOL,
     calibration_bytes,
     json_bytes,
+    load_reference_profile,
+    reference_coordinates,
     save_bundle,
     side_calibration,
 )
 from alohamini.calibration.servo import MotorCalibration
+from alohamini.calibration.upgrade import prepare_reference_upgrade
 from alohamini.datasets.kinematic_fields import KinematicFields, descriptor_from_reference_pose
 from alohamini.datasets.record import dataset_features
 from alohamini.hardware.leader import BimanualLeader
@@ -26,8 +29,8 @@ from alohamini.runtime.host import NativeHost
 from alohamini.runtime.startup import open_host
 
 
-def device_calibration(raw, *, leader=False):
-    spec = ModelJointSpecification.from_model()
+def device_calibration(raw, *, leader=False, model="alohamini2pro", version=None):
+    spec = ModelJointSpecification.from_model(model, version=version)
     values, ticks, arms = {}, {}, {}
     for side in ("left", "right"):
         motors = tuple(m for m in spec.model.actuators if m.bus == side)
@@ -56,6 +59,25 @@ def encoder(entry):
     )
 
 
+@pytest.mark.parametrize("raw", [0, 1, 988, 2047, 2048, 3036, 4095])
+@pytest.mark.parametrize("leader", [False, True])
+def test_new_home_preserves_v1_zero_including_offset_fallback(raw, leader):
+    _, old, ticks, mappings = device_calibration(raw, leader=leader, version=1)
+    _, new, new_ticks, new_maps = device_calibration(raw, leader=leader)
+    assert new_ticks == ticks
+    for side in old:
+        for name, previous in old[side].items():
+            current = new[side][name]
+            if name.endswith("wrist_flex"):
+                assert current == replace(previous, range_max=previous.range_max + 46)
+                before = mappings[side]["joints"]["wrist_flex"]
+                after = new_maps[side]["joints"]["wrist_flex"]
+                assert before["capture_tick"] == after["capture_tick"]
+                assert before["reference_tick"] == after["reference_tick"]
+            else:
+                assert current == previous
+
+
 def test_one_leader_commands_two_followers_without_changing_its_calibration():
     spec, leader, _, leader_maps = device_calibration(4095, leader=True)
     original = deepcopy(leader)
@@ -78,10 +100,8 @@ def test_one_leader_commands_two_followers_without_changing_its_calibration():
     assert leader == original
 
 
-def test_am_leader_profile_is_reusable_with_both_follower_variants(tmp_path):
-    from alohamini.calibration.reference import load_reference_profile
-
-    spec, sides, _, mappings = device_calibration(1800, leader=True)
+def save_leader(tmp_path, model="alohamini2pro", *, version=None):
+    spec, sides, _, mappings = device_calibration(1800, leader=True, model=model, version=version)
     payloads = {
         tmp_path / f"am_leader_bi_{side}.json": calibration_bytes(values)
         for side, values in sides.items()
@@ -113,11 +133,59 @@ def test_am_leader_profile_is_reusable_with_both_follower_variants(tmp_path):
     for path in tuple(payloads):
         payloads[path.with_name(f"{path.stem}.reference.json")] = json_bytes(profile)
     save_bundle(payloads, {})
+    return sides, profile, payloads
+
+
+@pytest.mark.parametrize("source_model", ["alohamini2", "alohamini2pro", "alohamini2edu"])
+@pytest.mark.parametrize("target_model", ["alohamini2", "alohamini2pro", "alohamini2edu"])
+def test_am_leader_profile_is_reusable_with_compatible_follower_variants(
+    tmp_path, source_model, target_model
+):
+    sides, profile, payloads = save_leader(tmp_path, source_model)
     before = {path: path.read_bytes() for path in payloads}
-    leader = BimanualLeader("alohamini2", calibration_dir=tmp_path)
-    assert leader.reference_profiles["left"]["robot_model"] == "alohamini2pro"
-    assert load_reference_profile(tmp_path / "am_leader_bi_left.json", "alohamini2") == profile
+    leader = BimanualLeader(target_model, calibration_dir=tmp_path)
+    assert leader.reference_profiles["left"]["robot_model"] == source_model
+    assert leader.calibrations == sides
+    assert load_reference_profile(tmp_path / "am_leader_bi_left.json", target_model) == profile
     assert {path: path.read_bytes() for path in payloads} == before
+
+
+@pytest.mark.parametrize("change", ["direction", "reference", "range", "capture"])
+def test_cross_model_leader_still_rejects_incompatible_coordinates(tmp_path, monkeypatch, change):
+    save_leader(tmp_path)
+    target = ModelJointSpecification.from_model("alohamini2edu")
+    name = "left_shoulder_pan"
+    if change == "capture":
+        target.capture_positions = {**target.capture_positions, name: 0.01}
+    else:
+        row = target.joints[name]
+        changed = {
+            "direction": replace(row, direction=-row.direction),
+            "reference": replace(row, reference=row.reference + 0.01),
+            "range": replace(row, upper=row.upper - 0.01),
+        }[change]
+        target.joints = {**target.joints, name: changed}
+    original = ModelJointSpecification.from_model
+    monkeypatch.setattr(
+        ModelJointSpecification,
+        "from_model",
+        lambda model: target if model == "alohamini2edu" else original(model),
+    )
+    with pytest.raises(ValueError, match="incompatible leader joint coordinates"):
+        load_reference_profile(tmp_path / "am_leader_bi_left.json", "alohamini2edu")
+
+
+@pytest.mark.parametrize("change", ["signature", "paired_motor_file"])
+def test_cross_model_leader_still_validates_original_profile_and_file_hashes(tmp_path, change):
+    _, profile, _ = save_leader(tmp_path)
+    if change == "signature":
+        profile["specification_sha256"] = "0" * 64
+        (tmp_path / "am_leader_bi_left.reference.json").write_bytes(json_bytes(profile))
+    else:
+        path = tmp_path / "am_leader_bi_right.json"
+        path.write_bytes(path.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="Reference profile differs"):
+        load_reference_profile(tmp_path / "am_leader_bi_left.json", "alohamini2edu")
 
 
 @pytest.mark.parametrize("raw", [0, 1, 988, 1023, 1024, 2047, 2048, 3036, 3071, 4094, 4095])
@@ -165,8 +233,8 @@ def test_generated_gripper_preserves_both_named_endpoints(raw):
             assert mapping.position_from_tick(tick) == pytest.approx(q, abs=1e-10)
 
 
-def save_robot(tmp_path, raw=4095):
-    spec, sides, ticks, arms = device_calibration(raw)
+def save_robot(tmp_path, raw=4095, *, version=None):
+    spec, sides, ticks, arms = device_calibration(raw, version=version)
     values = {name: c for side in sides.values() for name, c in side.items()}
     for motor in spec.model.actuators:
         values.setdefault(motor.name, MotorCalibration(motor.motor_id, 0, 0, 0, 4095))
@@ -195,6 +263,73 @@ def save_robot(tmp_path, raw=4095):
         {path: spec.model.actuators},
     )
     return spec, path, values, profile
+
+
+@pytest.mark.parametrize("leader", [False, True])
+def test_upgrade_preserves_zeros_and_requires_both_leader_profiles(tmp_path, leader):
+    if leader:
+        _, old_profile, _ = save_leader(tmp_path, version=1)
+        paths = {side: tmp_path / f"am_leader_bi_{side}.json" for side in ("left", "right")}
+        target = "alohamini2edu"  # Pro leaders remain usable with EDU.
+    else:
+        _, path, _, old_profile = save_robot(tmp_path, version=1)
+        paths = dict(left=path, right=path)
+        target = "alohamini2pro"
+    before = {p: p.read_bytes() for p in tmp_path.glob("*.json")}
+    with pytest.raises(ValueError, match="run alohamini calibrate"):
+        load_reference_profile(paths["left"], target)
+    updated, payloads, motor_files = prepare_reference_upgrade(paths, target, leader=leader)
+    assert {p: p.read_bytes() for p in before} == before  # preparation is read-only
+    save_bundle(payloads, motor_files)
+    for path in set(paths.values()):
+        current = load_reference_profile(path, target)
+        assert current["reference_ticks"] == old_profile["reference_ticks"]
+        assert current["capture_ticks"] == old_profile["capture_ticks"]
+        assert current["robot_model"] == old_profile["robot_model"]
+    assert prepare_reference_upgrade(paths, target, leader=leader) is None
+    assert list(tmp_path.glob("*.backup.json"))
+
+
+@pytest.mark.parametrize("change", ["signature", "offset", "paired_profile"])
+def test_upgrade_rejects_tampered_old_calibration(tmp_path, change):
+    _, profile, _ = save_leader(tmp_path, version=1)
+    paths = {side: tmp_path / f"am_leader_bi_{side}.json" for side in ("left", "right")}
+    if change == "signature":
+        profile["specification_sha256"] = "0" * 64
+        paths["left"].with_suffix(".reference.json").write_bytes(json_bytes(profile))
+    elif change == "paired_profile":
+        paths["right"].with_suffix(".reference.json").unlink()
+    else:
+        paths["right"].write_bytes(paths["right"].read_bytes() + b"\n")
+    before = {p: p.read_bytes() for p in tmp_path.glob("*.json")}
+    with pytest.raises(ValueError):
+        prepare_reference_upgrade(paths, "alohamini2edu", leader=True)
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_old_recorded_coordinates_retain_original_scale_after_model_update(tmp_path):
+    spec, _, values, profile = save_robot(tmp_path, version=1)
+    metadata = dict(
+        schema_version=1,
+        robot_model=spec.model.model_id,
+        reference_calibration=profile,
+        motors={
+            m.name: dict(
+                **asdict(values[m.name]),
+                model=m.motor_model,
+                normalization="range_0_100" if m.name.endswith("gripper") else "range_m100_100",
+            )
+            for m in spec.model.actuators
+        },
+    )
+    before = deepcopy(metadata)
+    signature, coordinates = reference_coordinates(metadata)
+    assert signature == spec.signature
+    assert (
+        coordinates["arm_right_wrist_flex"][3]
+        == profile["arms"]["right"]["joints"]["wrist_flex"]["safe_q_max_rad"]
+    )
+    assert metadata == before
 
 
 def test_generated_profile_reaches_host_and_records_the_execution_buffer(tmp_path, monkeypatch):

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "asset_revision": 1,
+  "asset_revision": 2,
   "model_id": "alohamini2",
   "actuators": [
     {

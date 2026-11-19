@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "asset_revision": 8,
+  "asset_revision": 9,
   "model_id": "alohamini2edu",
   "default_cameras": ["forward_left", "forward_right", "wrist_right"],
   "actuators": [

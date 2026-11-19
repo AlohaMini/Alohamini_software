@@ -29,6 +29,8 @@ class RegisterSerial:
         self.errors = {}
         self.drop = set()
         self.ignore_writes = set()
+        self.turn_counts = {}
+        self.ignore_resets = set()
         self.registers = {motor_id: bytearray(96) for motor_id in (1, 2)}
         for motor_id in self.registers:
             for address, width, value in (
@@ -72,6 +74,10 @@ class RegisterSerial:
         if key in self.drop:
             return
         error = self.errors.get(key, 0)
+        if address == 56 and len(data) >= 2 and self.get(motor_id, 18, 1) & 16:
+            full = int.from_bytes(data[:2], "little") + 4096 * self.turn_counts.get(motor_id, 0)
+            raw = abs(full) | (0x8000 if full < 0 else 0)
+            data = raw.to_bytes(2, "little") + data[2:]
         content = bytes([motor_id, len(data) + 2, error]) + bytes(data)
         self.pending += b"\xff\xff" + content + bytes([~sum(content) & 255])
 
@@ -86,6 +92,10 @@ class RegisterSerial:
             self.reply(
                 motor_id, instruction, address, self.registers[motor_id][address : address + width]
             )
+        elif instruction == 0x0A:
+            if motor_id not in self.ignore_resets and not self.errors.get((motor_id, 0x0A, 0)):
+                self.turn_counts[motor_id] = 0
+            self.reply(motor_id, instruction, 0)
         elif instruction == 3:
             data = packet[6:-1]
             if (motor_id, address) not in self.ignore_writes:
@@ -182,7 +192,7 @@ class FeetechDeviceTests(unittest.TestCase):
             ActuatorSpec("wheel", "left", 2, "sts3250"),
         ]
         self.calibration = EncoderCalibration(
-            4096, 2048, 0, 1, position_min_rad=-1, position_max_rad=1
+            4096, 2048, 0, 1, position_min_rad=-1.5, position_max_rad=1.5
         )
         self.device = self.new_device()
 
@@ -193,6 +203,7 @@ class FeetechDeviceTests(unittest.TestCase):
             position_calibrations=kwargs.get("position_calibrations", {"joint": self.calibration}),
             velocity_limits=kwargs.get("velocity_limits", {"wheel": 3000}),
             position_profiles=kwargs.get("position_profiles"),
+            hold_tolerance_rad=kwargs.get("hold_tolerance_rad", 0),
         )
 
     def connect(self):
@@ -210,6 +221,7 @@ class FeetechDeviceTests(unittest.TestCase):
         for motor_id in (1, 2):
             self.serial.set(motor_id, 9, 2, 1400)
             self.serial.set(motor_id, 11, 2, 2700)
+            self.serial.set(motor_id, 56, 2, 2000)
         self.device = self.new_device(
             position_calibrations={"joint": calibrations["joint"].encoder_calibration()},
             position_profiles=position_profiles,
@@ -920,6 +932,7 @@ class FeetechDeviceTests(unittest.TestCase):
         for motor_id in (1, 2):
             self.serial.set(motor_id, 9, 2, 1400)
             self.serial.set(motor_id, 11, 2, 2700)
+            self.serial.set(motor_id, 56, 2, 2000)
         self.device = self.new_device(
             position_calibrations={"joint": calibrations["joint"].encoder_calibration()}
         )
@@ -954,8 +967,8 @@ class FeetechDeviceTests(unittest.TestCase):
                 self.assertTrue(self.device._prepared)
                 self.assertTrue(all(self.serial.get(i, 40, 1) == 0 for i in (1, 2)))
                 self.assertEqual(
-                    [(p[2], p[4], p[5]) for p in self.serial.requests[-4:]],
-                    [(1, 3, 40), (1, 2, 40), (2, 3, 40), (2, 2, 40)],
+                    [(p[2], p[6]) for p in self.writes() if p[5] == 40],
+                    [(1, 0), (2, 0)],
                 )
                 self.assertFalse(any(p[5] == 40 and p[6] != 0 for p in self.writes()))
                 for motor_id in (1, 2):
@@ -1207,15 +1220,166 @@ class FeetechDeviceTests(unittest.TestCase):
 
     def test_stop_zeroes_velocity_first_and_holds_new_feedback_without_clamping(self):
         self.connect()
-        self.serial.set(
-            1, 56, 2, 500
-        )  # Outside command limits; actual hold must not jump to a bound.
+        self.serial.set(1, 56, 2, 1500)
         self.device.stop()
         self.assertEqual(self.serial.get(2, 46, 2), 0)
-        self.assertEqual(self.serial.get(1, 42, 2), 500)
+        self.assertEqual(self.serial.get(1, 42, 2), 1500)
         self.assertEqual([(p[2], p[5]) for p in self.writes()], [(2, 46), (1, 42)])
         self.assertEqual(self.serial.get(1, 46, 2), 2000)  # Zero must never replace arm Profile.
         self.assertEqual(self.serial.get(1, 40, 1), 1)  # Stop never enables or disables torque.
+
+    def test_stop_rejects_out_of_range_feedback_without_writing_or_clamping_goal(self):
+        self.connect()
+        self.serial.set(1, 56, 2, 500)
+        with self.assertRaisesRegex(DeviceOperationError, "outside the calibrated range"):
+            self.device.stop()
+        self.assertEqual(self.serial.get(2, 46, 2), 0)
+        self.assertEqual(self.serial.get(1, 42, 2), 3000)
+        self.assertEqual([(p[2], p[5]) for p in self.writes()], [(2, 46)])
+
+    def test_watchdog_rejects_out_of_range_feedback_before_group_write(self):
+        self.connect()
+        self.serial.set(1, 56, 2, 500)
+        batch = self.device.read_feedback()
+        self.serial.requests.clear()
+        with self.assertRaisesRegex(ConnectionError, "outside the calibrated range"):
+            self.device.stop_motion(batch)
+        self.assertFalse(self.writes())
+
+    def test_enable_rejects_gripper_feedback_just_outside_calibration(self):
+        values = {
+            "joint": MotorCalibration(1, 0, 1843, 2047, 3431),
+            "wheel": MotorCalibration(2, 0, 0, 0, 4095),
+        }
+        for motor_id, entry in zip((1, 2), values.values(), strict=True):
+            for address, value in ((9, entry.range_min), (11, entry.range_max),
+                                   (31, entry.offset_register)):
+                self.serial.set(motor_id, address, 2, value)
+        self.device = self.new_device(
+            position_calibrations={"joint": values["joint"].encoder_calibration()}
+        )
+        self.connect()
+        self.device.disable_torque()
+        self.device.prepare(values)
+        for tick in (2046, 2045, 3432):
+            with self.subTest(tick=tick):
+                self.serial.set(1, 56, 2, tick)
+                self.serial.requests.clear()
+                with self.assertRaisesRegex(DeviceOperationError, "outside the calibrated range"):
+                    self.device.enable_torque()
+                self.assertFalse(any(p[5] in (40, 42) for p in self.writes()))
+                self.assertTrue(all(self.serial.get(i, 40, 1) == 0 for i in (1, 2)))
+
+    def test_prepare_clears_both_turn_directions_without_changing_pose_or_calibration(self):
+        for turns in (-1, 1):
+            with self.subTest(turns=turns):
+                calibrations = self.connect_for_preparation()
+                self.serial.set(1, 18, 1, 12)
+                self.serial.set(1, 56, 2, 2045)
+                self.serial.turn_counts[1] = turns
+                self.device.prepare(calibrations)
+                self.assertTrue(self.device._prepared)
+                self.assertTrue(self.device._ready)
+                self.assertEqual(self.serial.turn_counts[1], 0)
+                self.assertEqual(self.serial.get(1, 56, 2), 2045)
+                self.assertEqual(self.serial.get(1, 18, 1), 12)
+                self.assertEqual(self.serial.get(1, 55, 1), 1)
+                for entry in calibrations.values():
+                    for address, expected in ((9, entry.range_min), (11, entry.range_max),
+                                              (31, entry.offset_register)):
+                        self.assertEqual(self.serial.get(entry.id, address, 2), expected)
+                resets = [p for p in self.serial.requests if p[4] == 0x0A]
+                self.assertEqual(resets, [bytes.fromhex("ffff01020af2")])
+                self.assertFalse(any(p[5] == 42 for p in self.writes()))
+                self.assertTrue(all(self.serial.get(i, 40, 1) == 0 for i in (1, 2)))
+                self.serial.requests.clear()
+                self.device.prepare(calibrations)
+                self.assertFalse(any(p[4] == 0x0A for p in self.serial.requests))
+
+    def test_failed_turn_reset_never_retries_or_enables_and_cleanup_sends_no_hold(self):
+        for failure in ("unsupported", "lost_ack", "unchanged", "changed_offset"):
+            with self.subTest(failure=failure):
+                self.serial.drop.clear()
+                self.serial.errors.clear()
+                self.serial.ignore_resets.clear()
+                calibrations = self.connect_for_preparation()
+                self.serial.set(1, 18, 1, 12)
+                self.serial.turn_counts[1] = -1
+                if failure == "unsupported":
+                    self.serial.errors[(1, 0x0A, 0)] = 0x40
+                elif failure == "lost_ack":
+                    self.serial.drop.add((1, 0x0A, 0))
+                elif failure == "unchanged":
+                    self.serial.ignore_resets.add(1)
+                write = self.serial.write
+
+                def changed_reset(packet, write=write, failure=failure):
+                    result = write(packet)
+                    if packet[4] == 0x0A and failure == "changed_offset":
+                        self.serial.set(1, 31, 2, 1)
+                    return result
+
+                with patch.object(self.serial, "write", side_effect=changed_reset):
+                    with self.assertRaisesRegex(ConnectionError, "Cannot clear retained"):
+                        self.device.prepare(calibrations)
+                self.assertFalse(self.device._prepared)
+                self.assertFalse(self.device._ready)
+                self.assertEqual(self.serial.get(1, 18, 1), 12)
+                self.assertEqual(len([p for p in self.serial.requests if p[4] == 0x0A]), 1)
+                self.device.stop()
+                self.assertFalse(any(p[5] == 42 for p in self.writes()))
+                self.assertTrue(all(self.serial.get(i, 40, 1) == 0 for i in (1, 2)))
+                with self.assertRaisesRegex(RuntimeError, "Prepare the bus"):
+                    self.device.enable_torque()
+
+    def test_hold_projects_endpoint_noise_but_preserves_feedback_and_rejects_large_error(self):
+        entry = MotorCalibration(1, 0, 1843, 2047, 3431)
+        self.device = self.new_device(
+            position_calibrations={"joint": entry.encoder_calibration()},
+            hold_tolerance_rad=math.radians(2),
+        )
+        self.connect()
+        for measured, target in ((2045, 2047), (2046, 2047), (2047, 2047),
+                                 (2050, 2050), (3433, 3431)):
+            with self.subTest(measured=measured):
+                self.serial.set(1, 56, 2, measured)
+                self.device.stop()
+                self.assertEqual(self.serial.get(1, 42, 2), target)
+                self.assertEqual(self.serial.get(1, 56, 2), measured)
+                batch = self.device.read_feedback()
+                self.device.stop_motion(batch)
+                self.assertEqual(self.serial.get(1, 42, 2), target)
+        self.serial.set(1, 56, 2, 2024)  # 23 ticks exceed two degrees.
+        self.serial.requests.clear()
+        with self.assertRaisesRegex(DeviceOperationError, "endpoint tolerance"):
+            self.device.stop()
+        self.assertFalse(any(p[5] == 42 for p in self.writes()))
+
+    def test_reference_probe_restores_phase_after_read_error_or_lost_phase_ack(self):
+        for failure in ("read", "ack", "interrupt"):
+            with self.subTest(failure=failure):
+                self.serial.drop.clear()
+                calibrations = self.connect_for_preparation()
+                self.serial.set(1, 18, 1, 12)
+                if failure == "read":
+                    self.serial.drop.add((1, 2, 56))
+                elif failure == "ack":
+                    self.serial.drop.add((1, 3, 18))
+                write = self.serial.write
+
+                def interrupted_read(packet, write=write, failure=failure):
+                    if failure == "interrupt" and packet[2:6] == b"\x01\x04\x02\x38":
+                        raise KeyboardInterrupt()
+                    return write(packet)
+
+                error = KeyboardInterrupt if failure == "interrupt" else ConnectionError
+                with patch.object(self.serial, "write", side_effect=interrupted_read):
+                    with self.assertRaises(error):
+                        self.device.prepare(calibrations)
+                self.assertEqual(self.serial.get(1, 18, 1), 12)
+                self.assertEqual(self.serial.get(1, 55, 1), 1)
+                self.assertFalse(self.device._prepared)
+                self.assertFalse(any(p[5] == 42 for p in self.writes()))
 
     def test_position_feedback_loss_never_reuses_last_target(self):
         self.connect()

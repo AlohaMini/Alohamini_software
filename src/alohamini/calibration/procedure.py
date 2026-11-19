@@ -16,6 +16,7 @@ from alohamini.calibration.reference import (
     side_calibration,
 )
 from alohamini.calibration.servo import MotorCalibration, load_motor_calibration
+from alohamini.calibration.upgrade import prepare_reference_upgrade
 from alohamini.hardware.feetech_device import (
     CalibrationMismatchError,
     DeviceOperationError,
@@ -179,6 +180,7 @@ def calibrate(
             load_motor_calibration(paths[side], expected) if paths[side].exists() else {}
         )
     reuse = False
+    upgrade = None
     if all(existing.values()):
         response = input(
             f"{device_id} has saved calibration. Press ENTER to reuse, or c to recalibrate: "
@@ -187,8 +189,16 @@ def calibrate(
             raise InterruptedError("Calibration cancelled; no serial port opened")
         reuse = response == ""
         if reuse:
-            for path in set(paths.values()):
-                load_reference_profile(path, robot_model)
+            upgrade = prepare_reference_upgrade(paths, robot_model, leader=leader)
+            if upgrade is not None:
+                existing, _, _ = upgrade
+                print(
+                    "Updating both wrist upper limits to 91 degrees; "
+                    "Home and encoder zeros unchanged."
+                )
+            else:
+                for path in set(paths.values()):
+                    load_reference_profile(path, robot_model)
     with ExitStack() as cleanup:
         buses = {}
         for side, port in zip(("left", "right"), ports, strict=True):
@@ -204,7 +214,12 @@ def calibrate(
             if reuse:
                 for side, bus in buses.items():
                     values = {m.name: existing[side][m.name] for m in bus.actuators}
+                    # write_calibration reads back each changed EEPROM field.
                     bus.write_calibration(values)
+                if upgrade is not None:
+                    _, payloads, motor_files = upgrade
+                    save_bundle(payloads, motor_files)
+                    print("Wrist limits updated and verified; previous files backed up.")
                 return
             label = "leader" if leader else "follower"
             lift_hint = "" if leader else " Support the lift."

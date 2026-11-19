@@ -35,10 +35,14 @@
     },
     {
       "path": "config/kinematics/joint_limits.yaml",
-      "sha256": "6beec108963e4cf742ecd66377e6959bb1ab1b2622cc39a0202ebff2b449d161"
+      "sha256": "b23e59eebad3f18afc8a152402a30f1ece100c7b031e6bc7944bb54bef4457c3"
     },
     {
       "path": "config/kinematics/joint_spec.json",
+      "sha256": "91287c88236edc7fea7c96c3ed52ddf719489b1d19aa0169df3e91ee682c67d3"
+    },
+    {
+      "path": "config/kinematics/joint_spec_v1.json",
       "sha256": "9e050618131280fdc79bacfc98ccd76e20d98ba5e4cdc39d51c327c8db32fe9f"
     },
     {
@@ -83,7 +87,7 @@
     },
     {
       "path": "config/physical_model.json",
-      "sha256": "ba8c4f109fff8168257dff3b21a25f796e7b1362b11d6fabc1a6e4c7930b2671"
+      "sha256": "278f2b91b06ed4edebbe56505d512968f37b771ee96c19e12c1404a6bd2da63d"
     },
     {
       "path": "config/planar_base.urdf",
@@ -607,7 +611,7 @@
     },
     {
       "path": "model.json",
-      "sha256": "7b208dc184a051c251978ad451dd17524b8630667fea25345beca3e60896022d"
+      "sha256": "4898226411ba5d368e7e4dcfe883ee1171f54fc53814c43fd92087f78da3d01d"
     },
     {
       "path": "srdf/alohamini2edu.srdf",
@@ -615,7 +619,7 @@
     },
     {
       "path": "urdf/alohamini2edu.urdf",
-      "sha256": "e7226dbb445938b9b94b524dc754db5a56fe062dd7a174bd01a8e3e19e8d1484"
+      "sha256": "2b9c638214b45918628925836c5dd4a97aa0ebae266fcd91336a4bc8d660867a"
     },
     {
       "path": "urdf/source/alohamini2edu_cad.urdf",

@@ -16,6 +16,7 @@ from alohamini.calibration.procedure import calibrate
 from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.model import ActuatorSpec, get_robot_model
+from alohamini.model.joint_spec import ModelJointSpecification
 
 
 class CalibrationSerial(RegisterSerial):
@@ -515,6 +516,64 @@ class CalibrationProcedureTests(unittest.TestCase):
             prompt = self.run_calibration()
         self.assertEqual(prompt.call_count, 1)
         self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assert_passive_and_closed()
+
+    def make_v1_calibration(self, target):
+        self.configure(target)
+        old = ModelJointSpecification.from_model(self.model_name, version=1)
+        with patch.object(ModelJointSpecification, "from_model", return_value=old):
+            self.run_calibration()
+        self.original = {
+            side: {i: bytes(v) for i, v in self.serials[f"/dev/test-{side}"].registers.items()}
+            for side in ("left", "right")
+        }
+
+    def check_v1_upgrade(self, target):
+        self.make_v1_calibration(target)
+        with patch(
+            "alohamini.calibration.procedure._capture", side_effect=AssertionError("new capture")
+        ):
+            prompt = self.run_calibration()
+        self.assertEqual(prompt.call_count, 1)
+        for side in ("left", "right"):
+            serial = self.serials[f"/dev/test-{side}"]
+            for motor in self.actuators[side]:
+                original = bytearray(self.original[side][motor.motor_id])
+                if motor.name.endswith("wrist_flex"):
+                    original[11:13] = (3082).to_bytes(2, "little")
+                for address, width in ((7, 1), (9, 2), (11, 2), (18, 1), (31, 2), (33, 1)):
+                    self.assertEqual(
+                        bytes(serial.registers[motor.motor_id][address : address + width]),
+                        bytes(original[address : address + width]),
+                    )
+            filename = f"am_leader_bi_{side}.json" if target == "leader" else "AlohaMiniRobot.json"
+            load_reference_profile(self.root / filename, self.model_name)
+        self.assert_passive_and_closed()
+
+    def test_reuse_upgrades_follower_limits_without_new_home_or_motion(self):
+        self.check_v1_upgrade("robot")
+
+    def test_reuse_upgrades_leader_limits_without_new_home_or_motion(self):
+        self.check_v1_upgrade("leader")
+
+    def test_upgrade_file_failure_rolls_back_eeprom_and_files(self):
+        self.make_v1_calibration("robot")
+        before = {p: p.read_bytes() for p in self.root.glob("*.json")}
+        actual_replace = os.replace
+        count = 0
+
+        def fail_once(source, target):
+            nonlocal count
+            count += 1
+            if count == 2:
+                raise OSError("injected upgrade save failure")
+            return actual_replace(source, target)
+
+        with patch("alohamini.calibration.reference.os.replace", side_effect=fail_once):
+            with self.assertRaisesRegex(OSError, "upgrade save failure"):
+                self.run_calibration()
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assert_restored()
         self.assert_passive_and_closed()
 
     def test_profile_drift_is_rejected_before_ports_are_opened(self):

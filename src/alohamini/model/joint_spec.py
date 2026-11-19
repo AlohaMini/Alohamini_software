@@ -84,7 +84,7 @@ class ModelJointSpecification:
             type(data.get("schema_version")) is not int
             or data["schema_version"] != 1
             or type(data.get("specification_version")) is not int
-            or data["specification_version"] != 1
+            or data["specification_version"] not in (1, 2)
             or data.get("robot_model") != model.model_id
         ):
             raise ValueError("Unsupported or mismatched model joint specification")
@@ -193,6 +193,19 @@ class ModelJointSpecification:
                 capture_positions[name] = row.reference
                 continue
             endpoint = pose["arm_joints"][suffix]
+            if isinstance(endpoint, dict):
+                if (
+                    data["specification_version"] < 2
+                    or set(endpoint) != {"angle_deg", "encoder_rounding"}
+                    or endpoint["encoder_rounding"] not in ("nearest", "floor", "ceil")
+                ):
+                    raise ValueError(f"{name}: invalid explicit calibration pose")
+                finite_number(endpoint["angle_deg"], name)
+                angle = math.radians(endpoint["angle_deg"])
+                if not row.lower <= angle <= row.upper:
+                    raise ValueError(f"{name}: calibration pose exceeds joint limits")
+                capture_positions[name] = angle
+                continue
             if endpoint not in ("reference", "lower", "upper"):
                 raise ValueError(f"{name}: invalid calibration-pose endpoint")
             capture_positions[name] = {
@@ -204,11 +217,14 @@ class ModelJointSpecification:
         self.validate()
 
     @classmethod
-    def from_model(cls, model="alohamini2pro"):
+    def from_model(cls, model="alohamini2pro", *, version=None):
         model = get_robot_model(model) if isinstance(model, str) else model
         if not isinstance(model, RobotModel):
             raise TypeError("Provide a robot model or registered model name")
-        path = model.asset_path("config/kinematics/joint_spec.json")
+        if version not in (None, 1):
+            raise ValueError("Unsupported historical specification version")
+        filename = "joint_spec.json" if version is None else "joint_spec_v1.json"
+        path = model.asset_path(f"config/kinematics/{filename}")
         descriptor = _read_json(path)
         shared = descriptor.get("shared_specification")
         if shared is not None:
@@ -230,6 +246,17 @@ class ModelJointSpecification:
                 raise ValueError("Shared joint specification must name its source model")
             descriptor.update(robot_model=model.model_id, geometry_model=source.model_id)
         return cls(model, descriptor)
+
+    @classmethod
+    def from_signature(cls, model, signature):
+        """Resolve a recorded contract without reinterpreting its encoder ranges."""
+        current = cls.from_model(model)
+        if current.signature == signature:
+            return current
+        previous = cls.from_model(model, version=1)
+        if previous.signature == signature:
+            return previous
+        raise ValueError("Reference profile differs from any supported model specification")
 
     @property
     def descriptor(self):

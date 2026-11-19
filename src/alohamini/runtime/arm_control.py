@@ -230,7 +230,7 @@ class ArmController:
             feedback_times_s=self._feedback_times_s,
         )
         # Check both arms before either bus is written. A hold outside calibrated
-        # target bounds faults the Host; its stop backend can hold actual raw position.
+        # target bounds faults the Host; cleanup must not command a clamped pose.
         for name, position in limited.items():
             self._joints[name].calibration.validate_position(position)
         output_limits = self._guard.output_limits

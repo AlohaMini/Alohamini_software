@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "robot_model": "alohamini2",
+  "shared_specification": {
+    "model": "alohamini2pro",
+    "asset": "config/kinematics/joint_spec_v1.json"
+  }
+}
