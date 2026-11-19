@@ -9,15 +9,16 @@ from unittest.mock import patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from PIL import Image
 from test_dataset import as_png_v1, frame, jpeg, metadata
 from test_dataset_tools import hashes
 
 from alohamini.cli import main
 from alohamini.datasets.edit import edit_dataset, parse_args
-from alohamini.datasets.images import image_bytes, image_rgb
+from alohamini.datasets.images import IMAGE_COLOR, IMAGE_FORMAT, ImageShards, image_bytes, image_rgb
 from alohamini.datasets.lerobotv3 import export_lerobot
 from alohamini.datasets.record import _EpisodeWriter as LocalDataset
-from alohamini.datasets.record import motor_feedback_frame
+from alohamini.datasets.record import dataset_schema, motor_feedback_frame
 from alohamini.datasets.tools import check_dataset, export_dataset, repair_dataset
 
 
@@ -443,6 +444,32 @@ def test_delete_invalid_index_does_not_create_pending_directory(source, tmp_path
 
 
 def test_native_repair_indices_and_orphan_jpegs(source, tmp_path):
+    # This test needs an actual historical TAR source, independently of the
+    # current recorder's H.264 default.
+    info_path = source / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    info.update(version=2, image_format=IMAGE_FORMAT, image_color=IMAGE_COLOR)
+    for directory in sorted((source / "episodes").iterdir()):
+        values = pq.read_table(directory / "frames.parquet").to_pylist()
+        with ImageShards(directory) as shards:
+            for row in values:
+                for camera in info["robot_metadata"]["cameras"]:
+                    key = f"observation.images.{camera}"
+                    rgb = image_rgb(directory, camera, row[key])
+                    encoded = io.BytesIO()
+                    Image.fromarray(rgb).save(encoded, format="JPEG")
+                    row[key] = shards.append(camera, row["frame_index"], encoded.getvalue())
+        pq.write_table(pa.Table.from_pylist(values, schema=dataset_schema(
+            info["features"], info["robot_metadata"]["cameras"], IMAGE_FORMAT
+        )), directory / "frames.parquet")
+        journal = directory / "journal.jsonl"
+        if journal.exists():
+            entries = [json.loads(line) for line in journal.read_text().splitlines()]
+            for entry in entries:
+                if "frame" in entry:
+                    entry["frame"] = values[entry["frame"]["frame_index"]]
+            journal.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+    info_path.write_text(json.dumps(info))
     for old, new in reversed([(0, 2), (1, 5), (2, 8)]):
         directory = source / "episodes" / f"episode_{old:06d}"
         table = pq.read_table(directory / "frames.parquet")
@@ -503,6 +530,7 @@ def test_native_repair_compacts_only_ordered_video_references(source, tmp_path, 
 
     from alohamini.datasets.video import _encode_frames, file_sha256
 
+    as_png_v1(source)  # Explicit image source for the image -> video operation.
     video = tmp_path / "video"
     run(source, video, "convert_image_to_video")
     directory = video / "episodes/episode_000000"

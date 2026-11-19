@@ -518,6 +518,37 @@ SmolVLA／π0.5／FastWAM／Spirit 评估须增加 `--task "拿起物体"`。Dif
 自定义策略接口见 [客户端接口](host-protocol.md#python-策略评估)，示例为 `examples/learning/custom_policy.py`。
 Notebook 入口见 [Notebook](notebook.md)，LeRobot 权重使用见 [LeRobot](lerobot.md)。
 
+### DAgger 纠错与再训练
+
+在评估命令中追加 `--dagger --dataset task_corrections`，连接已标定主臂；键盘需要 X11。
+Space 暂停并保持从臂，Tab 开始手动对齐。主臂关节稳定到位后逐个使能保持；
+全部到位后扶稳主臂，再按 Tab 释放保持并开始纠错。再次 Tab 结束并保存，Space 交还策略，Esc 退出。
+交还时清除旧动作与插值缓存，从当前观测重新推理。
+
+只记录人工纠错，每段独立保存为一个 episode；暂停和对齐不进入训练序列。
+夹爪也须对齐开度；纠错期间底盘停止、升降保持。主臂默认保持输出上限为 `0.2`，
+可用 `--dagger.hold_output_limit` 调整；关节对齐容差默认 3 度（`--dagger.alignment_tolerance_deg`）。
+保持依赖实际供电与人工支撑；故障、反馈中断或对齐超时会释放主臂保持。
+慢速同步推理在当前计算返回后响应暂停，建议使用下述异步模式；不支持固定手臂维度。
+
+合并示范与纠错，开始新一轮微调：
+
+```bash
+alohamini dataset edit --operation.type merge \
+  --operation.roots '["~/Alohamini_workspace/datasets/task_demo", "~/Alohamini_workspace/datasets/task_corrections"]' \
+  --output ~/Alohamini_workspace/datasets/task_merged
+
+python -m alohamini.learning.train \
+  --policy.path ~/Alohamini_workspace/runs/act_01/checkpoint \
+  --dataset.root ~/Alohamini_workspace/datasets/task_merged \
+  --output_dir ~/Alohamini_workspace/runs/act_dagger_01 \
+  --policy.device cuda --steps 10000 --batch_size 8 --background
+```
+
+两份数据须有相同字段、相机、标定和 FPS；按合并后的回合编号指定独立验证集。
+新微调不加 `--resume=true`。日志见 `~/Alohamini_workspace/logs/training/act_dagger_01.log`；
+训练完成后将评估命令的 `--policy.path` 换为新 checkpoint，继续采集。
+
 ### 推理模式
 
 在本地评估命令中增加：
