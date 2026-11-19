@@ -49,8 +49,18 @@ jobs:
           name: macos-serial-${{ runner.arch }}
           path: reports/macos-serial/
   pc:
+    name: pc (${{ matrix.group }})
     runs-on: macos-15
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - group: core
+            sections: serial communication cache data video
+          - group: training
+            sections: training
     defaults:
       run:
         shell: bash -el {0}
@@ -74,9 +84,9 @@ jobs:
           python -m pip check
           python env/dependencies.py check
       - name: Native PC validation
-        run: python env/macos_validation.py --output reports/macos-pc
+        run: python env/macos_validation.py --sections ${{ matrix.sections }} --output reports/macos-pc
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: macos-pc-${{ github.sha }}
+          name: macos-pc-${{ matrix.group }}-${{ github.sha }}
           path: reports/macos-pc/
