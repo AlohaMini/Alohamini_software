@@ -159,7 +159,7 @@ def _open_host(
         )
     if cameras is None:
         cameras = {
-            name: CameraConfig(f"/dev/am_camera_{name}") for name in ("forward", "wrist_right")
+            name: CameraConfig(f"/dev/am_camera_{name}") for name in model.default_cameras
         }
     if not all(isinstance(config, CameraConfig) for config in cameras.values()):
         raise TypeError("Expected named CameraConfig values")

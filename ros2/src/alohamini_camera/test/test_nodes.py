@@ -76,7 +76,9 @@ def test_native_model_assets_and_storage_paths_work_in_ros_install():
     assert WorkspacePaths().calibration.name == "calibration"
 
 
-@pytest.mark.parametrize("selection", ["[auto]", "[forward, wrist_right]"])
+@pytest.mark.parametrize("selection", [
+    "[auto]", "[forward, wrist_right]", "[forward_left, forward_right, wrist_right]",
+])
 def test_launch_entry_accepts_default_and_explicit_camera_selection(
     publisher, tmp_path, monkeypatch, selection
 ):
@@ -234,6 +236,40 @@ def test_zmq_to_real_ros_messages_preserves_rgb_topics_and_capture_time(ros, pub
         original = json.loads(message[1])
         for key in ("host_session_id", "capture_unix_ns", "capture_monotonic_s"):
             assert anchor[key] == original[key]
+    finally:
+        executor.shutdown()
+        observer.destroy_node()
+
+
+@pytest.mark.parametrize("selection", [["auto"], ["forward_left", "forward_right", "wrist_right"]])
+def test_dual_front_zmq_stream_reaches_distinct_ros_topics_without_intrinsics(
+    ros, publisher, tmp_path, selection
+):
+    node = camera(ros, publisher, tmp_path, camera_names=selection)
+    observer = Node("dual_front_observer")
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    executor.add_node(observer)
+    received = {name: [] for name in ("forward_left", "forward_right", "wrist_right")}
+    messages = {name: parts(camera=name, sequence=index + 1)
+                for index, name in enumerate(received)}
+    for name in received:
+        observer.create_subscription(
+            CompressedImage, f"/alohamini/cameras/{name}/image_raw/compressed",
+            received[name].append, 2,
+        )
+    try:
+        deadline = time.monotonic() + 5
+        while not all(received.values()) and time.monotonic() < deadline:
+            for message in messages.values():
+                publisher[0].send_multipart(message)
+            executor.spin_once(timeout_sec=0.02)
+        assert all(received.values())
+        for name in received:
+            assert bytes(received[name][0].data) == messages[name][2]
+            assert received[name][0].header.frame_id == node.frame_ids[name]
+        assert node.frame_ids["forward_left"] != node.frame_ids["forward_right"]
+        assert not node.info_publishers
     finally:
         executor.shutdown()
         observer.destroy_node()

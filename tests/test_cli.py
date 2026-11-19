@@ -84,13 +84,14 @@ class CliTests(unittest.TestCase):
 
     def test_local_calibration_entry_selects_explicit_device_and_model(self):
         for target in ("leader", "robot"):
-            with patch("alohamini.calibration.procedure.calibrate") as calibrate:
-                self.assertEqual(
-                    main(["calibrate", target, "--robot_model", "alohamini2pro", "--id", "test"]), 0
-                )
-                self.assertEqual(calibrate.call_args.args, (target, "alohamini2pro"))
-                self.assertEqual(calibrate.call_args.kwargs["device_id"], "test")
-                self.assertNotIn("rehome", calibrate.call_args.kwargs)
+            for model in ("alohamini2", "alohamini2pro", "alohamini2edu"):
+                with patch("alohamini.calibration.procedure.calibrate") as calibrate:
+                    self.assertEqual(
+                        main(["calibrate", target, "--robot_model", model, "--id", "test"]), 0
+                    )
+                    self.assertEqual(calibrate.call_args.args, (target, model))
+                    self.assertEqual(calibrate.call_args.kwargs["device_id"], "test")
+                    self.assertNotIn("rehome", calibrate.call_args.kwargs)
 
     def test_range_sweep_entries_are_removed(self):
         for args in (["arms"], ["robot", "--rehome"]):
@@ -98,6 +99,26 @@ class CliTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     main(["calibrate", *args, "--robot_model", "alohamini2pro"])
                 calibrate.assert_not_called()
+
+    def test_host_accepts_both_edu_front_cameras(self):
+        with patch("alohamini.runtime.startup.open_host") as open_host:
+            self.assertEqual(
+                main([
+                    "host", "--robot_model", "alohamini2edu", "--cameras",
+                    "forward_left", "forward_right",
+                ]),
+                0,
+            )
+        cameras = open_host.call_args.kwargs["cameras"]
+        self.assertEqual(set(cameras), {"forward_left", "forward_right"})
+        for name, config in cameras.items():
+            self.assertEqual(config.device, f"/dev/am_camera_{name}")
+
+    def test_host_distinguishes_model_defaults_from_explicit_no_cameras(self):
+        for options, expected in (([], None), (["--cameras"], {})):
+            with patch("alohamini.runtime.startup.open_host") as open_host:
+                self.assertEqual(main(["host", "--robot_model", "alohamini2edu", *options]), 0)
+                self.assertEqual(open_host.call_args.kwargs["cameras"], expected)
 
     def test_teleoperation_accepts_existing_cli_names_with_optional_profile(self):
         for profile in ([], ["--teleop.arm_profile", "am-leader-6dof"]):

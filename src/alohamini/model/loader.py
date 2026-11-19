@@ -9,6 +9,7 @@ from types import MappingProxyType
 
 from alohamini._validation import finite_number, identifier
 
+from .cameras import CAMERA_NAMES, DEFAULT_CAMERAS
 from .types import ActuatorSpec, DescriptionView, RobotModel, asset_path
 
 
@@ -179,6 +180,13 @@ def load_robot_model(directory: str | Path) -> RobotModel:
         not isinstance(default_preset, str) or default_preset not in kinematics["kinematic_presets"]
     ):
         raise ValueError("default_kinematic_preset must name a registered kinematic preset")
+    cameras = data.get("default_cameras", list(DEFAULT_CAMERAS))
+    if (
+        not isinstance(cameras, list)
+        or any(not isinstance(name, str) or name not in CAMERA_NAMES for name in cameras)
+        or len(set(cameras)) != len(cameras)
+    ):
+        raise ValueError("default_cameras must be a list of unique supported camera names")
     return RobotModel(
         model_id=data["model_id"],
         actuators=tuple(actuators),
@@ -191,6 +199,7 @@ def load_robot_model(directory: str | Path) -> RobotModel:
         **kinematics,
         default_kinematic_preset=default_preset,
         description_views=MappingProxyType(derived),
+        default_cameras=tuple(cameras),
     )
 
 

@@ -96,7 +96,7 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 | `--state=recorded` | 外部 v3 的原始 state 向量，不做单位换算 |
 | `--state=joint_position,base_velocity,lift_height` | 18 维位置、底盘速度与高度 |
 | `--state=joint_velocity,joint_current` | 双臂 28 维速度/电流，含夹爪 |
-| `--cameras='["forward","wrist_right"]'` | 使用指定相机；省略时使用全部记录相机 |
+| `--cameras='["forward","wrist_right"]'` | 按给定顺序选择相机；省略时按算法预设选择，无预设则使用全部记录相机 |
 
 平台字段按参数顺序组装。关节位置使用标定坐标，关节速度为对应坐标单位/秒，电流为 A；
 底盘速度为 m/s、deg/s，升降高度为 mm。action 为双臂绝对位置目标、底盘速度及升降高度目标。

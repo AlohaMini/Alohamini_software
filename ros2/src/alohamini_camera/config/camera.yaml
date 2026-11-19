@@ -11,6 +11,14 @@ alohamini_camera:
       namespace: /alohamini/cameras/forward
       frame_id: forward_camera_optical
       camera_info_url: ""
+    forward_left:
+      namespace: /alohamini/cameras/forward_left
+      frame_id: forward_left_camera_optical
+      camera_info_url: ""
+    forward_right:
+      namespace: /alohamini/cameras/forward_right
+      frame_id: forward_right_camera_optical
+      camera_info_url: ""
     backward:
       namespace: /alohamini/cameras/backward
       frame_id: backward_camera_optical

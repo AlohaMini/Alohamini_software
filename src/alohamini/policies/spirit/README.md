@@ -67,6 +67,9 @@ Spirit 需要数值 state 和非空任务文本，不支持 `--state=none`。
 
 其他名称通过 `--policy.camera_mapping='{"cam_high":"top","cam_left_wrist":"left","cam_right_wrist":"right"}'`
 显式映射，并用 `--cameras` 选择对应视角。未使用的槽位填黑图。
+双前视 EDU 可选一颗前视和右腕，例如 `--cameras='["forward_left","wrist_right"]'`
+配合 `--policy.camera_mapping='{"cam_high":"forward_left","cam_right_wrist":"wrist_right"}'`。
+同时使用双前视需要另行适配视角槽，不能把第二颗前视标作左腕。
 图像先读取为 RGB 240×320，再由 Qwen processor 处理；训练使用 ColorJitter，验证和推理关闭增强。
 每行 `task` 用作任务文本，机器人提示类型默认为 `aloha`，用 `--policy.robot_type` 覆盖。
 

@@ -130,8 +130,16 @@ def read_recording_index(root, source_info, *, _interrupted_episode=None) -> tup
     features = info.get("features")
     if not isinstance(features, dict):
         raise ValueError("Recording features must be an object")
+    stored_cameras = [
+        key.removeprefix("observation.images.")
+        for key in features if key.startswith("observation.images.")
+    ]
+    if set(stored_cameras) != set(cameras):
+        raise ValueError("Recording camera features differ from the source recording contract")
     shapes = {}
-    for camera in cameras:
+    # Continuing a legacy recording must retain the view order already exposed
+    # to training, even when it differs from the original Host metadata order.
+    for camera in stored_cameras:
         feature = features.get(f"observation.images.{camera}", {})
         shape = feature.get("shape") if isinstance(feature, dict) else None
         if (

@@ -29,10 +29,6 @@ bash ros2/build.bash
 source ros2/env.bash
 ```
 
-环境脚本按 Ubuntu 版本选择 Humble 或 Jazzy，也可先设置 `export ALOHAMINI_ROS_DISTRO=humble` 或 `jazzy`。切换发行版须使用新终端及对应的 ROS Conda 环境。构建目录为 `ros2/build/<发行版>`，安装目录为 `ros2/install/<发行版>`。
-
-`alohamini_core` 从平台根目录安装同一份 Python 源码和模型资产，无需另装 LeRobot、PyTorch 或新建 Conda 环境。
-
 安装依赖、构建和节点启动是独立的检查。在已构建并加载环境的终端中运行仓库测试：
 
 ```bash

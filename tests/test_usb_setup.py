@@ -74,8 +74,9 @@ def test_ambiguous_insertion_and_duplicate_serials_are_rejected(monkeypatch):
         usb_setup._wait_added({"a": port("A")})
 
 
+@pytest.mark.parametrize("role", ["leader", "follower"])
 def test_setup_persists_serials_installs_aliases_and_reuses_after_port_renumbering(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, role
 ):
     workspace, devices = WorkspacePaths(tmp_path), tmp_path / "dev"
     devices.mkdir()
@@ -89,9 +90,9 @@ def test_setup_persists_serials_installs_aliases_and_reuses_after_port_renumberi
     installed = []
     monkeypatch.setattr(usb_setup, "_rules_installed", lambda *_: bool(installed))
 
-    def install(role, prepared, matched, aliases, backup_dir):
-        assert role == "leader"
-        assert prepared.read_bytes() == usb_setup.render_rules(role, bindings)
+    def install(selected_role, prepared, matched, aliases, backup_dir):
+        assert selected_role == role
+        assert prepared.read_bytes() == usb_setup.render_rules(selected_role, bindings)
         installed.append(dict(matched))
         for side, alias in aliases.items():
             alias.unlink(missing_ok=True)
@@ -106,20 +107,63 @@ def test_setup_persists_serials_installs_aliases_and_reuses_after_port_renumberi
             physical = devices / name
             physical.touch()
             current[str(physical)] = port(serial)
-        aliases = usb_setup.ensure_arm_ports("leader", workspace=workspace, device_dir=devices)
+        aliases = usb_setup.ensure_arm_ports(role, workspace=workspace, device_dir=devices)
         assert aliases == tuple(
-            str(devices / f"am_arm_leader_{side}") for side in ("left", "right")
+            str(devices / f"am_arm_{role}_{side}") for side in ("left", "right")
         )
-        usb_setup.ensure_arm_ports("leader", workspace=workspace, device_dir=devices)
+        usb_setup.ensure_arm_ports(role, workspace=workspace, device_dir=devices)
     capture.assert_called_once()
     assert len(installed) == 2
-    stored = json.loads((workspace.calibration / "devices/leader.json").read_text())
+    stored = json.loads((workspace.calibration / f"devices/{role}.json").read_text())
+    assert stored["role"] == role
     assert stored["sides"]["left"]["serial_number"] == "L"
     assert stored["sides"]["right"]["serial_number"] == "R"
     current.clear()
     with pytest.raises(ValueError, match="Connect the saved left"):
-        usb_setup.ensure_arm_ports("leader", workspace=workspace, device_dir=devices)
+        usb_setup.ensure_arm_ports(role, workspace=workspace, device_dir=devices)
     assert len(installed) == 2
+
+
+def test_follower_adopts_aliases_then_repairs_swaps_from_saved_serials(tmp_path, monkeypatch):
+    workspace, devices = WorkspacePaths(tmp_path), tmp_path / "dev"
+    devices.mkdir()
+    physical = {side: devices / f"ttyACM{index}" for index, side in enumerate(("left", "right"))}
+    aliases = {side: devices / f"am_arm_follower_{side}" for side in physical}
+    available = {}
+    for side, path in physical.items():
+        path.touch()
+        aliases[side].symlink_to(path)
+        available[str(path)] = port(side)
+    monkeypatch.setattr(usb_setup, "usb_ports", lambda: available)
+    monkeypatch.setattr(
+        usb_setup, "capture_bindings", Mock(side_effect=AssertionError("must reuse aliases"))
+    )
+    installed = []
+    monkeypatch.setattr(usb_setup, "_rules_installed", lambda *_: bool(installed))
+
+    def install(role, prepared, matched, links, backup_dir):
+        assert role == "follower"
+        installed.append(prepared.read_bytes())
+        for side, link in links.items():
+            link.unlink(missing_ok=True)
+            link.symlink_to(matched[side])
+
+    monkeypatch.setattr(usb_setup, "_install_rules", install)
+    usb_setup.ensure_arm_ports("follower", workspace=workspace, device_dir=devices)
+    saved = workspace.calibration / "devices/follower.json"
+    document = saved.read_bytes()
+    assert json.loads(document)["sides"]["left"]["serial_number"] == "left"
+    for side, other in (("left", "right"), ("right", "left")):
+        aliases[side].unlink()
+        aliases[side].symlink_to(physical[other])
+    usb_setup.ensure_arm_ports("follower", workspace=workspace, device_dir=devices)
+    assert all(alias.resolve() == physical[side] for side, alias in aliases.items())
+    assert len(installed) == 2
+    # Another board at the same tty index cannot silently replace the saved robot.
+    available[str(physical["left"])] = port("replacement")
+    with pytest.raises(ValueError, match="Connect the saved left"):
+        usb_setup.ensure_arm_ports("follower", workspace=workspace, device_dir=devices)
+    assert saved.read_bytes() == document and len(installed) == 2
 
 
 def test_privilege_failure_leaves_prepared_files_and_does_not_open_motors(tmp_path, monkeypatch):

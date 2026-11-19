@@ -19,6 +19,7 @@ alohamini train --policy.type=lingbot_vla_v2 \
 ```
 
 默认读取 `forward,wrist_left,wrist_right` 三路 RGB、完整 18 维状态与任务文本，映射到 55 维语义槽。
+双前视加右腕不属于该默认视角协议；不要按“三路图像”的数量直接替换。使用其他视角须显式核对输入顺序与教师输入，并将适配配置随 checkpoint 保存。
 关节动作相对当前观测，夹爪和底盘速度保留绝对值；动作转换后计算训练集 mean/std。
 升降轴默认保持当前高度；显式设置 `--policy.lift_mode=reserved` 时使用平台扩展槽训练升降动作。
 训练使用未来帧计算教师损失，推理只读取当前帧，部署无需教师权重。

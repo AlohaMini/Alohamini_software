@@ -103,6 +103,13 @@ class ModelAssetTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "registered"):
                 load_robot_model(self.directory)
 
+    def test_camera_defaults_require_distinct_supported_names(self):
+        for value in ("forward", ["missing"], ["forward", "forward"], [None], [["forward"]]):
+            self.data["default_cameras"] = value
+            self.write_model()
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "default_cameras"):
+                load_robot_model(self.directory)
+
     def test_kinematic_chains_are_optional_explicit_contained_assets(self):
         self.write_model()
         self.assertEqual(load_robot_model(self.directory).kinematic_chains, {})

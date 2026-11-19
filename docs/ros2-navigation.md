@@ -49,7 +49,36 @@ export ROS_DOMAIN_ID=5 ROS_LOCALHOST_ONLY=0
 
 Host 使用原有 `alohamini_host` 环境，机型为 `--robot_model alohamini2edu`；按使用手册完成该机器的 Home 标定。
 
+在树莓派执行 `alohamini calibrate robot --robot_model alohamini2edu`。未指定串口时，首次按提示依次插入左右从臂 USB，按控制板序列号生成 `/dev/am_arm_follower_left`、`/dev/am_arm_follower_right`；绑定保存在工作区 `calibration/devices/follower.json`。以后复用绑定，串口编号变化不影响左右对应关系。USB 绑定完成后才进入 Home 标定；自定义连接须同时指定 `--left_port`、`--right_port`。
+
+相机未识别或缺少固定设备名时，按[相机排查与设备命名](alohamini.md#相机找不到或缺少固定名称)处理。
+
+EDU Host 默认开启 `forward_left forward_right wrist_right`，用 `--cameras` 覆盖。ROS 相机节点的 `[auto]` 跟随 Host 图像流，左右前视分别发布到 `/alohamini/cameras/forward_left/image_raw/compressed`、`/alohamini/cameras/forward_right/image_raw/compressed`；RViz Image 可直接选择对应话题。未完成内参标定时只发布图像，不生成 CameraInfo。
+
 默认设备为 `/dev/lidar_c1`（460800）和 `/dev/imu_usb`（115200）；可用启动参数指定 `/dev/serial/by-id/...`。串口用户须有 `dialout` 权限。C1 的 udev 模板位于 `alohamini_rplidar_c1/udev/`，填写实际 USB 序列号后安装；不能仅凭相同 VID/PID 区分多个适配器。没有唯一序列号的 IMU 可使用固定 USB 插口的 `/dev/serial/by-path/...`。
+
+缺少这两个固定名称时，先停止传感器驱动，逐个插拔确认设备对应的串口，再查询身份：
+
+```bash
+ls -l /dev/serial/by-id/ /dev/serial/by-path/
+udevadm info --query=property --name=/dev/ttyUSBX
+sudoedit /etc/udev/rules.d/70-alohamini-sensors.rules
+```
+
+有唯一 `ID_SERIAL_SHORT` 的设备按序列号绑定；没有序列号的设备按 `ID_PATH` 绑定固定 USB 插口。以下为两种规则模板，填写实测的 VID、PID 和身份；设备名分别使用 `lidar_c1` 或 `imu_usb`：
+
+```text
+SUBSYSTEM=="tty", ATTRS{idVendor}=="<VID>", ATTRS{idProduct}=="<PID>", ATTRS{serial}=="<序列号>", SYMLINK+="<设备名>", GROUP="dialout", MODE="0660", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="<VID>", ATTRS{idProduct}=="<PID>", ENV{ID_PATH}=="<USB路径>", SYMLINK+="<设备名>", GROUP="dialout", MODE="0660", ENV{ID_MM_DEVICE_IGNORE}="1"
+```
+
+每个设备选择其中一种规则。`ID_SERIAL` 不一定含唯一序列号；例如无序列号的 CH340，不能仅凭 `/dev/serial/by-id/` 名称区分多个同型号设备。按路径绑定后，换插口或集线器需要重新登记。
+
+```bash
+sudo udevadm control --reload-rules
+# 重新插入对应设备 USB 后执行：
+ls -l /dev/lidar_c1 /dev/imu_usb
+```
 
 传感器安装配置为 `models/alohamini2edu/config/sensors.yaml`。以 Pro 的 REP-103 `base_link` 为基准：X 前、Y 左、Z 上。雷达的旧 CAD 安装变换已换算到此坐标系，不再额外旋转底盘。默认雷达位置是名义值；IMU 平移尚未实测，只使用不依赖平移的 Z 轴角速度。实际外参放入工作区 `calibration/sensors/` 的配置副本，通过 `sensor_profile:=/绝对路径/sensors.yaml` 指定。
 
@@ -137,7 +166,7 @@ ros2 launch alohamini_navigation navigation.launch.py host:=192.168.44.4 \
 ros2 run alohamini_navigation map_session record office_episode_001
 ```
 
-写入工作区 `runs/office_episode_001/bag/`，记录扫描、IMU、轮速、里程计、TF、关节、相机 JPEG／内参、采样时钟关联、地图、ROS 命令和诊断。Ctrl+C 正常刷新文件；结束清单列出各话题消息数和缺失项。可用 `--cameras forward wrist_left wrist_right` 选择相机，`--duration 30` 定时结束，`--require-topics /scan /imu/data_raw` 检查必需话题。录制器不创建 HostClient、不启用运动，不存在的话题不会产生数据。
+写入工作区 `runs/office_episode_001/bag/`，记录扫描、IMU、轮速、里程计、TF、关节、相机 JPEG／内参、采样时钟关联、地图、ROS 命令和诊断。Ctrl+C 正常刷新文件；结束清单列出各话题消息数和缺失项。双前视 EDU 可用 `--cameras forward_left forward_right wrist_right` 选择相机，`--duration 30` 定时结束，`--require-topics /scan /imu/data_raw` 检查必需话题。录制器不创建 HostClient、不启用运动，不存在的话题不会产生数据。
 
 双臂 FK／IK 使用平台的同一套算法，EDU 通过自己的模型资源加载。完整 ROS 整机入口用 `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu`；MoveIt／Joy-Con 预览同样支持该参数。关节映射自动读取 EDU Host 的 Home 标定；设备零偏与行程保存在各机器自己的标定文件中。
 
@@ -155,7 +184,7 @@ python3 deploy/edu/sensors-container run --ros-distro humble --domain 5 \
 
 PC 使用 Jazzy 时，将上述两个命令的 `humble` 改为 `jazzy`。两端默认使用 Cyclone DDS。
 
-容器只运行传感器，不安装 SLAM／Nav2，不启动 Host，也不映射电机串口；使用 host 网络和 IPC。原生 Host 继续在现有环境中运行，相机须在 Host 启动时显式开启，例如原有 `--cameras forward` 参数。`--dry-run` 查看容器命令；另一个终端用 `python3 deploy/edu/sensors-container stop` 停止。
+容器只运行传感器，不安装 SLAM／Nav2，不启动 Host，也不映射电机串口；使用 host 网络和 IPC。原生 Host 继续在现有环境中运行，EDU 默认开启双前视与右腕，也可用 `--cameras` 选择其他已配置的相机。`--dry-run` 查看容器命令；另一个终端用 `python3 deploy/edu/sensors-container stop` 停止。
 
 镜像在运行 USB 驱动的机器上构建，PC 的 x86-64 程序不能直接作为树莓派 ARM64 程序使用。容器只映射选定设备，拔插后若设备节点改变，须重启容器刷新映射。实际安装配置用 `--profile /绝对路径/sensors.yaml` 挂载。
 

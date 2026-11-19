@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
-  "asset_revision": 7,
+  "asset_revision": 8,
   "model_id": "alohamini2edu",
+  "default_cameras": ["forward_left", "forward_right", "wrist_right"],
   "actuators": [
     {
       "name": "arm_left_shoulder_pan",

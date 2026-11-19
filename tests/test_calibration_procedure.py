@@ -437,22 +437,36 @@ class CalibrationProcedureTests(unittest.TestCase):
             self.run_calibration()
         self.assertEqual({p: p.read_bytes() for p in workspace.rglob("*.json")}, before)
 
-    def test_follower_uses_existing_ports_without_usb_binding(self):
-        self.configure("robot")
-        for side in ("left", "right"):
-            self.serials[f"/dev/am_arm_follower_{side}"] = self.serials[f"/dev/test-{side}"]
+    def test_edu_follower_calibration_binds_usb_before_home_capture(self):
+        self.configure("robot", "alohamini2edu")
         with (
-            patch("alohamini.hardware.usb_setup.ensure_arm_ports") as setup,
+            patch(
+                "alohamini.hardware.usb_setup.ensure_arm_ports",
+                return_value=("/dev/test-left", "/dev/test-right"),
+            ) as setup,
             patch("builtins.input", return_value="") as prompt,
             contextlib.redirect_stdout(io.StringIO()),
         ):
             calibrate("robot", self.model_name, calibration_dir=self.root)
-        setup.assert_not_called()
+        self.assertEqual(setup.call_args.args, ("follower",))
+        self.assertEqual(setup.call_count, 1)
         self.assertEqual(prompt.call_count, 1)
         self.assertIsNotNone(
             load_reference_profile(self.root / "AlohaMiniRobot.json", self.model_name)
         )
         self.assert_passive_and_closed()
+
+    def test_follower_usb_setup_failure_does_not_open_motor_buses(self):
+        with (
+            patch(
+                "alohamini.hardware.usb_setup.ensure_arm_ports",
+                side_effect=ValueError("Connect the saved left USB controller"),
+            ),
+            patch("alohamini.calibration.procedure.FeetechBusDevice") as bus,
+        ):
+            with self.assertRaisesRegex(ValueError, "saved left USB"):
+                calibrate("robot", "alohamini2edu", calibration_dir=self.root)
+        bus.assert_not_called()
 
     def test_robot_one_pose_preserves_velocity_axes_and_saves_shared_bindings(self):
         self.configure("robot")

@@ -13,21 +13,21 @@ from alohamini.learning.policy import make_policy
 from alohamini.policies.registry import algorithm
 
 
-def options(enabled=True, *, conditional=False):
+def options(enabled=True, *, conditional=False, cameras=("forward", "wrist_left", "wrist_right")):
     result = model_options(state=False, use_camera_embeddings=enabled)
     result["input_features"] = {
         f"observation.images.{name}": {"type": "VISUAL", "shape": (3, 64, 64)}
-        for name in ("forward", "wrist_left", "wrist_right")
+        for name in cameras
     }
     if conditional:
         result.update(posterior_condition="image_action", prior_type="conditional_gaussian")
     return result
 
 
-def images():
+def images(cameras=("forward", "wrist_left", "wrist_right")):
     return {
         f"observation.images.{name}": torch.rand(1, 3, 64, 64)
-        for name in ("forward", "wrist_left", "wrist_right")
+        for name in cameras
     }
 
 
@@ -86,10 +86,14 @@ def test_wrist_identity_changes_actions_with_fixed_latent(kind, conditional, ena
 
 
 @pytest.mark.parametrize("kind", ["act", "am_act"])
-def test_inference_binds_camera_names_not_input_dictionary_order(kind):
+@pytest.mark.parametrize("cameras", [
+    ("forward", "wrist_left", "wrist_right"),
+    ("forward_left", "forward_right", "wrist_right"),
+])
+def test_inference_binds_camera_names_not_input_dictionary_order(kind, cameras):
     torch.manual_seed(72)
-    model = make_policy(kind, options()).eval()
-    data = images()
+    model = make_policy(kind, options(cameras=cameras)).eval()
+    data = images(cameras)
     with torch.inference_mode():
         expected = model.predict_action_chunk(data)
         actual = model.predict_action_chunk(dict(reversed(list(data.items()))))

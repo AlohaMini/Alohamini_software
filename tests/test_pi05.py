@@ -236,6 +236,7 @@ def test_policy_queue_and_reset():
 
 
 @pytest.mark.parametrize("cameras", [("forward",),
+                                     ("forward_left", "forward_right", "wrist_right"),
                                      ("wrist_right", "chest", "wrist_left", "forward")])
 def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(
     tmp_path, monkeypatch, cameras
@@ -273,7 +274,7 @@ def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(
         writer.save_episode()
 
     # Other algorithms retain the existing fixed-state exclusion default.
-    ordinary = AlohaMiniDataset(root, episodes=[0], cameras=["forward"])
+    ordinary = AlohaMiniDataset(root, episodes=[0], cameras=[cameras[0]])
     assert ordinary.selection.feature["shape"] == [14]
 
     component = PI05Algorithm()
@@ -302,7 +303,9 @@ def test_fixed_state_coordinates_survive_statistics_checkpoint_and_evaluation(
             pass
 
         def sample_actions(self, device, observation, num_steps):
-            return torch.zeros(len(observation.state), self.config.action_horizon, 32, device=device)
+            return torch.zeros(
+                len(observation.state), self.config.action_horizon, 32, device=device
+            )
 
     monkeypatch.setattr(modeling_pi05, "PI0Pytorch", TinyNetwork)
     monkeypatch.setattr(adapter, "configure_finetuning", lambda *args: {})

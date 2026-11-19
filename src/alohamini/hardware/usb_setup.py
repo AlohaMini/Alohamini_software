@@ -368,36 +368,47 @@ def ensure_arm_ports(role, *, workspace=None, device_dir=Path("/dev")):
         return _ensure_leader_ports(workspace or WorkspacePaths(), aliases)
     directory = (workspace or WorkspacePaths()).calibration / "devices"
     path = directory / f"{role}.json"
-    if all(alias.exists() for alias in aliases.values()):
-        if aliases["left"].resolve() == aliases["right"].resolve():
-            raise ValueError("Left and right USB aliases point to the same controller")
-        if path.exists():
-            bindings = _load_bindings(path, role)
-            matched = _matched_ports(bindings, usb_ports())
-            if any(aliases[side].resolve() != Path(matched[side]).resolve() for side in aliases):
-                raise ValueError("USB aliases differ from saved left/right identities")
-        return tuple(str(aliases[side]) for side in ("left", "right"))
+    available = usb_ports()
     if path.exists():
         bindings = _load_bindings(path, role)
+    elif all(alias.exists() for alias in aliases.values()):
+        if aliases["left"].resolve() == aliases["right"].resolve():
+            raise ValueError("Left and right USB aliases point to the same controller")
+        selected = {side: available.get(str(alias.resolve())) for side, alias in aliases.items()}
+        if any(port is None for port in selected.values()):
+            raise ValueError("USB aliases must identify USB controllers; specify both serial ports")
+        bindings = {
+            side: USBController(port.serial_number, port.vid, port.pid)
+            for side, port in selected.items()
+        }
     else:
         bindings = capture_bindings(role)
+        available = usb_ports()
     rules = render_rules(role, bindings)
-    matched = _matched_ports(bindings, usb_ports())
+    matched = _matched_ports(bindings, available)
     prepared = directory / f"{role}.rules"
-    save_bundle(
-        {
-            path: json_bytes(
-                dict(
-                    schema_version=1,
-                    role=role,
-                    sides={side: asdict(board) for side, board in bindings.items()},
-                )
-            ),
-            prepared: rules,
-        },
-        {},
-    )
-    _install_rules(role, prepared, matched, aliases, directory)
+    payloads = {
+        path: json_bytes(
+            dict(
+                schema_version=1,
+                role=role,
+                sides={side: asdict(board) for side, board in bindings.items()},
+            )
+        ),
+        prepared: rules,
+    }
+    changed = {
+        file: content
+        for file, content in payloads.items()
+        if not file.exists() or file.read_bytes() != content
+    }
+    if changed:
+        save_bundle(changed, {})
+    if not _rules_installed(role, rules) or any(
+        not alias.exists() or alias.resolve() != Path(matched[side]).resolve()
+        for side, alias in aliases.items()
+    ):
+        _install_rules(role, prepared, matched, aliases, directory)
     return tuple(str(aliases[side]) for side in ("left", "right"))
 
 

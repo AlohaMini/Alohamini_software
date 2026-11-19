@@ -85,11 +85,13 @@ def test_no_future_or_stale_sample_is_fabricated():
     assert all(not item["valid"] and item["sample"] is None for item in row["sensors"].values())
 
 
-def test_camera_recording_includes_capture_clock_without_raw_image_duplication():
-    topics = recording_topics(["forward"])
-    assert "/alohamini/cameras/forward/image_raw/compressed" in topics
+@pytest.mark.parametrize("cameras", [["forward"], ["forward_left", "forward_right", "wrist_right"]])
+def test_camera_recording_includes_capture_clock_without_raw_image_duplication(cameras):
+    topics = recording_topics(cameras)
+    for name in cameras:
+        assert f"/alohamini/cameras/{name}/image_raw/compressed" in topics
+        assert f"/alohamini/cameras/{name}/image_raw" not in topics
     assert "/alohamini/camera_clock" in topics
-    assert "/alohamini/cameras/forward/image_raw" not in topics
 
 
 def test_real_rosbag_reader_preserves_sensor_values_and_host_clock(tmp_path):

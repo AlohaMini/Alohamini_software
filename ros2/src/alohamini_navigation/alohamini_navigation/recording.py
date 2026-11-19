@@ -9,9 +9,10 @@ from pathlib import Path
 
 import yaml
 
+from alohamini.model.cameras import CAMERA_NAMES
 from alohamini.paths import WorkspacePaths
 
-CAMERAS = ("forward", "backward", "chest", "wrist_left", "wrist_right")
+CAMERAS = CAMERA_NAMES
 TOPICS = [
     "/scan",
     "/scan_filtered",

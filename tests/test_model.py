@@ -6,6 +6,14 @@ from alohamini.model import get_robot_model, loader, robot_models
 
 
 class ModelTests(unittest.TestCase):
+    def test_camera_defaults_preserve_order_and_other_models(self):
+        self.assertEqual(
+            get_robot_model("alohamini2edu").default_cameras,
+            ("forward_left", "forward_right", "wrist_right"),
+        )
+        for name in ("alohamini1", "alohamini2", "alohamini2pro"):
+            self.assertEqual(get_robot_model(name).default_cameras, ("forward", "wrist_right"))
+
     def test_repeated_model_lookup_performs_no_asset_io(self):
         loader._installed_robot_model.cache_clear()
         self.addCleanup(loader._installed_robot_model.cache_clear)

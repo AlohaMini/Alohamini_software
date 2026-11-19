@@ -10,6 +10,7 @@ import sys
 from alohamini.client import HostClient
 from alohamini.errors import AlohaMiniError
 from alohamini.model import robot_models
+from alohamini.model.cameras import CAMERA_NAMES
 from alohamini.paths import WorkspacePaths
 
 
@@ -317,7 +318,7 @@ def _main(argv: list[str] | None = None) -> int:
     )
     calibration.add_argument("target", choices=("leader", "robot"))
     calibration.add_argument(
-        "--robot_model", required=True, choices=("alohamini2", "alohamini2pro")
+        "--robot_model", required=True, choices=("alohamini2", "alohamini2pro", "alohamini2edu")
     )
     calibration.add_argument(
         "--id", "--teleop.id", dest="device_id", help="Calibration ID used by teleoperation or Host"
@@ -366,9 +367,9 @@ def _main(argv: list[str] | None = None) -> int:
     host.add_argument(
         "--cameras",
         nargs="*",
-        default=["forward", "wrist_right"],
-        choices=("forward", "backward", "chest", "wrist_left", "wrist_right"),
-        help="启用的相机名，设备为 /dev/am_camera_<名称>；不填名称则不启用相机",
+        default=None,
+        choices=CAMERA_NAMES,
+        help="默认使用机型配置；指定 /dev/am_camera_<名称>；仅传 --cameras 则不启用相机",
     )
     teleop = commands.add_parser("teleoperate", help="双主臂与键盘遥操；使用已有标定")
     teleop.add_argument(
@@ -595,7 +596,7 @@ def _main(argv: list[str] | None = None) -> int:
             from alohamini.runtime.startup import open_host
 
             logging.basicConfig(level=logging.INFO, format="%(message)s")
-            if len(set(args.cameras)) != len(args.cameras):
+            if args.cameras is not None and len(set(args.cameras)) != len(args.cameras):
                 raise ValueError("Camera names must be unique")
             robot = open_host(
                 args.robot_model,
@@ -604,7 +605,10 @@ def _main(argv: list[str] | None = None) -> int:
                 right_port=args.right_port,
                 bind_host=args.bind_host,
                 use_degrees=args.use_degrees,
-                cameras={name: CameraConfig(f"/dev/am_camera_{name}") for name in args.cameras},
+                cameras=(
+                    None if args.cameras is None else
+                    {name: CameraConfig(f"/dev/am_camera_{name}") for name in args.cameras}
+                ),
             )
             robot.run(profile_timing=args.profile_timing)
             return 0

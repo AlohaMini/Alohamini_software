@@ -16,6 +16,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from std_msgs.msg import String
 
+from alohamini.model.cameras import CAMERA_NAMES
 from alohamini.paths import WorkspacePaths
 
 from .camera_info import (
@@ -26,9 +27,7 @@ from .camera_info import (
 from .protocol import CameraFrame, parse_camera_message
 
 CAMERA_DEFAULTS = {
-    "forward": ("forward_camera_optical", "forward.yaml"),
-    "backward": ("backward_camera_optical", "backward.yaml"),
-    "chest": ("chest_camera_optical", "chest.yaml"),
+    **{name: (f"{name}_camera_optical", f"{name}.yaml") for name in CAMERA_NAMES},
     "wrist_right": ("right_camera_optical", "wrist_right.yaml"),
     "wrist_left": ("left_camera_optical", "wrist_left.yaml"),
 }

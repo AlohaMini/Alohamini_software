@@ -9,6 +9,9 @@
 | `alohamini1` | SO-ARM，5 自由度 + 夹爪 | `so101_leader_bi` |
 | `alohamini2` | AM-ARM，6 自由度 + 夹爪 | `am_leader_bi` |
 | `alohamini2pro` | AM-ARM Pro，6 自由度 + 夹爪 | `am_leader_bi` |
+| `alohamini2edu` | AM-ARM Pro，6 自由度 + 夹爪 | `am_leader_bi` |
+
+EDU 沿用 Pro 主从臂与电机，增加 C1 雷达和幻尔 USB IMU；双前视版本使用独立的左右前视相机。
 
 AM-ARM 主臂使用 5 V、从臂使用 12 V。
 
@@ -18,10 +21,15 @@ AM-ARM 主臂使用 5 V、从臂使用 12 V。
 | 左从臂、底盘、升降 | 树莓派 USB | `/dev/am_arm_follower_left` |
 | 右从臂 | 树莓派 USB | `/dev/am_arm_follower_right` |
 | 前视、右腕相机 | 树莓派 USB | `/dev/am_camera_forward`、`/dev/am_camera_wrist_right` |
+| 双前视相机（EDU） | 树莓派 USB | `/dev/am_camera_forward_left`、`/dev/am_camera_forward_right` |
+| C1 雷达（EDU） | 树莓派 USB | `/dev/lidar_c1` |
+| USB IMU（EDU） | 树莓派 USB | `/dev/imu_usb` |
+
+EDU 的传感器设备名配置、驱动启动和建图导航见 [EDU 传感器、建图与导航](ros2-navigation.md)。
 
 ## 2. 主从臂标定
 
-AM-ARM（`alohamini2`、`alohamini2pro`）按以下 Home 流程标定。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。
+AM-ARM（`alohamini2`、`alohamini2pro`、`alohamini2edu`）按以下 Home 流程标定。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。
 
 已有标定时按 Enter 复用，输入 `c` 重做。标定掉电保留，正常开机无需重新置零。
 
@@ -56,14 +64,18 @@ alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
 
 首次或重做时，将双主臂一起摆到 Home，保持静止，按一次 Enter 完成。更换配对机器人无需重标主臂。
 
-### 从臂标定（树莓派）
+### 从臂标定与序列号记录（树莓派）
 
 ```bash
 conda activate alohamini_host
 alohamini calibrate robot --robot_model <型号>
 ```
 
-使用已有的从臂设备名。首次或重做时，将双从臂一起摆到 Home，保持静止，按一次 Enter 完成。
+首次按提示记录左右从臂 USB 控制板序列号并绑定设备名：拔下左右从臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码，生成 `/dev/am_arm_follower_left`、`/dev/am_arm_follower_right`。
+
+绑定保存在树莓派工作区的 `calibration/devices/follower.json`，udev 规则安装到 `/etc/udev/rules.d/`。以后按序列号复用绑定，换 USB 插口或重启不需要重新确认左右；更换控制板时须重新登记。
+
+USB 绑定完成后才进入 Home 标定。首次或重做时，将双从臂一起摆到 Home，保持静止，按一次 Enter 完成。
 
 串口查询用 `alohamini find-port`；自定义串口须同时传入 `--left_port`、`--right_port`。
 
@@ -78,6 +90,46 @@ alohamini find-cameras opencv
 
 加 `--record-time-s 0` 只列出设备，不保存预览。
 
+### 相机找不到或缺少固定名称
+
+先停止 Host 和其他占用相机的程序，在树莓派执行：
+
+```bash
+ls -l /dev/video* /dev/am_camera*
+alohamini find-cameras opencv --record-time-s 0
+```
+
+- 没有对应的 `/dev/video*`：检查供电、USB 线和集线器，重新插拔后再查。
+- 有设备但无法打开：用 `fuser -v /dev/videoX` 检查占用，并确认当前用户属于 `video` 组。
+- 能找到相机，但没有 `/dev/am_camera_<名称>`：需要补充设备命名规则；`videoX` 编号可能随开机或插拔变化。
+
+逐个插拔或查看预览，确认每颗相机的安装位置和能出图的 `/dev/videoX`，再查询身份：
+
+```bash
+udevadm info --query=property --name=/dev/videoX
+cat /sys/class/video4linux/videoX/index
+sudoedit /etc/udev/rules.d/70-alohamini-cameras.rules
+```
+
+每颗相机写一条规则，将 `<VID>`、`<PID>`、`<序列号>` 分别替换为查询到的 `ID_VENDOR_ID`、`ID_MODEL_ID`、`ID_SERIAL_SHORT`，`<索引>` 使用上一步输出，`<名称>` 使用下文 Host 支持的相机名：
+
+```text
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="<VID>", ATTRS{idProduct}=="<PID>", ATTRS{serial}=="<序列号>", ATTR{index}=="<索引>", SYMLINK+="am_camera_<名称>", GROUP="video", MODE="0660"
+```
+
+没有唯一序列号时，将 `ATTRS{serial}=="<序列号>"` 换成 `ENV{ID_PATH}=="<查询到的 ID_PATH>"`，并保持相机连接在同一 USB 插口。不要只用相同型号的 VID/PID 区分多颗相机，也不要让多条规则给不同相机分配同一个名称。
+
+保存后加载规则，重新插拔对应相机并检查：
+
+```bash
+sudo udevadm control --reload-rules
+# 重新插入相机 USB 后执行：
+ls -l /dev/am_camera*
+alohamini find-cameras opencv
+```
+
+核对预览与固定名称对应的实际位置，再启动 Host。固定设备名只解决设备识别，相机内参和外参另行标定。
+
 ## 4. 启动树莓派 Host
 
 > 启动会使能舵机并执行升降触底回零。
@@ -88,13 +140,14 @@ alohamini host --robot_model <型号>
 ```
 Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
 
-相机名称可选 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。默认开启前视和右腕；用 `--cameras` 指定已连接、已配置设备名的相机，多个名称用空格分隔。
+相机名称可选 `forward`、`forward_left`、`forward_right`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。EDU 默认开启双前视与右腕（`forward_left forward_right wrist_right`），其他机型默认开启单前视与右腕。用 `--cameras` 覆盖机型默认配置，多个名称用空格分隔。
 
 ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
 
 | 需要调整的内容 | 启动命令后追加 |
 | --- | --- |
 | 仅开启前视相机 | `--cameras forward` |
+| 仅开启 EDU 双前视相机 | `--cameras forward_left forward_right` |
 | 不开启相机 | `--cameras`，后面不填名称 |
 | 查看实际 Hz 与耗时 | `--profile_timing` |
 | 指定串口 | `--left_port /dev/ttyACM0 --right_port /dev/ttyACM1` |
@@ -149,7 +202,7 @@ conda activate alohamini_host
 alohamini host --robot_model <型号> --cameras <相机列表>
 ```
 
-`<相机列表>` 用空格分隔，例如 `forward wrist_right`；可选名称见 [Host 配置](#4-启动树莓派-host)。数采记录 Host 开启的全部相机。
+`<相机列表>` 用空格分隔，例如 `forward_left wrist_right`；可选名称见 [Host 配置](#4-启动树莓派-host)。数采记录 Host 开启的全部相机，相机名分别写入数据字段和视频目录，不合并左右视角。
 
 然后在 PC 启动数采：
 
@@ -276,6 +329,7 @@ alohamini replay --dataset pickup_01 \
 | 子目录 | 内容 |
 | --- | --- |
 | `calibration/robots/`、`calibration/teleoperators/` | 整机与主臂标定 |
+| `calibration/devices/` | 主从臂 USB 序列号绑定与规则副本 |
 | `datasets/` | 本地数据集 |
 | `runs/` | 训练与评估产物 |
 | `incoming/` | 待检查的回流数据 |

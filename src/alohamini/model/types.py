@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .cameras import DEFAULT_CAMERAS
+
 
 @dataclass(frozen=True)
 class ActuatorSpec:
@@ -59,6 +61,7 @@ class RobotModel:
     kinematic_presets: Mapping[str, str] = field(default_factory=dict)
     default_kinematic_preset: str | None = None
     description_views: Mapping[str, DescriptionView] = field(default_factory=dict)
+    default_cameras: tuple[str, ...] = DEFAULT_CAMERAS
 
     def asset_path(self, relative: str) -> Path:
         return asset_path(self.directory, relative)

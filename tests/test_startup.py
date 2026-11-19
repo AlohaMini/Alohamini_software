@@ -131,6 +131,21 @@ class CalibrationFileTests(unittest.TestCase):
                     bus.position_calibrations[name], self.values[name].encoder_calibration()
                 )
 
+    def test_edu_assembles_default_cameras_before_opening_hardware(self):
+        self.write({name: asdict(value) for name, value in self.values.items()})
+        with (
+            patch("alohamini.runtime.startup.NativeHost", side_effect=RuntimeError("inspected"))
+            as constructor,
+            patch("serial.Serial") as serial,
+            self.assertRaisesRegex(RuntimeError, "inspected"),
+        ):
+            open_host("alohamini2edu", calibration_file=self.path)
+        serial.assert_not_called()
+        self.assertEqual(
+            list(constructor.call_args.kwargs["cameras"]),
+            ["forward_left", "forward_right", "wrist_right"],
+        )
+
 
 @unittest.skipUnless(
     importlib.util.find_spec("scservo_sdk") and importlib.util.find_spec("zmq"),

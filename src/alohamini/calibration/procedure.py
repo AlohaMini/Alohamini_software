@@ -145,6 +145,10 @@ def calibrate(
             preserve_legacy_leader_calibration(workspace, device_id)
         if left_port is None and right_port is None:
             left_port, right_port = ensure_arm_ports("leader", workspace=workspace)
+    elif left_port is None and right_port is None:
+        from alohamini.hardware.usb_setup import ensure_arm_ports
+
+        left_port, right_port = ensure_arm_ports("follower", workspace=workspace)
     ports = (
         left_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_left",
         right_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_right",

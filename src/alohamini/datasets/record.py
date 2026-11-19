@@ -634,7 +634,11 @@ class _EpisodeWriter:
                         invalid = []
                         frame_shapes = {}
                         encoded_images = {}
-                        for name, jpeg in images.items():
+                        # New datasets inherit the declared camera order, never
+                        # first-arrival order. Existing shape order is retained
+                        # when resuming older recordings.
+                        for name in self.cameras:
+                            jpeg = images[name]
                             try:
                                 encoded, shape = prepare_recording_image(jpeg)
                                 shape = list(shape)

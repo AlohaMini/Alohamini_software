@@ -201,8 +201,6 @@ cd ~/Alohamini
 conda create -n alohamini_ros --file ros2/locks/humble-linux-64.txt
 ```
 
-只创建当前系统对应的一套环境。使用 RoboStack 时不加载 `/opt/ros/.../setup.bash`；上述流程无需安装 `python3-rosdep2` 或运行 `rosdep install`。锁文件已包含本仓库 ROS 包和 Gazebo 扩展所需的依赖；依赖声明位于对应的 `ros2/environment-<发行版>.yml`。
-
 创建后检查：
 
 ```bash
