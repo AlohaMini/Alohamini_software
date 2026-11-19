@@ -37,4 +37,7 @@ jobs:
           python -m pip install --require-hashes -r env/connection.lock
           python -m pip install pytest==8.4.2
       - name: 验证真实广播、退出和设备编号校验
-        run: python -m pytest -q tests/test_discovery.py tests/test_client.py
+        run: >-
+          python -m pytest -q tests/test_discovery.py
+          tests/test_client.py::ClientTransportTests::test_selected_device_identity_is_checked_before_binding_commands
+          tests/test_client.py::ClientTransportTests::test_selected_device_environment_applies_to_existing_cli_clients

@@ -3,6 +3,7 @@
 import socket
 from uuid import uuid4
 
+import ifaddr
 import pytest
 from zeroconf import IPVersion, ServiceInfo, Zeroconf
 
@@ -93,40 +94,51 @@ def test_discovery_wait_is_bounded(timeout):
         discover_robots(timeout)
 
 
-def test_two_same_name_devices_and_service_shutdown():
+@pytest.fixture
+def network_address():
+    # Linux 和 Windows 的回环接口不保证支持组播，使用真实网卡验证 DNS-SD。
+    return next(
+        address.ip
+        for adapter in ifaddr.get_adapters()
+        for address in adapter.ips
+        if isinstance(address.ip, str) and not address.ip.startswith("127.")
+    )
+
+
+def test_two_same_name_devices_and_service_shutdown(network_address):
     first = DeviceIdentity(str(uuid4()), "同名机器人")
     second = DeviceIdentity(str(uuid4()), "同名机器人")
-    with advertise_robot(first, "alohamini2pro", bind_host="127.0.0.1"):
-        with advertise_robot(second, "alohamini2", bind_host="127.0.0.1"):
-            robots = discover_robots(1, interfaces=["127.0.0.1"])
+    with advertise_robot(first, "alohamini2pro", bind_host=network_address):
+        with advertise_robot(second, "alohamini2", bind_host=network_address):
+            robots = discover_robots(1, interfaces=[network_address])
             assert {robot.device_id for robot in robots} == {first.device_id, second.device_id}
-        robots = discover_robots(1, interfaces=["127.0.0.1"])
+        robots = discover_robots(1, interfaces=[network_address])
         assert [robot.device_id for robot in robots] == [first.device_id]
-    assert discover_robots(0.5, interfaces=["127.0.0.1"]) == []
+    assert discover_robots(0.5, interfaces=[network_address]) == []
 
 
-def test_host_failure_unregisters_broadcast():
+def test_host_failure_unregisters_broadcast(network_address):
     identity = DeviceIdentity(str(uuid4()), "启动失败的机器人")
     with pytest.raises(RuntimeError, match="硬件启动失败"):
-        with advertise_robot(identity, "alohamini2pro", bind_host="127.0.0.1"):
+        with advertise_robot(identity, "alohamini2pro", bind_host=network_address):
             raise RuntimeError("硬件启动失败")
-    assert discover_robots(0.5, interfaces=["127.0.0.1"]) == []
+    assert discover_robots(0.5, interfaces=[network_address]) == []
 
 
-def test_duplicate_identity_is_an_error_instead_of_silent_rename():
+def test_duplicate_identity_is_an_error_instead_of_silent_rename(network_address):
     identity = DeviceIdentity(str(uuid4()), "重复编号")
-    with advertise_robot(identity, "alohamini2pro", bind_host="127.0.0.1"):
+    with advertise_robot(identity, "alohamini2pro", bind_host=network_address):
         with pytest.raises(ValueError, match="相同编号"):
-            with advertise_robot(identity, "alohamini2pro", bind_host="127.0.0.1"):
+            with advertise_robot(identity, "alohamini2pro", bind_host=network_address):
                 pytest.fail("不应接受重复编号")
 
 
-def test_browser_ignores_unsupported_broadcast():
-    zeroconf = Zeroconf(interfaces=["127.0.0.1"], ip_version=IPVersion.V4Only)
+def test_browser_ignores_unsupported_broadcast(network_address):
+    zeroconf = Zeroconf(interfaces=[network_address], ip_version=IPVersion.V4Only)
     info = service(txtvers="999")
     try:
         zeroconf.register_service(info)
-        assert discover_robots(0.5, interfaces=["127.0.0.1"]) == []
+        assert discover_robots(0.5, interfaces=[network_address]) == []
     finally:
         zeroconf.unregister_service(info)
         zeroconf.close()
