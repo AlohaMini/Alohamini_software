@@ -68,7 +68,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
       TOKENIZERS_PARALLELISM: "false"
       OMP_NUM_THREADS: "2"
-      PIP_CACHE_DIR: ${{ runner.temp }}/alohamini-pip-cache
+      PIP_CACHE_DIR: ${{ github.workspace }}/.cache/pip
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb
