@@ -10,6 +10,7 @@ from uuid import uuid4
 from alohamini.calibration.reference import (
     PROTOCOL,
     calibration_bytes,
+    calibration_motors,
     json_bytes,
     load_reference_profile,
     save_bundle,
@@ -21,7 +22,7 @@ from alohamini.hardware.feetech_device import (
     DeviceOperationError,
     FeetechBusDevice,
 )
-from alohamini.model import ActuatorSpec
+from alohamini.hardware.serial_ports import serial_port_key
 from alohamini.model.joint_spec import ModelJointSpecification
 from alohamini.paths import WorkspacePaths
 
@@ -133,6 +134,7 @@ def calibrate(
         if calibration_dir is not None
         else workspace.calibration / role
     )
+    auto_pair = leader and left_port is None and right_port is None
     if leader:
         from alohamini.hardware.usb_setup import (
             ensure_arm_ports,
@@ -143,18 +145,20 @@ def calibrate(
         # Associate the old flat files before selecting another USB pair.
         if calibration_dir is None:
             preserve_legacy_leader_calibration(workspace, device_id)
-        if left_port is None and right_port is None:
+        if auto_pair:
             left_port, right_port = ensure_arm_ports("leader", workspace=workspace)
     ports = (
         left_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_left",
         right_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_right",
     )
-    if Path(ports[0]).resolve() == Path(ports[1]).resolve():
+    if serial_port_key(ports[0]) == serial_port_key(ports[1]):
         raise ValueError("Left and right buses must use different serial devices")
     if leader and calibration_dir is None:
         directory = leader_calibration_directory(
             workspace, device_id, dict(zip(("left", "right"), ports, strict=True))
         )
+        if auto_pair and directory == workspace.calibration / role:
+            raise ValueError("Leader arms disconnected. Reconnect both arms before calibrating.")
     paths, actuators, existing = {}, {}, {}
     for side in ("left", "right"):
         file_id = f"{device_id}_{side}" if leader else device_id
@@ -162,13 +166,7 @@ def calibrate(
         paths[side] = directory / default.name
         if paths[side].is_symlink():
             raise ValueError("Use a shared calibration directory, not a linked JSON file")
-        motors = tuple(m for m in model.actuators if m.bus == side)
-        if leader:
-            motors = tuple(
-                ActuatorSpec(m.name.removeprefix(f"arm_{side}_"), side, m.motor_id, "sts3215")
-                for m in motors
-                if m.name.startswith("arm_")
-            )
+        motors = calibration_motors(model, side, leader=leader)
         actuators[side] = motors
         expected = motors if leader else model.actuators
         existing[side] = (
@@ -203,11 +201,11 @@ def calibrate(
                     bus.write_calibration(values)
                 return
             label = "leader" if leader else "follower"
-            lift_hint = "" if leader else " Support the lift."
+            support_hint = " Keep the handles clear of the table." if leader else " Support the lift."
             response = input(
                 f"Place both {label} arms at Home: J1/J5/J6 centered; "
                 "J2/J3/J4 folded to light contact; grippers closed.\n"
-                f"Keep both arms stable; do not force the housings.{lift_hint}\n"
+                f"Keep both arms stable; do not force the housings.{support_hint}\n"
                 "Press ENTER to calibrate (any other input cancels): "
             )
             if response.strip():
