@@ -192,6 +192,7 @@ def record_loop(
     on_frame=None,
     fixed_dimensions=None,
     on_progress=None,
+    on_preview=None,
 ):
     """Source observe -> fresh input -> send -> image/state pair -> save sequence.
 
@@ -476,6 +477,8 @@ def record_loop(
             dataset_write_done_t = time.perf_counter()
             if on_frame is not None:
                 on_frame(snapshot, action)
+            if on_preview is not None:
+                on_preview(snapshot, action)
             work_done_t = time.perf_counter()
             time.sleep(
                 max(0, min(control_interval - (work_done_t - start_loop_t), deadline - work_done_t))
@@ -688,6 +691,7 @@ def record(
                 on_frame=on_frame,
                 **({"fixed_dimensions": fixed_config} if fixed_config else {}),
                 **({"on_progress": keyboard.countdown} if interaction is not None else {}),
+                **({"on_preview": keyboard.preview} if interaction is not None else {}),
             )
             elapsed = time.monotonic() - started
             print(
@@ -714,6 +718,7 @@ def record(
                     on_frame=on_frame,
                     **({"fixed_dimensions": fixed_config} if fixed_config else {}),
                     **({"on_progress": keyboard.countdown} if interaction is not None else {}),
+                    **({"on_preview": keyboard.preview} if interaction is not None else {}),
                 )
             if interaction is not None:
                 keyboard.read()

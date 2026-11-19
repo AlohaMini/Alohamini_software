@@ -20,6 +20,24 @@ from alohamini.apps.recording_interaction import RecordingControls, check_record
 from alohamini.interaction import DesktopInteraction
 
 
+def test_preview_uses_recorded_rgb_and_throttles_without_new_camera_requests():
+    import base64
+    from PIL import Image
+
+    with gui_channel(lambda *_: None) as (interaction, events):
+        controls = RecordingControls(interaction)
+        controls.begin(1, 2, 0)
+        frame = snapshot()
+        frame.images["forward"] = jpeg()
+        controls.preview(frame, None)
+        controls.preview(frame, None)
+        previews = [event for event in events if "previews" in event]
+        assert len(previews) == 1
+        image = previews[0]["previews"][0]
+        with Image.open(io.BytesIO(base64.b64decode(image["base64"]))) as decoded:
+            assert decoded.mode == "RGB" and decoded.width <= 480 and decoded.height <= 270
+
+
 @contextlib.contextmanager
 def gui_channel(on_event):
     read_fd, write_fd = os.pipe()

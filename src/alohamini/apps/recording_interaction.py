@@ -1,7 +1,10 @@
 """桌面采集按钮映射到已有录制事件，结束后调用原生数据检查。"""
 
+import base64
+import io
 import logging
 import sys
+import time
 from contextlib import redirect_stdout
 from queue import Empty
 
@@ -18,6 +21,7 @@ class RecordingControls(RecordingKeyboard):
         self.phase = "starting"
         self.progress = {}
         self.token = None
+        self.preview_at = 0
 
     def __enter__(self):
         if self.keyboard_enabled:
@@ -39,6 +43,22 @@ class RecordingControls(RecordingKeyboard):
 
     def countdown(self, remaining_s, frames):
         self.report(self.phase, remaining_s=remaining_s, frames=frames)
+
+    def preview(self, snapshot, _action):
+        if not snapshot.images or time.monotonic() - self.preview_at < 0.5:
+            return
+        from PIL import Image
+
+        self.preview_at = time.monotonic()
+        images = []
+        for name, content in snapshot.images.items():
+            with Image.open(io.BytesIO(content)) as image:
+                image.thumbnail((480, 270))
+                output = io.BytesIO()
+                image.convert("RGB").save(output, format="JPEG", quality=70)
+                images.append(dict(name=name, width=image.width, height=image.height,
+                                   base64=base64.b64encode(output.getvalue()).decode("ascii")))
+        self.interaction.notify(self.phase, prompt_id=self.token, progress=self.progress, previews=images)
 
     def read(self):
         while True:

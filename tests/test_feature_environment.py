@@ -16,7 +16,7 @@ def test_lightweight_locks_exclude_training_dependencies():
     for name in ("connection", "recording-linux-64", "recording-osx-arm64"):
         locked = requirements(ROOT / f"env/{name}.lock")
         assert not {"torch", "torchvision", "transformers", "torchcodec"} & locked.keys()
-    assert set(requirements(ROOT / "env/connection.lock")) == {"pillow", "pyzmq"}
+    assert set(requirements(ROOT / "env/connection.lock")) == {"pillow", "pyzmq", "zeroconf", "ifaddr"}
 
 
 @pytest.mark.parametrize("feature", ["connection", "calibration"])

@@ -290,7 +290,7 @@ def update_policy(model, batch, optimizer, grad_clip_norm, *, mixed_precision="n
     }
 
 
-def train(settings):
+def train(settings, *, interaction=None):
     settings = resolve_pretrained(settings)
     validate_trainable_dtype(settings.get("trainable_dtype", "preserve"))
     components = algorithm(settings.get("policy", "act"))
@@ -308,15 +308,17 @@ def train(settings):
     try:
         if settings.get("num_processes", execution.local_world_size) != execution.local_world_size:
             raise ValueError("Use --background or torchrun to launch the requested num_processes")
+        if interaction is not None and execution.world_size != 1:
+            raise ValueError("桌面交互训练只支持本机单进程")
         with training_logging(execution.main, training=True), tf32_context(settings["tf32"]):
             logger.info("%s", pformat(settings))
             logger.info("Logs will be saved locally.")
-            return _train(settings, execution)
+            return _train(settings, execution, interaction=interaction)
     finally:
         execution.close()
 
 
-def _train(settings, execution):
+def _train(settings, execution, *, interaction=None):
     """Local offline training with periodic, fully resumable checkpoints."""
     components = algorithm(settings.get("policy", "act"))
     cfg = components.apply_preset(settings)
@@ -457,6 +459,8 @@ def _train(settings, execution):
                 fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError("Another trainer is using this output directory") from exc
+        if interaction is not None:
+            interaction.preparing(output, cfg)
         logger.info("Creating policy")
         resume_state = None
         if cfg.get("resume"):
@@ -755,6 +759,8 @@ def _train(settings, execution):
             )
             step = start_step
             skipped = 0
+            if interaction is not None:
+                interaction.update(step, steps)
             while step < steps:
                 started = time.perf_counter()
                 previous_consumed = consumed
@@ -808,6 +814,8 @@ def _train(settings, execution):
                 window_count = count - consumed_samples(sampler, previous_consumed)
                 progress.samples = count - window_count
                 progress.update(record, window_count)
+                if interaction is not None:
+                    interaction.update(step, steps, loss=record["loss"])
                 if scheduler:
                     scheduler.step()
                 if stream:
@@ -871,7 +879,10 @@ def _train(settings, execution):
                             )
                     finally:
                         restore_rng(rng)
-                if step % save_freq == 0 or step == steps:
+                pausing = interaction is not None and interaction.cancelled.is_set()
+                if step % save_freq == 0 or step == steps or pausing:
+                    if interaction is not None:
+                        interaction.saving()
                     logger.info("Checkpoint policy after step %d", step)
                     # Snapshot consumed work, not sampler prefetch; keep one RNG per rank.
                     ranks = execution.gather(
@@ -906,7 +917,12 @@ def _train(settings, execution):
                         )
                         if execution.main:
                             logger.debug("Saved checkpoint: %s", saved)
+                            if interaction is not None:
+                                interaction.saved(saved / "pretrained_model", step)
                     execution.barrier()
+                if pausing:
+                    interaction.complete("paused" if step < steps else "succeeded")
+                    return output / "checkpoint"
         checkpoint = output / "checkpoint"
         eval_checkpoint = (
             output / "checkpoint-ema"
@@ -988,6 +1004,8 @@ def _train(settings, execution):
         if execution.main:
             logger.info("End of training")
         execution.barrier()
+        if interaction is not None:
+            interaction.complete("succeeded")
         return checkpoint
 
 
