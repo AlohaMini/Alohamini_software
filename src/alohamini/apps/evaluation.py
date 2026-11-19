@@ -171,7 +171,9 @@ def _log_fixed_targets(policy, fixed_config):
     print(f"Fixed deployment configuration: {report}", flush=True)
 
 
-def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, dataset=None):
+def run_evaluation(
+    client, policy, robot_model, *, fps=30, duration_s=60, dataset=None, intervention=None
+):
     """Run one episode. The caller owns the client, policy and optional open dataset.
 
     policy.robot_metadata must describe its trained absolute command coordinates;
@@ -284,6 +286,7 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
         report_started = started
         selected = submitted_count = changed = 0
         last_action = None
+        watchdog_events = initial.payload["_safety"].get("watchdog_events", 0)
         while time.monotonic() < deadline:
             loop_started = time.monotonic()
             if loop_started - report_started >= 2.0:
@@ -301,6 +304,12 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                 break
             if observation is None or not guard.ready:
                 report_wait(guard.reason or "Host 反馈中断或过期")
+                if intervention is not None and not restart_pending:
+                    intervention.feedback_lost(last_snapshot, policy, dataset)
+                if intervention is not None:
+                    intervention.poll_disconnected()
+                    if intervention.stopped:
+                        break
                 restart_pending = True
                 time.sleep(min(1 / fps, max(0, deadline - time.monotonic())))
                 continue
@@ -309,7 +318,18 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
             if restart_pending or guard.context != previous_context:
                 policy.reset()
                 restart_pending = False
-            if policy_cameras:
+            if intervention is not None:
+                current_watchdog = observation.payload["_safety"].get("watchdog_events", 0)
+                if current_watchdog != watchdog_events:
+                    intervention.feedback_lost(observation, policy, dataset)
+                    watchdog_events = current_watchdog
+                intervention.handle_events(observation, policy, dataset, now=time.monotonic())
+                if intervention.stopped:
+                    break
+                manual_action = intervention.action(observation, now=time.monotonic())
+            else:
+                manual_action = None
+            if policy_cameras and manual_action is None:
                 missing = [name for name in policy_cameras if name not in observation.images]
                 if missing:
                     raise ValueError("Missing policy camera: " + ", ".join(missing))
@@ -336,11 +356,22 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                 dataset.check_writer()
             inference_started = time.monotonic()
             # Preserve the exact input for recording even if a policy mutates its argument.
-            value = policy.select_action(deepcopy(observation))
+            value = (policy.select_action(deepcopy(observation))
+                     if manual_action is None else manual_action)
+            if intervention is not None and manual_action is None:
+                # A pause requested during synchronous inference invalidates its
+                # result before it can reach the Host.
+                intervention.handle_events(
+                    observation, policy, dataset, now=time.monotonic(), refresh=checked_read
+                )
+                if intervention.stopped:
+                    break
+                if intervention.phase != "policy":
+                    continue
             if value is None and getattr(policy, "asynchronous", False) is True:
                 time.sleep(max(0, min(loop_started + 1 / fps, deadline) - time.monotonic()))
                 continue
-            selected += 1
+            selected += int(manual_action is None)
             inference_finished = time.monotonic()
             if time.monotonic() >= deadline:
                 break
@@ -348,6 +379,8 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
             # its image/state or invalidate queued requests with a second read.
             if not control_feedback_valid(observation):
                 report_wait("Host 反馈中断或过期")
+                if intervention is not None and not restart_pending:
+                    intervention.feedback_lost(observation, policy, dataset)
                 restart_pending = True
                 time.sleep(min(1 / fps, max(0, deadline - time.monotonic())))
                 continue
@@ -380,7 +413,10 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
             last_action = action
             # Submission is not execution acknowledgement. Later feedback carries
             # accepted targets; a slow/missing ACK must not stretch every action.
-            if dataset is not None and _recordable(observation, cameras, last_recorded):
+            record_tick = intervention is None or intervention.recording
+            if dataset is not None and record_tick and _recordable(
+                observation, cameras, last_recorded
+            ):
                 payload = observation.payload
                 feedback = deepcopy(payload.get("_motor_feedback", {}))
                 frame = {
@@ -403,7 +439,10 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                         "requested_action": action,
                         "action_semantics": HOST_REQUEST_SEMANTICS,
                         **({"fixed_dimensions": fixed_config} if fixed_targets else {}),
-                        "policy_action": {name: float(value[name]) for name in names},
+                        **({"policy_action": {name: float(value[name]) for name in names}}
+                           if intervention is None else {"intervention": True,
+                                                       "control_source": "human",
+                                                       "dagger": asdict(intervention.config)}),
                         **(
                             {"execution_timing": deepcopy(policy.execution_timing)}
                             if isinstance(getattr(policy, "execution_timing", None), dict) else {}
@@ -425,12 +464,18 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
                         "Dataset writer queue full; evaluation continues, capture gaps are counted"
                     )
             # No catch-up burst and no repeated velocity target while inference blocks.
+            if intervention is not None:
+                intervention.finish_save(dataset)
             time.sleep(max(0, min(loop_started + 1 / fps, deadline) - time.monotonic()))
         return commands
     finally:
-        stop_owned_robot(client, robot_model, identity)
-        if getattr(policy, "asynchronous", False) is True:
-            policy.reset()
+        try:
+            stop_owned_robot(client, robot_model, identity)
+        finally:
+            if intervention is not None:
+                intervention.close()
+            if getattr(policy, "asynchronous", False) is True:
+                policy.reset()
 
 
 def evaluate(
@@ -444,9 +489,15 @@ def evaluate(
     reset_time_s=10,
     dataset_name=None,
     task="robot task",
+    dagger=None,
 ):
     """Load a developer-supplied policy factory before opening any robot connection."""
     _options(fps, episode_time_s)
+    if dagger is not None:
+        from alohamini.apps.dagger import DAggerConfig
+
+        if not isinstance(dagger, DAggerConfig):
+            raise TypeError("dagger must be a DAggerConfig")
     finite_number(reset_time_s, "reset duration")
     if type(num_episodes) is not int or num_episodes <= 0 or reset_time_s < 0:
         raise ValueError("Invalid episode count or reset duration")
@@ -480,6 +531,11 @@ def evaluate(
     with ExitStack() as cleanup:
         if getattr(policy, "asynchronous", False) is True:
             cleanup.callback(policy.close)
+        keyboard = None
+        if dagger is not None:
+            from alohamini.apps.dagger import DAggerKeyboard
+
+            keyboard = cleanup.enter_context(DAggerKeyboard())
         client = cleanup.enter_context(
             HostClient(
                 host,
@@ -498,6 +554,17 @@ def evaluate(
         if not isinstance(fixed_config, Mapping):
             fixed_config = None
         _log_fixed_targets(policy, fixed_config)
+        leader = None
+        if dagger is not None:
+            from alohamini.fixed import validate
+            from alohamini.hardware.leader import BimanualLeader
+
+            if any(name.startswith("arm_") for name in validate(fixed_config, robot_model)):
+                raise ValueError("DAgger currently requires unfixed arm dimensions")
+            leader = cleanup.enter_context(BimanualLeader(robot_model, **dagger.leader_options()))
+            # Fail before any policy motion if the leader cannot provide strict
+            # full feedback. Passive voltage-alarm tolerance is not a hold permit.
+            leader.read_handover(ready_units(initial, robot_model, client.client_id))
         dataset = None
         if path is not None:
             dataset = LocalDataset(
@@ -512,15 +579,24 @@ def evaluate(
                 path, policy, evaluation_context, fps=fps, task=task, num_episodes=num_episodes
             )
         for episode in range(num_episodes):
-            if dataset is not None:
+            intervention = None
+            if dagger is not None:
+                from alohamini.apps.dagger import ManualHandover
+
+                intervention = ManualHandover(leader, keyboard, dagger)
+                print("DAgger：Space 暂停/恢复；Tab 对齐/接管/结束纠错；Esc 退出。", flush=True)
+            if dataset is not None and intervention is None:
                 dataset.begin_episode()
             print(f"Eval episode {episode + 1} of {num_episodes}", flush=True)
             count = run_evaluation(
-                client, policy, robot_model, fps=fps, duration_s=episode_time_s, dataset=dataset
+                client, policy, robot_model, fps=fps, duration_s=episode_time_s, dataset=dataset,
+                **({"intervention": intervention} if intervention is not None else {}),
             )
             if dataset is not None:
                 dataset.save_episode()
             print(f"Evaluation episode ended: {count} submitted actions", flush=True)
+            if intervention is not None and intervention.stopped:
+                break
             if episode + 1 < num_episodes:
                 deadline = time.monotonic() + reset_time_s
                 while time.monotonic() < deadline:

@@ -228,6 +228,9 @@ def _main(argv: list[str] | None = None) -> int:
     evaluator.add_argument("--reset_time", dest="reset_time_s", type=float, default=10)
     evaluator.add_argument("--dataset", dest="dataset_name", help="可选，本地评估数据集名称")
     evaluator.add_argument("--task", default="robot task")
+    from alohamini.apps.dagger import add_dagger_arguments
+
+    add_dagger_arguments(evaluator)
     recorder = commands.add_parser("record", help="双主臂多频率数采，本地保存，不上传")
     recorder.add_argument(
         "--dataset",
@@ -486,6 +489,11 @@ def _main(argv: list[str] | None = None) -> int:
             logging.basicConfig(level=logging.WARNING, format="%(message)s")
             options = vars(args).copy()
             options.pop("command")
+            from alohamini.apps.dagger import pop_dagger_options
+
+            dagger = pop_dagger_options(options)
+            if dagger is not None:
+                options["dagger"] = dagger
             checkpoint = options.pop("checkpoint")
             device = options.pop("device")
             from alohamini.trajectory_execution import pop_inference_options

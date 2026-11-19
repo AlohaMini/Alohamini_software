@@ -174,6 +174,7 @@ class FeetechBusDevice(MotorsBus):
         self._prepared = False
         self._calibrating = False
         self._passive = False
+        self._passive_holds: dict[str, tuple[int, int]] = {}
         self._released_velocities: set[str] = set()
         self._output_limit_baselines: dict[str, int] = {}
         self._output_limits: dict[str, float] = {}
@@ -548,7 +549,7 @@ class FeetechBusDevice(MotorsBus):
         selected = list(self._ids) if names is None else list(names)
         if len(set(selected)) != len(selected) or not set(selected) <= self._ids.keys():
             raise ValueError("Position selection must contain distinct configured motors")
-        passive = self._calibrating or self._passive
+        passive = self._calibrating or (self._passive and not self._passive_holds)
         # SOLeader.get_action used sync_read's 50 ms allowance and three retries.
         # Only torque-off leader/calibration reads use that policy. Host feedback
         # and position holds retain their separate, shorter cyclic budgets.
@@ -595,6 +596,106 @@ class FeetechBusDevice(MotorsBus):
                 raise ConnectionError(f"Missing or invalid position: {name}")
             positions[name] = value
         return positions
+
+    def read_handover_positions(self) -> dict[str, int]:
+        """Strict, complete feedback for a leader that may be holding position.
+
+        Unlike torque-off sampling, no voltage or other servo alarm is tolerated.
+        Never clamp an out-of-range encoder reading into an apparent alignment.
+        """
+        self._check_thread()
+        if not self._passive or self._reader is None:
+            raise RuntimeError("Prepare a passive leader before handover")
+        batch = self._reader.read()
+        failures = dict(batch.failures)
+        positions = {}
+        for name in self._ids:
+            sample = batch.samples.get(name)
+            if sample is None:
+                failures.setdefault(name, "Missing leader feedback")
+                continue
+            values = sample.registers
+            if sample.packet_error or values.get("status_raw", -1) != 0:
+                failures[name] = "Leader voltage, temperature, current or servo alarm"
+                continue
+            raw = values.get("position_raw")
+            if type(raw) is not int or not 0 <= raw < 4096:
+                failures[name] = "Invalid leader position"
+                continue
+            try:
+                self._positions[name].validate_position(
+                    self._positions[name].position_from_tick(raw)
+                )
+            except ValueError as exc:
+                failures[name] = str(exc)
+                continue
+            if name in self._passive_holds:
+                target, _ = self._passive_holds[name]
+                if abs(raw - target) > 12:
+                    failures[name] = "Leader position hold slipped; support the arm"
+            positions[name] = raw
+        if failures:
+            raise DeviceOperationError(failures, context="Leader handover feedback")
+        return positions
+
+    def hold_passive_position(self, name: str, *, output_limit: float) -> None:
+        """Latch one leader at its measured position; change RAM only.
+
+        A small output ceiling assists manual support. It is not a calibrated
+        torque value. Firmware voltage/current/temperature protections stay intact.
+        """
+        finite_number(output_limit, "Leader hold output limit")
+        if not 0 < output_limit <= 1 or name not in self._positions:
+            raise ValueError("Leader hold requires a known joint and output limit in (0, 1]")
+        raw = self.read_handover_positions()[name]
+        if name in self._passive_holds:
+            return
+        if self._read_register(name, _TORQUE_ENABLE, 1) != 0:
+            raise RuntimeError("Leader must be unloaded before latching a hold")
+        minimum = self._read_register(name, 15, 1)
+        maximum = self._read_register(name, 14, 1)
+        voltage = self._read_register(name, 62, 1)
+        if not 0 < minimum < maximum or not minimum <= voltage <= maximum:
+            raise RuntimeError("Leader voltage is outside its configured protection limits")
+        ceiling = self._read_register(name, _OUTPUT_LIMIT, 2)
+        persistent = self._read_register(name, 16, 2)
+        if not 0 < ceiling <= 1000 or not 0 < persistent <= 1000:
+            raise RuntimeError("Invalid leader output ceiling")
+        # Register the attempt before I/O, so even a lost torque-enable ACK is
+        # followed by explicit torque-off during cleanup.
+        self._passive_holds[name] = (raw, ceiling)
+        try:
+            cap = min(ceiling, persistent, max(1, int(output_limit * 1000)))
+            self._write_verified(name, _OUTPUT_LIMIT, 2, cap)
+            self._write_verified(name, _GOAL_POSITION, 2, raw)
+            self._write_verified(name, _TORQUE_ENABLE, 1, 1)
+        except BaseException:
+            self.release_passive_holds()
+            raise
+
+    def release_passive_holds(self) -> None:
+        """Unload every attempted hold before restoring its original RAM cap."""
+        if not self._passive_holds:
+            return
+        self._check_thread()
+        failures, interrupts = {}, []
+        for name in self._passive_holds:
+            try:
+                self._write_verified(name, _TORQUE_ENABLE, 1, 0)
+            except BaseException as exc:
+                failures[name] = str(exc)
+                if not isinstance(exc, Exception):
+                    interrupts.append(exc)
+        if not failures:
+            for name, (_, ceiling) in list(self._passive_holds.items()):
+                try:
+                    self._write_verified(name, _OUTPUT_LIMIT, 2, ceiling)
+                    del self._passive_holds[name]
+                except BaseException as exc:
+                    failures[name] = str(exc)
+                    if not isinstance(exc, Exception):
+                        interrupts.append(exc)
+        _finish_cleanup(failures, interrupts)
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read verified motors' EEPROM offsets/ranges without writing registers.

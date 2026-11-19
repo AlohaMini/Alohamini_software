@@ -172,5 +172,44 @@ class BimanualLeader:
         return result
 
     def close(self) -> None:
-        self._connected = False
-        self._resources.close()
+        try:
+            self.release_holds()
+        finally:
+            self._connected = False
+            self._resources.close()
+
+    def read_handover(self, normalizations: Mapping[str, str]) -> dict[str, float]:
+        """Fresh, fault-free leader commands; reject encoder-limit saturation."""
+        if not self._connected:
+            raise RuntimeError("Connect the leader before reading")
+        result = {}
+        for side, device in self.devices.items():
+            units = {name: normalizations[f"arm_{side}_{name}.pos"]
+                     for name in self.calibrations[side]}
+            positions = device.normalize_positions(
+                device.read_handover_positions(), normalizations=units
+            )
+            result.update({f"arm_{side}_{name}.pos": value
+                           for name, value in positions.items()})
+        return result
+
+    def hold_joint(self, key: str, *, output_limit: float) -> None:
+        """Latch only a manually aligned joint, never drive to a remote target."""
+        for side, device in self.devices.items():
+            prefix = f"arm_{side}_"
+            if key.startswith(prefix) and key.endswith(".pos"):
+                name = key[len(prefix):-4]
+                if name in self.calibrations[side]:
+                    device.hold_passive_position(name, output_limit=output_limit)
+                    return
+        raise ValueError(f"Unknown leader joint: {key}")
+
+    def release_holds(self) -> None:
+        failures = {}
+        for side, device in self.devices.items():
+            try:
+                device.release_passive_holds()
+            except Exception as exc:
+                failures[side] = str(exc)
+        if failures:
+            raise RuntimeError(f"Unable to release leader holds: {failures}")

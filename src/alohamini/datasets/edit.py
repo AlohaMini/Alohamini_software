@@ -759,6 +759,16 @@ def edit_dataset(args):
         roots = args.roots
         if not isinstance(roots, list) or not roots or any(not isinstance(p, str) for p in roots):
             raise ValueError("merge requires --operation.roots with local dataset directories")
+        formats = [json.loads((Path(root).expanduser() / "meta/info.json").read_text())
+                   .get("codebase_version") == "v3.0" for root in roots]
+        if any(formats):
+            if not all(formats):
+                raise ValueError("Export legacy datasets to v3 before merging with v3 data")
+            if not args.output:
+                raise ValueError("--output is required; source datasets are never modified")
+            from alohamini.datasets.merge_v3 import merge_v3
+
+            return merge_v3(roots, args.output)
     else:
         if not args.root:
             raise ValueError("--root is required")
