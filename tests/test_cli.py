@@ -160,6 +160,20 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(_main(["host", "--robot_model", "alohamini2pro", *option]), 0)
                 open_host.return_value.run.assert_called_once_with(profile_timing=enabled)
 
+    def test_host_does_not_publish_or_remove_device_discovery(self):
+        import tempfile
+        from alohamini.cli import _main
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.dict(os.environ, {"ALOHAMINI_WORKSPACE": directory}),
+                patch("alohamini.runtime.startup.open_host") as host,
+                patch("alohamini.discovery.advertise_robot", side_effect=AssertionError("Host 不应管理广播")),
+            ):
+                self.assertEqual(_main(["host", "--robot_model", "alohamini2pro"]), 0)
+                host.return_value.run.assert_called_once()
+                self.assertEqual(len(host.call_args.kwargs["device_id"]), 36)
+
     def test_paths_is_local_only_and_reports_all_storage_directories(self):
         with (
             patch.dict(os.environ, {"ALOHAMINI_WORKSPACE": "/mnt/robot-workspace"}),

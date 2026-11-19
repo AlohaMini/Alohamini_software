@@ -140,3 +140,6 @@ select = ["E", "F", "I", "UP", "B"]
 
 "src/alohamini/policies/xiaomi_robotics1/_vendor/**/*.py" = ["ALL"]
 "src/alohamini/policies/lingbot_vla_v2/_vendor/**/*.py" = ["ALL"]
+
+[tool.pytest.ini_options]
+markers = ["multicast: 需要本机网络支持 mDNS 组播的真实集成测试"]

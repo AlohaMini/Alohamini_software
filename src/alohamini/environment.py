@@ -112,11 +112,11 @@ def inspect_environment(root, role, names=None):
 
 def command_packages(argv):
     """Check only packages used by this entry point; optional policies stay lazy."""
-    if not argv or "--help" in argv or "-h" in argv or argv[0] in {"env", "paths", "inspect", "discover"}:
+    if not argv or "--help" in argv or "-h" in argv or argv[0] in {"env", "paths", "inspect", "discover", "advertise"}:
         return set()
     command = argv[0]
     if command == "host":
-        return {"numpy", "opencv-python-headless", "pyzmq", "pyserial", "feetech-servo-sdk", "zeroconf", "ifaddr"}
+        return {"numpy", "opencv-python-headless", "pyzmq", "pyserial", "feetech-servo-sdk"}
     if command in {"train", "evaluate"} or argv[:2] == ["inference", "serve"]:
         return {
             "numpy",

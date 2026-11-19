@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import math
+import signal
 import socket
+import sys
 import threading
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -103,9 +105,11 @@ def advertise_robot(identity: DeviceIdentity, robot_model: str, *, bind_host="0.
         SERVICE_TYPE,
         f"{instance}.{SERVICE_TYPE}",
         addresses=[socket.inet_aton(address) for address in addresses],
-        port=5556,
+        port=22,
         properties={
-            "txtvers": "1",
+            "txtvers": "2",
+            "transport": "ssh",
+            "state_port": "5556",
             "device_id": identity.device_id,
             "name": identity.name,
             "robot_model": robot_model,
@@ -125,7 +129,7 @@ def advertise_robot(identity: DeviceIdentity, robot_model: str, *, bind_host="0.
             ) from error
         cleanup.callback(zeroconf.unregister_service, service)
         logger.info(
-            "已广播机器人：%s，编号 %s，地址 %s:5556",
+            "已广播机器人：%s，编号 %s，管理地址 %s:22",
             identity.name,
             identity.device_id,
             ", ".join(addresses),
@@ -133,18 +137,36 @@ def advertise_robot(identity: DeviceIdentity, robot_model: str, *, bind_host="0.
         yield identity
 
 
+def advertise_device(paths: WorkspacePaths, robot_model: str, *, name=None, bind_host="0.0.0.0"):
+    """常驻发布设备身份，与电机 Host 的启停无关。"""
+    identity = load_identity(paths, name)
+    with ExitStack() as cleanup:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            # 信号处理器不获取线程锁，由退出异常触发上下文清理。
+            previous = signal.signal(signum, lambda _signum, _frame: sys.exit(0))
+            cleanup.callback(signal.signal, signum, previous)
+        cleanup.enter_context(advertise_robot(identity, robot_model, bind_host=bind_host))
+        threading.Event().wait()
+
+
 def parse_service(info: ServiceInfo) -> DiscoveredRobot:
     """DNS-SD 数据在进入 SDK 时校验一次，之后向调用方返回已解析的值。"""
     from zeroconf import IPVersion
 
     properties = info.decoded_properties
-    if info.type != SERVICE_TYPE or properties.get("txtvers") != "1":
+    if (
+        info.type != SERVICE_TYPE
+        or properties.get("txtvers") != "2"
+        or properties.get("transport") != "ssh"
+        or info.port != 22
+    ):
         raise ValueError("不支持的机器人广播类型或版本")
     identity = DeviceIdentity(properties["device_id"], properties["name"])
     model = properties["robot_model"]
     get_robot_model(model)
     command_port = int(properties["command_port"])
-    if type(info.port) is not int or not 1 <= info.port <= 65535:
+    state_port = int(properties["state_port"])
+    if not 1 <= state_port <= 65535:
         raise ValueError("机器人状态端口无效")
     if not 1 <= command_port <= 65535:
         raise ValueError("机器人控制端口无效")
@@ -152,7 +174,7 @@ def parse_service(info: ServiceInfo) -> DiscoveredRobot:
     if not addresses:
         raise ValueError("机器人广播没有 IPv4 地址")
     return DiscoveredRobot(
-        identity.device_id, identity.name, model, addresses, info.port, command_port
+        identity.device_id, identity.name, model, addresses, state_port, command_port
     )
 
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=AlohaMini 只读设备发现（%i）
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=%i
+Environment=ALOHAMINI_WORKSPACE=/home/%i/Alohamini_workspace
+ExecStart=/home/%i/miniconda3/envs/alohamini_host/bin/python -m alohamini advertise --robot_model alohamini2pro
+Restart=on-failure
+RestartSec=3
+PrivateDevices=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
