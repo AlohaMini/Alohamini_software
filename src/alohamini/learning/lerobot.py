@@ -1,5 +1,6 @@
 """Read local LeRobot v3 datasets without LeRobot or a Hub connection."""
 
+import hashlib
 import io
 import json
 import pickle
@@ -68,9 +69,39 @@ class LeRobotSource:
                 "This LeRobot v3 dataset has no Host calibration/safety metadata; "
                 "to use its recorded coordinates, set --dataset.allow_unannotated=true"
             )
-        source_info = (
-            deepcopy(info) if self.unannotated else json.loads(path.read_text())["source_info"]
-        )
+        annotation = {} if self.unannotated else json.loads(path.read_text())
+        source_info = deepcopy(info) if self.unannotated else annotation["source_info"]
+        self.has_safety_metadata = not self.unannotated
+        conversion_path = None
+        capture = annotation.get("capture_metadata")
+        if capture is not None and capture.get("available") is False:
+            # Imported coordinates can be verified without inventing historical
+            # feedback validity, command identities or Host-clock measurements.
+            from alohamini.calibration.reference import reference_coordinates
+
+            conversion_path = root / "meta/coordinate_conversion.json"
+            if not conversion_path.is_file():
+                raise ValueError("Imported coordinates require their conversion provenance")
+            payload = conversion_path.read_bytes()
+            conversion = json.loads(payload)
+            contract = hashlib.sha256(
+                json.dumps(
+                    source_info, sort_keys=True, separators=(",", ":"), allow_nan=False
+                ).encode()
+            ).hexdigest()
+            if (
+                capture.get("reason") != "not_recorded_in_source"
+                or annotation.get("coordinate_conversion_sha256")
+                != hashlib.sha256(payload).hexdigest()
+                or conversion.get("format") != "alohamini-coordinate-conversion"
+                or conversion.get("version") != 1
+                or conversion.get("status") != "complete"
+                or conversion.get("source_capture_metadata") != "unavailable"
+                or conversion.get("source_info_sha256") != contract
+            ):
+                raise ValueError("Imported coordinate conversion provenance does not match")
+            reference_coordinates(source_info["robot_metadata"])
+            self.has_safety_metadata = False
         if self.unannotated:
             source_info["training_only"] = {
                 "source": "original_lerobot_v3",
@@ -104,6 +135,8 @@ class LeRobotSource:
         self.metadata_paths = [root / "meta/info.json"]
         if not self.unannotated:
             self.metadata_paths.append(path)
+        if conversion_path is not None:
+            self.metadata_paths.append(conversion_path)
         for path in sorted((root / "meta/episodes").rglob("*.parquet")):
             self.metadata_paths.append(path)
             for row in pq.read_table(path).to_pylist():
@@ -175,7 +208,7 @@ class LeRobotSource:
             for episode in episodes:
                 path = paths[episode]
                 safety = self.root / "meta/safety" / f"episode_{episode:06d}.jsonl"
-                if self.unannotated:
+                if not self.has_safety_metadata:
                     safety = None
                 elif not safety.is_file():
                     raise ValueError(f"Episode {episode}: missing original safety/timing sidecar")
@@ -227,7 +260,7 @@ class LeRobotSource:
         for episode in episodes:
             path = paths[episode]
             safety = self.root / "meta/safety" / f"episode_{episode:06d}.jsonl"
-            if self.unannotated:
+            if not self.has_safety_metadata:
                 safety = None
             elif not safety.is_file():
                 raise ValueError(f"Episode {episode}: missing original safety/timing sidecar")

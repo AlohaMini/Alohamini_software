@@ -648,7 +648,13 @@ class AlohaMiniDataset(Dataset):
                         or not np.isfinite(values).all()
                     ):
                         raise ValueError("Invalid numeric observation context")
-                if not (self._storage and self._storage.unannotated) and (
+                if not (
+                    self._storage
+                    and (
+                        self._storage.unannotated
+                        or not getattr(self._storage, "has_safety_metadata", True)
+                    )
+                ) and (
                     key in self.context_fields
                     or any(
                         k == "observation.state"
