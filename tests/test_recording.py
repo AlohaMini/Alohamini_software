@@ -1,6 +1,7 @@
 import contextlib
 import io
 import tempfile
+import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -88,7 +89,7 @@ class RecordingLoopTests(unittest.TestCase):
         self.calls.append("send")
         return CommandIdentity("client", self.clock.count, "session", 0)
 
-    def run_loop(self, duration=0.1, fps=30):
+    def run_loop(self, duration=0.1, fps=30, *, on_frame=None):
         def sleep(seconds):
             self.clock.now += seconds
 
@@ -109,6 +110,7 @@ class RecordingLoopTests(unittest.TestCase):
                     duration_s=duration,
                     metadata=self.meta,
                     dataset=self.dataset,
+                    on_frame=on_frame,
                 )
             finally:
                 self.stop_call = stop.call_args
@@ -359,8 +361,101 @@ class RecordingLoopTests(unittest.TestCase):
         self.assertEqual(self.requests, [True, False, True, False, True, False])
         self.assertEqual(len(self.frames), 3)
 
+    def test_slow_preview_does_not_block_capture_or_change_recorded_images(self):
+        from alohamini.apps import visualization
+
+        entered, release, rendered_latest = threading.Event(), threading.Event(), threading.Event()
+        rendered = []
+
+        def render(sample, _action):
+            rendered.append(sample.payload["arm_left_shoulder_pan.pos"])
+            if len(rendered) == 1:
+                entered.set()
+                release.wait(2)
+            else:
+                rendered_latest.set()
+
+        with patch.object(visualization, "log_snapshot", side_effect=render):
+            with visualization.TeleopPreview(None, "alohamini2pro", fps=30) as worker:
+                try:
+                    worker.submit(snapshot(), {})
+                    self.assertTrue(entered.wait(1))
+                    self.run_loop(on_frame=worker.submit)
+                    self.assertEqual(self.client.send_command.call_count, 5)
+                    self.assertEqual(len(self.frames), 3)
+                    self.assertTrue(
+                        all(images == {"forward": b"jpeg"} for _, images, _ in self.frames)
+                    )
+                    self.assertEqual(len(rendered), 1)
+                    release.set()
+                    self.assertTrue(rendered_latest.wait(1))
+                finally:
+                    release.set()
+            self.assertFalse(worker._thread.is_alive())
+        self.assertEqual(len(rendered), 2)
+
+    def test_reset_preview_uses_state_only_requests(self):
+        self.dataset = None
+        preview = Mock()
+        self.run_loop(on_frame=preview)
+        self.assertEqual(self.client.send_command.call_count, 5)
+        self.assertEqual(preview.call_count, 5)
+        self.assertFalse(any(self.requests))
+        self.assertTrue(all(not call.args[0].images for call in preview.call_args_list))
+
 
 class RecordingEntryTests(unittest.TestCase):
+    def test_recording_and_reset_share_async_preview_and_close_it_before_viewer(self):
+        client = Mock(client_id="client")
+        initial = snapshot()
+        initial.payload["_robot_metadata"] = metadata()
+        client.connect_control.return_value = initial
+        client.__enter__ = Mock(return_value=client)
+        events = []
+        client.__exit__ = Mock(side_effect=lambda *_: events.append("client"))
+        keyboard = RecordingKeyboard()
+        dataset = Mock(num_episodes=0, submitted=3, saved=3, last_save_timings={})
+        dataset.save_episode.side_effect = lambda: setattr(dataset, "num_episodes", 1)
+        dataset.close.side_effect = lambda: events.append("dataset")
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch("alohamini.apps.recording.BimanualLeader") as leader,
+                patch("alohamini.apps.recording.RecordingKeyboard") as keys,
+                patch("alohamini.apps.recording.HostClient", return_value=client),
+                patch("alohamini.datasets.record.LocalDataset", return_value=dataset),
+                patch("alohamini.apps.recording.record_loop") as loop,
+                patch("alohamini.apps.visualization.TeleopPreview") as preview,
+                patch("alohamini.apps.visualization.init_rerun"),
+                patch(
+                    "alohamini.apps.visualization.shutdown_rerun",
+                    new=lambda *_: events.append("viewer"),
+                ),
+                patch(
+                    "alohamini.apps.visualization.log_snapshot",
+                    side_effect=AssertionError("recording must not render synchronously"),
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                keys.return_value.__enter__.return_value = keyboard
+                leader.return_value.__exit__.side_effect = lambda *_: events.append("leader")
+                preview.return_value.__exit__.side_effect = lambda *_: events.append("preview")
+                record(
+                    "pi",
+                    "alohamini2pro",
+                    dataset_name="test",
+                    task="pick",
+                    root=Path(directory) / "capture",
+                    display_data=True,
+                    reset_time_s=0.1,
+                )
+                preview.assert_called_once_with("pi", "alohamini2pro", fps=30)
+                self.assertEqual(loop.call_count, 2)
+                callback = preview.return_value.__enter__.return_value.submit
+                self.assertTrue(
+                    all(call.kwargs["on_frame"] == callback for call in loop.call_args_list)
+                )
+                self.assertEqual(events, ["preview", "viewer", "leader", "client", "dataset"])
+
     def test_leader_calibration_cancel_does_not_create_dataset_or_start_keyboard(self):
         client = Mock(client_id="client")
         client.connect_control.return_value = snapshot()

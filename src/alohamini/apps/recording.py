@@ -210,9 +210,8 @@ def record_loop(
     deadline = start_episode_t + duration_s
     control_interval, dataset_interval = 1 / 50, 1 / fps
     next_camera_request_t = next_state_only_sample_t = start_episode_t
-    expected_cameras = (
-        dataset.cameras if dataset is not None else tuple(metadata["cameras"]) if on_frame else ()
-    )
+    # Preview owns its 5557 subscription; reset-only control needs no 5556 JPEGs.
+    expected_cameras = dataset.cameras if dataset is not None else ()
     sample_buffer = StateSampleBuffer(50)
     camera_gate = (
         FreshCameraGate(
@@ -640,11 +639,12 @@ def record(
         dataset_cleanup.callback(discard_rerecord_on_exit)
         on_frame = None
         if display_data:
-            from alohamini.apps.visualization import init_rerun, log_snapshot, shutdown_rerun
+            from alohamini.apps.visualization import TeleopPreview, init_rerun, shutdown_rerun
 
             cleanup.push(shutdown_rerun)
             init_rerun("alohamini_record")
-            on_frame = log_snapshot
+            preview = cleanup.enter_context(TeleopPreview(host, robot_model, fps=fps))
+            on_frame = preview.submit
         recorded_episodes = 0
         events = keyboard.events
         while recorded_episodes < num_episodes and not events["stop_recording"]:

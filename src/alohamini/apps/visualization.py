@@ -21,6 +21,7 @@ import socket
 import subprocess
 import threading
 import time
+from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
 
@@ -324,6 +325,23 @@ def log_rerun_data(
     _ensure_blueprint(observation_paths, action_paths, image_paths)
 
 
+def _log_camera_jpegs(images: dict[str, bytes]) -> None:
+    """Forward standard 5557 JPEGs unchanged; the Viewer owns image decoding.
+
+    Legacy 5556 snapshot JPEGs have different channel semantics and continue
+    through log_snapshot. Keeping stream frames encoded avoids expanding each
+    camera into an RGB array in the SDK transport and recording history.
+    """
+    import rerun as rr
+
+    image_paths = set()
+    for name, jpeg in images.items():
+        key = f"{OBS_PREFIX}{name}"
+        rr.log(key, rr.EncodedImage(contents=jpeg, media_type="image/jpeg"))
+        image_paths.add(key)
+    _ensure_blueprint(set(), set(), image_paths)
+
+
 def _decode_images(images: dict) -> dict:
     import cv2
 
@@ -403,7 +421,15 @@ class TeleopPreview:
                     snapshot, action = pending
                     if snapshot is not None and snapshot.robot_model != self._model:
                         raise ValueError("Preview robot_model does not match control state")
-                    log_snapshot(snapshot, action)
+                    # Recorded 5556 JPEGs belong to the dataset. Online preview
+                    # uses standard 5557 JPEGs, without decoding the legacy copy
+                    # or changing the snapshot retained by the recorder.
+                    state = (
+                        replace(snapshot, images={})
+                        if socket is not None and snapshot is not None and snapshot.images
+                        else snapshot
+                    )
+                    log_snapshot(state, action)
                     if socket is not None and snapshot is not None:
                         expected_session = snapshot.payload["_safety"]["host_session_id"]
                         if session != expected_session:
@@ -438,12 +464,7 @@ class TeleopPreview:
                             sequences[frame.camera_name] = frame.sequence
                             latest[frame.camera_name] = frame.jpeg
                         if latest and not self._stop.is_set():
-                            # 5557 uses standard JPEG (unlike the legacy 5556 wire).
-                            rgb = {
-                                name: pixels[:, :, ::-1]
-                                for name, pixels in _decode_images(latest).items()
-                            }
-                            log_rerun_data(rgb)
+                            _log_camera_jpegs(latest)
                 self._stop.wait(max(0, self._interval - (time.monotonic() - started)))
         except Exception:
             logging.exception("遥操预览已停止；控制连接不受影响。")

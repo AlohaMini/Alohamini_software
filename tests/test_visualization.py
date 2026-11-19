@@ -24,6 +24,7 @@ class VisualizationTests(unittest.TestCase):
             "log",
             "Scalars",
             "Image",
+            "EncodedImage",
             "DepthImage",
             "init",
             "spawn",
@@ -169,14 +170,18 @@ class VisualizationTests(unittest.TestCase):
             all(not call.kwargs.get("include_images") for call in client.read.call_args_list)
         )
 
-    def test_camera_subscription_is_bounded_session_bound_and_standard_rgb(self):
+    def test_camera_subscription_keeps_latest_standard_jpeg_without_decoding(self):
+        from io import BytesIO
+
         import cv2
         import zmq
+        from PIL import Image
         from test_teleoperation import snapshot
 
         sample = snapshot()
         sample.payload["_robot_metadata"]["cameras"] = ["forward"]
         sample.payload["_host_timing"] = {"state_sample_monotonic_s": 2.0}
+        sample.images = {"forward": b"legacy-recording-jpeg"}
         worker = self.viz.TeleopPreview("test-only", "alohamini2pro", fps=30)
 
         def packet(seq, *, session="session", name="forward", stamp=2.0, red=True):
@@ -199,9 +204,10 @@ class VisualizationTests(unittest.TestCase):
 
         context, socket = Mock(), Mock()
         context.socket.return_value = socket
+        latest = packet(2)
         socket.recv_multipart.side_effect = [
             packet(1, red=False),
-            packet(2),
+            latest,
             packet(1, red=False),
             packet(3, session="old-session", red=False),
             packet(3, stamp=1.0, red=False),
@@ -210,23 +216,48 @@ class VisualizationTests(unittest.TestCase):
             zmq.Again(),
         ]
         worker.submit(sample, {})
+        self.rr.log.side_effect = lambda *_args, **_kwargs: worker._stop.set()
         with (
             patch("zmq.Context", return_value=context),
-            patch.object(self.viz, "log_snapshot"),
-            patch.object(
-                self.viz, "log_rerun_data", side_effect=lambda *_: worker._stop.set()
-            ) as log,
+            patch.object(self.viz, "log_snapshot") as state_log,
+            patch("cv2.imdecode", side_effect=AssertionError("preview must retain JPEG")),
+            patch("cv2.imencode", side_effect=AssertionError("preview must not recompress")),
         ):
             worker._run()
         context.socket.assert_called_once_with(zmq.SUB)
         socket.connect.assert_called_once_with("tcp://test-only:5557")
         socket.send.assert_not_called()
-        image = log.call_args.args[0]["forward"]
+        state = state_log.call_args.args[0]
+        self.assertEqual(state.images, {})
+        self.assertIs(state.payload, sample.payload)
+        self.assertEqual(sample.images, {"forward": b"legacy-recording-jpeg"})
+        self.rr.EncodedImage.assert_called_once_with(contents=latest[2], media_type="image/jpeg")
+        encoded = self.rr.EncodedImage.call_args.kwargs["contents"]
+        self.assertIs(encoded, latest[2])
+        image = self.np.array(Image.open(BytesIO(encoded)).convert("RGB"))
         self.assertGreater(int(image[0, 0, 0]), 240)
         self.assertLess(int(image[0, 0, 2]), 10)
-        self.assertEqual(set(log.call_args.args[0]), {"forward"})
+        self.rr.log.assert_called_once_with(
+            "observation.forward", self.rr.EncodedImage.return_value
+        )
         socket.close.assert_called_once_with(linger=0)
         context.term.assert_called_once()
+
+    def test_jpeg_cameras_extend_layout_without_losing_state_or_action_views(self):
+        self.viz.log_rerun_data({"joint.pos": 1.0}, {"joint.pos": 2.0})
+        self.viz._log_camera_jpegs({"forward_left": b"jpeg-left"})
+        cameras = {name: b"jpeg" for name in ("forward_right", "backward", "chest", "wrist_left")}
+        self.viz._log_camera_jpegs(cameras)
+        observations, actions, images = self.viz.log_rerun_data.paths
+        self.assertEqual(observations, {"observation.joint.pos"})
+        self.assertEqual(actions, {"action.joint.pos"})
+        self.assertEqual(images, {f"observation.{name}" for name in (*cameras, "forward_left")})
+        self.assertEqual(self.rr.send_blueprint.call_count, 3)
+        self.viz._log_camera_jpegs(cameras)
+        self.assertEqual(self.rr.send_blueprint.call_count, 3)
+        self.assertTrue(
+            all(not call.kwargs.get("static", False) for call in self.rr.log.call_args_list)
+        )
 
 
 @unittest.skipUnless(importlib.util.find_spec("numpy"), "PC image dependencies unavailable")
@@ -267,10 +298,17 @@ class ViewerLifecycleTests(unittest.TestCase):
                 os.environ.pop("RUST_LOG", None)
                 self.viz.init_rerun()
         command = self.popen.call_args.args[0]
-        self.assertEqual(command, [
-            "/opt/rerun-native", "--bind=127.0.0.1", "--port=43210", "--memory-limit=12%",
-            "--server-memory-limit=0B", "--expect-data-soon",
-        ])
+        self.assertEqual(
+            command,
+            [
+                "/opt/rerun-native",
+                "--bind=127.0.0.1",
+                "--port=43210",
+                "--memory-limit=12%",
+                "--server-memory-limit=0B",
+                "--expect-data-soon",
+            ],
+        )
         options = self.popen.call_args.kwargs
         self.assertEqual(options["stdin"], subprocess.DEVNULL)
         self.assertTrue(options["start_new_session"])
@@ -329,9 +367,13 @@ class ViewerLifecycleTests(unittest.TestCase):
         self.viz.shutdown_rerun()
         self.process.terminate.assert_called_once()
         self.process.kill.assert_called_once()
-        self.assertEqual([call.kwargs for call in self.process.wait.call_args_list], [
-            {"timeout": 1.0}, {"timeout": 1.0},
-        ])
+        self.assertEqual(
+            [call.kwargs for call in self.process.wait.call_args_list],
+            [
+                {"timeout": 1.0},
+                {"timeout": 1.0},
+            ],
+        )
 
     def test_already_exited_owned_viewer_is_reaped_without_signals(self):
         self.viz.init_rerun()
@@ -342,8 +384,10 @@ class ViewerLifecycleTests(unittest.TestCase):
         self.process.kill.assert_not_called()
 
     def test_startup_and_connection_failures_reap_child_preserving_original_error(self):
-        for phase, error in (("startup", TimeoutError("viewer startup timeout")),
-                             ("connect", KeyboardInterrupt())):
+        for phase, error in (
+            ("startup", TimeoutError("viewer startup timeout")),
+            ("connect", KeyboardInterrupt()),
+        ):
             with self.subTest(phase=phase):
                 self.process.reset_mock()
                 self.rr.rerun_shutdown.reset_mock()
@@ -413,9 +457,13 @@ class ViewerLifecycleTests(unittest.TestCase):
         ):
             connect.side_effect = [ConnectionRefusedError(), connect.return_value]
             self.original_wait(self.process, 43210)
-        self.assertEqual([call.args for call in connect.call_args_list], [
-            (("127.0.0.1", 43210),), (("127.0.0.1", 43210),),
-        ])
+        self.assertEqual(
+            [call.args for call in connect.call_args_list],
+            [
+                (("127.0.0.1", 43210),),
+                (("127.0.0.1", 43210),),
+            ],
+        )
         self.assertTrue(all(call.kwargs["timeout"] <= 0.1 for call in connect.call_args_list))
         pause.assert_called_once_with(0.02)
         self.assertEqual(self.process.poll.call_count, 3)
@@ -438,7 +486,9 @@ class ViewerLifecycleTests(unittest.TestCase):
     def test_shutdown_reaps_real_owned_python_child_without_viewer_or_hardware(self):
         child = self.actual_popen(
             [sys.executable, "-c", "import time; time.sleep(10)"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         try:
             self.viz._viewer_process = child
@@ -453,6 +503,43 @@ class ViewerLifecycleTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec("rerun"), "PC viewer dependency unavailable")
 class RerunMemoryTests(unittest.TestCase):
+    def test_five_camera_jpeg_preview_stays_compressed_in_real_sdk(self):
+        import cv2
+        import numpy as np
+        import rerun as rr
+
+        from alohamini.apps import visualization
+
+        bgr = np.zeros((480, 640, 3), dtype=np.uint8)
+        bgr[:, :, 2] = 255
+        ok, encoded = cv2.imencode(".jpg", bgr)
+        self.assertTrue(ok)
+        cameras = {
+            name: encoded.tobytes()
+            for name in (
+                "forward_left",
+                "forward_right",
+                "backward",
+                "chest",
+                "wrist_left",
+            )
+        }
+        rr.init("alohamini-jpeg-preview-test", spawn=False, strict=True)
+        try:
+            memory = rr.memory_recording()
+            visualization.log_rerun_data.paths = (set(), set(), set())
+            with patch("cv2.imdecode", side_effect=AssertionError("preview must retain JPEG")):
+                for _ in range(10):
+                    visualization._log_camera_jpegs(cameras)
+            serialized = memory.drain_as_bytes()
+            self.assertGreater(len(serialized), 0)
+            self.assertLess(len(serialized), 10 * len(cameras) * bgr.nbytes // 10)
+            self.assertEqual(
+                visualization.log_rerun_data.paths[2], {f"observation.{name}" for name in cameras}
+            )
+        finally:
+            rr.rerun_shutdown()
+
     def test_preview_worker_writes_to_real_sdk_without_viewer(self):
         import rerun as rr
         from test_teleoperation import snapshot
