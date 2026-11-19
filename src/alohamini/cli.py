@@ -312,6 +312,7 @@ def _main(argv: list[str] | None = None) -> int:
         "calibrate", help="Bind USB controllers and calibrate both arms at Home"
     )
     calibration.add_argument("target", choices=("leader", "robot"))
+    calibration.add_argument("--gui", action="store_true", help="通过逐行 JSON 处理桌面主臂标定交互")
     calibration.add_argument(
         "--robot_model", required=True, choices=("alohamini2", "alohamini2pro")
     )
@@ -587,15 +588,22 @@ def _main(argv: list[str] | None = None) -> int:
             from alohamini.calibration.procedure import calibrate
 
             logging.basicConfig(level=logging.INFO, format="%(message)s")
-            calibrate(
-                args.target,
-                args.robot_model,
+            options = dict(
+                target=args.target,
+                robot_model=args.robot_model,
                 device_id=args.device_id,
                 calibration_dir=args.calibration_dir,
                 left_port=args.left_port,
                 right_port=args.right_port,
                 arm_profile=args.arm_profile,
             )
+            if args.gui:
+                if args.target != "leader":
+                    raise ValueError("桌面交互仅用于主臂标定")
+                from alohamini.calibration.interaction import run_gui_calibration
+
+                return run_gui_calibration(**options)
+            calibrate(**options)
             return 0
         if args.command == "paths":
             paths = WorkspacePaths()

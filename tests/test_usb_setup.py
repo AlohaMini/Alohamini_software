@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sys
 from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -13,8 +14,44 @@ from alohamini.hardware.usb_setup import USBController
 from alohamini.paths import WorkspacePaths
 
 
+@pytest.fixture(autouse=True)
+def linux_alias_environment(monkeypatch):
+    # 本文件的既有用例模拟 udev；不修改进程平台，避免影响 macOS 上的 pytest。
+    monkeypatch.setattr(usb_setup, "sys", SimpleNamespace(platform="linux", stdin=sys.stdin))
+
+
 def port(serial):
     return SimpleNamespace(serial_number=serial, vid=0x1234, pid=0x5678)
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_gui_registration_uses_native_serials_without_terminal_or_sudo(tmp_path, monkeypatch, platform):
+    workspace = WorkspacePaths(tmp_path)
+    events = []
+
+    class Interaction:
+        def confirm(self, step):
+            events.append(step)
+
+        def notify(self, step):
+            events.append(step)
+
+        def check_cancelled(self):
+            pass
+
+    left, right = port("GUI-LEFT"), port("GUI-RIGHT")
+    snapshots = iter([{}, {}, *[{"left": left}] * 3,
+                      *[{"left": left, "right": right}] * 3])
+    monkeypatch.setattr(usb_setup, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(usb_setup, "usb_ports", lambda: next(snapshots, {"left": left, "right": right}))
+    monkeypatch.setattr(usb_setup.time, "sleep", lambda _: None)
+    monkeypatch.setattr("builtins.input", Mock(side_effect=AssertionError("不得读取终端")))
+    monkeypatch.setattr(usb_setup, "_install_rules", Mock(side_effect=AssertionError("不得启动 sudo")))
+    assert usb_setup.ensure_arm_ports("leader", workspace=workspace, interaction=Interaction()) == ("left", "right")
+    assert events == ["disconnect_usb", "connect_left", "connect_right"]
+    assert usb_setup.connected_leader_ports(workspace) == dict(left="left", right="right")
+    assert usb_setup.ensure_arm_ports("leader", workspace=workspace, interaction=Interaction()) == ("left", "right")
+    assert events == ["disconnect_usb", "connect_left", "connect_right"]
 
 
 def pair(name):
@@ -179,7 +216,7 @@ def test_switching_leader_sets_preserves_bindings_and_reuses_rules(tmp_path, mon
             usb_setup._load_bindings(workspace.calibration / "devices/leader.json", "leader")
             == bindings
         )
-    capture.assert_called_once_with("leader")
+    capture.assert_called_once_with("leader", interaction=None)
     assert len(installed) == 2  # First registration and adding B; returning A needs no sudo.
     assert len(usb_setup._known_leaders(workspace.calibration / "devices")) == 2
     for board in (*first.values(), *second.values()):
@@ -291,7 +328,7 @@ def test_new_registration_does_not_claim_unidentified_legacy_calibration(tmp_pat
         physical.touch()
         available[str(physical)] = port(board.serial_number)
     monkeypatch.setattr(usb_setup, "usb_ports", lambda: available)
-    monkeypatch.setattr(usb_setup, "capture_bindings", lambda _: bindings)
+    monkeypatch.setattr(usb_setup, "capture_bindings", lambda _, interaction=None: bindings)
     monkeypatch.setattr(usb_setup, "_install_rules", lambda *_: None)
     for _ in range(2):
         usb_setup.ensure_arm_ports("leader", workspace=workspace, device_dir=devices)

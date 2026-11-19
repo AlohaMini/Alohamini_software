@@ -116,6 +116,7 @@ def calibrate(
     left_port=None,
     right_port=None,
     arm_profile=None,
+    interaction=None,
 ):
     """Zero both arms in one known pose and generate all dependent device mappings."""
     if target not in ("leader", "robot"):
@@ -124,7 +125,7 @@ def calibrate(
     model, leader = spec.model, target == "leader"
     if arm_profile is not None and (not leader or arm_profile != "am-leader-6dof"):
         raise ValueError("Reference calibration requires the model's am-leader-6dof profile")
-    if not sys.stdin.isatty():
+    if interaction is None and not sys.stdin.isatty():
         raise RuntimeError("Calibration requires an interactive terminal")
     device_id = device_id or ("am_leader_bi" if leader else "AlohaMiniRobot")
     workspace = WorkspacePaths()
@@ -146,7 +147,9 @@ def calibrate(
         if calibration_dir is None:
             preserve_legacy_leader_calibration(workspace, device_id)
         if auto_pair:
-            left_port, right_port = ensure_arm_ports("leader", workspace=workspace)
+            left_port, right_port = ensure_arm_ports(
+                "leader", workspace=workspace, interaction=interaction
+            )
     ports = (
         left_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_left",
         right_port or f"/dev/am_arm_{'leader' if leader else 'follower'}_right",
@@ -170,10 +173,12 @@ def calibrate(
         actuators[side] = motors
         expected = motors if leader else model.actuators
         existing[side] = (
-            load_motor_calibration(paths[side], expected) if paths[side].exists() else {}
+            load_motor_calibration(paths[side], expected)
+            if paths[side].exists() and interaction is None else {}
         )
     reuse = False
-    if all(existing.values()):
+    # 桌面端的“重新标定”已经表达重做意图，仍须在 Home 步骤单独确认。
+    if all(existing.values()) and interaction is None:
         response = input(
             f"{device_id} has saved calibration. Press ENTER to reuse, or c to recalibrate: "
         ).strip()
@@ -184,6 +189,9 @@ def calibrate(
             for path in set(paths.values()):
                 load_reference_profile(path, robot_model)
     with ExitStack() as cleanup:
+        if interaction is not None:
+            interaction.check_cancelled()
+            interaction.notify("connecting")
         buses = {}
         for side, port in zip(("left", "right"), ports, strict=True):
             bus = FeetechBusDevice(
@@ -202,16 +210,22 @@ def calibrate(
                 return
             label = "leader" if leader else "follower"
             support_hint = " Keep the handles clear of the table." if leader else " Support the lift."
-            response = input(
-                f"Place both {label} arms at Home: J1/J5/J6 centered; "
-                "J2/J3/J4 folded to light contact; grippers closed.\n"
-                f"Keep both arms stable; do not force the housings.{support_hint}\n"
-                "Press ENTER to calibrate (any other input cancels): "
-            )
-            if response.strip():
-                raise InterruptedError("Reference capture cancelled")
+            if interaction is not None:
+                interaction.confirm("home")
+            if interaction is None:
+                response = input(
+                    f"Place both {label} arms at Home: J1/J5/J6 centered; "
+                    "J2/J3/J4 folded to light contact; grippers closed.\n"
+                    f"Keep both arms stable; do not force the housings.{support_hint}\n"
+                    "Press ENTER to calibrate (any other input cancels): "
+                )
+                if response.strip():
+                    raise InterruptedError("Reference capture cancelled")
             original, names, values, reference_ticks, mappings = {}, {}, {}, {}, {}
             for side, bus in buses.items():
+                if interaction is not None:
+                    interaction.check_cancelled()
+                    interaction.notify(f"writing_{side}")
                 original[side] = bus.read_calibration()
                 names[side] = [m.name for m in bus.actuators if leader or m.name.startswith("arm_")]
                 bus.configure_calibration(names[side], preserve_other_motors=True)
@@ -276,6 +290,9 @@ def calibrate(
             payloads = dict(motor_payloads)
             for path in motor_payloads:
                 payloads[path.with_name(f"{path.stem}.reference.json")] = json_bytes(profile)
+            if interaction is not None:
+                interaction.check_cancelled()
+                interaction.notify("saving")
             save_bundle(payloads, motor_files)
             for path in motor_payloads:
                 print(f"Calibration saved: {path}")

@@ -36,10 +36,12 @@ class USBController:
             raise ValueError("USB controller needs valid vendor/product IDs")
 
 
-def _wait_added(previous, *, timeout_s=120):
+def _wait_added(previous, *, timeout_s=120, interaction=None):
     deadline = time.monotonic() + timeout_s
     stable, count = None, 0
     while time.monotonic() < deadline:
+        if interaction is not None:
+            interaction.check_cancelled()
         current = usb_ports()
         if not previous.keys() <= current.keys():
             raise ValueError("A connected USB controller disappeared; reconnect and retry")
@@ -70,19 +72,24 @@ def _wait_added(previous, *, timeout_s=120):
     raise TimeoutError("USB insertion timed out; connect one controller and retry")
 
 
-def capture_bindings(role):
-    if not sys.stdin.isatty():
+def capture_bindings(role, *, interaction=None):
+    if interaction is None and not sys.stdin.isatty():
         raise RuntimeError("First USB setup requires an interactive terminal")
     print("Stop Host and teleoperation. Secure both arms before disconnecting USB.")
-    response = input(
-        f"Unplug both {role} USB controllers, then press ENTER (any other input cancels): "
-    )
-    if response.strip():
-        raise InterruptedError("USB setup cancelled; no rules installed")
+    if interaction is not None:
+        interaction.confirm("disconnect_usb")
+    if interaction is None:
+        response = input(
+            f"Unplug both {role} USB controllers, then press ENTER (any other input cancels): "
+        )
+        if response.strip():
+            raise InterruptedError("USB setup cancelled; no rules installed")
     current, bindings = usb_ports(), {}
     for side in ("left", "right"):
+        if interaction is not None:
+            interaction.notify(f"connect_{side}")
         print(f"Connect the {side} {role} USB controller and wait for detection.", flush=True)
-        current, bindings[side] = _wait_added(current)
+        current, bindings[side] = _wait_added(current, interaction=interaction)
         print(f"{side.capitalize()} {role} detected: {bindings[side].serial_number}", flush=True)
     return bindings
 
@@ -248,7 +255,7 @@ def connected_leader_ports(workspace, active_sides=("left", "right")):
     return pair[1] if pair else {}
 
 
-def _ensure_leader_ports(workspace, aliases):
+def _ensure_leader_ports(workspace, aliases, *, interaction=None):
     directory = workspace.calibration / "devices"
     known = _known_leaders(directory)
     available = usb_ports()
@@ -266,14 +273,14 @@ def _ensure_leader_ports(workspace, aliases):
                     for side, port in selected.items()
                 }
             else:
-                bindings = capture_bindings("leader")
+                bindings = capture_bindings("leader", interaction=interaction)
         else:
             if known:
                 print(
                     "New leader USB controllers detected. "
                     "Register this pair; existing calibrations are kept."
                 )
-            bindings = capture_bindings("leader")
+            bindings = capture_bindings("leader", interaction=interaction)
         matched = _matched_ports(bindings, usb_ports())
     known[_pair_key(bindings)] = bindings
     prepared = directory / "leader.rules"
@@ -382,12 +389,13 @@ def _install_rules(role, prepared, matched, aliases, backup_dir):
             raise RuntimeError(f"USB alias was not created correctly: {alias}; rules: {prepared}")
 
 
-def ensure_arm_ports(role, *, workspace=None, device_dir=Path("/dev")):
+def ensure_arm_ports(role, *, workspace=None, device_dir=Path("/dev"), interaction=None):
     """Reuse installed aliases, or capture, persist and install missing USB identities."""
     if role not in ("leader", "follower"):
         raise ValueError("USB role must be leader or follower")
-    if role == "leader" and sys.platform in ("darwin", "win32"):
-        return _ensure_leader_ports(workspace or WorkspacePaths(), {})
+    # 桌面登记使用相同的序列号映射，避免 Linux 标定隐式进入 sudo 终端。
+    if role == "leader" and (interaction is not None or sys.platform in ("darwin", "win32")):
+        return _ensure_leader_ports(workspace or WorkspacePaths(), {}, interaction=interaction)
     if sys.platform != "linux":
         raise RuntimeError("Automatic USB aliases require Linux; specify both serial ports")
     aliases = {side: device_dir / f"am_arm_{role}_{side}" for side in ("left", "right")}

@@ -60,7 +60,9 @@ class BimanualLeader:
             else paths.calibration / "teleoperators"
         )
         if calibration_dir is None and robot_model != "alohamini1":
-            if active_sides and sys.platform in ("darwin", "win32") and self._ports == {
+            if active_sides and (sys.platform in ("darwin", "win32") or not all(
+                Path(port).exists() for port in self._ports.values()
+            )) and self._ports == {
                 side: f"/dev/am_arm_leader_{side}" for side in ("left", "right")
             }:
                 self._ports = connected_leader_ports(paths, active_sides)

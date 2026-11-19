@@ -13,6 +13,7 @@ from unittest.mock import patch
 from test_feetech_device import DelayedRegisterSerial, RegisterSerial
 
 from alohamini.calibration.procedure import calibrate
+from alohamini.calibration.interaction import CalibrationInteraction
 from alohamini.calibration.reference import load_reference_profile
 from alohamini.calibration.servo import load_motor_calibration
 from alohamini.model import ActuatorSpec, get_robot_model
@@ -139,6 +140,95 @@ class CalibrationProcedureTests(unittest.TestCase):
                         expected[address : address + width],
                         (side, motor_id, address),
                     )
+
+    @contextlib.contextmanager
+    def gui_interaction(self, *, cancel_at=None, wrong_prompt=False):
+        read_fd, write_fd = os.pipe()
+        events = []
+        with os.fdopen(read_fd) as source, os.fdopen(write_fd, "w") as control:
+            class Output(io.StringIO):
+                def flush(output):
+                    event = json.loads(output.getvalue().splitlines()[-1])
+                    events.append(event)
+                    if event["step"] == cancel_at:
+                        control.write('{"action":"cancel"}\n')
+                        control.flush()
+                        self.assertTrue(interaction.cancelled.wait(1), "取消信号未送达")
+                        return
+                    if event["prompt_id"] is not None:
+                        control.write(json.dumps(dict(action="confirm", prompt_id=(
+                            event["prompt_id"] + 1 if wrong_prompt else event["prompt_id"]
+                        ))) + "\n")
+                        control.flush()
+
+            interaction = CalibrationInteraction(source, Output())
+            with patch("sys.stdin.isatty", return_value=False), patch(
+                "builtins.input", side_effect=AssertionError("桌面标定不得读取终端")
+            ), contextlib.redirect_stdout(io.StringIO()):
+                yield interaction, events
+
+    def test_gui_recalibration_uses_existing_procedure_without_terminal_input(self):
+        self.configure()
+        self.run_calibration()
+        with self.gui_interaction() as (interaction, events):
+            calibrate("leader", self.model_name, calibration_dir=self.root,
+                      left_port="/dev/test-left", right_port="/dev/test-right", interaction=interaction)
+        self.assertEqual([e["step"] for e in events], [
+            "connecting", "home", "writing_left", "writing_right", "saving"
+        ])
+        self.assertIsNotNone(load_reference_profile(self.root / "am_leader_bi_left.json", self.model_name))
+        self.assert_passive_and_closed()
+
+    def test_gui_cancel_during_second_arm_rolls_back_both_arms_and_files(self):
+        self.configure()
+        with self.gui_interaction(cancel_at="writing_right") as (interaction, _):
+            with self.assertRaises(InterruptedError):
+                calibrate("leader", self.model_name, calibration_dir=self.root,
+                          left_port="/dev/test-left", right_port="/dev/test-right", interaction=interaction)
+        self.assert_restored()
+        self.assert_passive_and_closed()
+        self.assertFalse(list(self.root.glob("*.json")))
+
+    def test_gui_replaces_unreadable_saved_calibration(self):
+        self.configure()
+        (self.root / "am_leader_bi_left.json").write_text("损坏的旧文件", encoding="utf-8")
+        with self.gui_interaction() as (interaction, _):
+            calibrate("leader", self.model_name, calibration_dir=self.root,
+                      left_port="/dev/test-left", right_port="/dev/test-right", interaction=interaction)
+        self.assertIsNotNone(load_reference_profile(self.root / "am_leader_bi_left.json", self.model_name))
+        self.assert_passive_and_closed()
+
+    def test_gui_linux_registration_is_reused_by_default_runtime_without_aliases(self):
+        from alohamini.hardware import leader, usb_setup
+
+        self.configure()
+        directory = self.root / "calibration/devices"
+        directory.mkdir(parents=True)
+        bindings = {side: usb_setup.USBController(f"GUI-{side}", 1, 2) for side in ("left", "right")}
+        (directory / "leader.json").write_text(json.dumps(dict(
+            schema_version=1, role="leader", sides={side: asdict(board) for side, board in bindings.items()}
+        )))
+        with patch.dict(os.environ, ALOHAMINI_WORKSPACE=str(self.root)), patch.object(
+            usb_setup, "usb_ports", return_value={
+                f"/dev/test-{side}": SimpleNamespace(**asdict(board)) for side, board in bindings.items()
+            }
+        ), patch.object(leader.sys, "platform", "linux"), self.gui_interaction() as (interaction, _):
+            calibrate("leader", self.model_name, interaction=interaction)
+            runtime = leader.BimanualLeader(self.model_name)
+            self.assertEqual(runtime._ports, {side: f"/dev/test-{side}" for side in bindings})
+            runtime.connect()
+            runtime.close()
+        self.assert_passive_and_closed()
+
+    def test_gui_stale_confirmation_cannot_zero_motors(self):
+        self.configure()
+        with self.gui_interaction(wrong_prompt=True) as (interaction, _):
+            with self.assertRaisesRegex(ValueError, "步骤已变化"):
+                calibrate("leader", self.model_name, calibration_dir=self.root,
+                          left_port="/dev/test-left", right_port="/dev/test-right", interaction=interaction)
+        self.assert_restored()
+        self.assert_passive_and_closed()
+        self.assertFalse(list(self.root.glob("*.json")))
 
     def test_one_pose_writes_both_leaders_and_generates_matching_profiles(self):
         self.configure()

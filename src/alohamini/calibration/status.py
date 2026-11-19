@@ -56,7 +56,7 @@ def inspect_leader(workspace, robot_model, ports=None, leader_id="am_leader_bi")
             model = get_robot_model(robot_model)
             for side, path in zip(("left", "right"), files, strict=True):
                 load_motor_calibration(path, calibration_motors(model, side, leader=True))
-            return result("legacy", "需要重新标定", "升级后需要重新标定一次。看到复用提示时，输入小写 c 再按回车。")
+            return result("legacy", "需要重新标定", "升级后需要重新标定一次，请重新标定这对主臂。")
         if left != right or left["role"] != "leader":
             raise ValueError("Home calibration records do not match the current leader pair")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
