@@ -45,6 +45,7 @@ def open_host(
     command_port: int = 5555,
     state_port: int = 5556,
     camera_port: int = 5557,
+    device_id: str | None = None,
 ) -> NativeHost:
     """Open, prepare and enable both buses, then schedule protected lift homing.
 
@@ -69,6 +70,7 @@ def open_host(
             command_port=command_port,
             state_port=state_port,
             camera_port=camera_port,
+            device_id=device_id,
         )
         if host is not None:
             return host
@@ -87,6 +89,7 @@ def _open_host(
     command_port,
     state_port,
     camera_port,
+    device_id,
 ) -> NativeHost | None:
     logger.info("Configuring AlohaMini")
     model = get_robot_model(robot_model)
@@ -174,6 +177,7 @@ def _open_host(
         command_port=command_port,
         state_port=state_port,
         camera_port=camera_port,
+        device_id=device_id,
         motor_calibrations=calibrations,
         reference_calibration=load_reference_profile(path, robot_model),
     )

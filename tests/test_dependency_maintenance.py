@@ -38,6 +38,8 @@ def test_nested_extras_cover_native_algorithms_and_keep_host_light():
         "pyzmq",
         "pyserial",
         "feetech-servo-sdk",
+        "zeroconf",
+        "ifaddr",
     }
 
 

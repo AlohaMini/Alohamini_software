@@ -81,7 +81,7 @@ def inspect_feature_environment(feature):
     if not all(row["installed"] for row in result["packages"]):
         return result
     names = {
-        "connection": {"pyzmq", "pillow"},
+        "connection": {"pyzmq", "pillow", "zeroconf", "ifaddr"},
         "calibration": command_packages(["calibrate"]),
         "recording": command_packages(["record"])
         | command_packages(["dataset"])

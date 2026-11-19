@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alohamini.errors import (
     CommandRejectedError,
@@ -95,6 +96,7 @@ class HostClient:
         port: int = 5556,
         command_port: int = 5555,
         expected_model: str | None = None,
+        expected_device_id: str | None = None,
         timeout_s: float = 1.0,
         request_window: int = 3,
         prefetch_before_decode: bool = False,
@@ -123,6 +125,11 @@ class HostClient:
         self._endpoint = f"tcp://{host}:{port}"
         self._command_endpoint = f"tcp://{host}:{command_port}"
         self._expected_model = expected_model
+        device_id = (
+            expected_device_id if expected_device_id is not None
+            else os.environ.get("ALOHAMINI_EXPECTED_DEVICE_ID", "")
+        )
+        self._expected_device_id = str(UUID(device_id)) if device_id else None
         # Capture once before the first request deadline; no filesystem or Git
         # work belongs in the observation/control loop.
         self._software = dict(software_identity())
@@ -468,6 +475,11 @@ class HostClient:
                 include_images=not token.endswith(b":state") if ordered else include_images,
             )
             snapshot = HostSnapshot(payload, images, started, received)
+            if (
+                self._expected_device_id is not None
+                and payload.get("_device_id") != self._expected_device_id
+            ):
+                raise ProtocolError("机器人编号与所选设备不符，请重新查找并选择机器人")
             self._bind_command_context(snapshot)
             return snapshot
         except zmq.ZMQError as exc:

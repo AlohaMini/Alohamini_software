@@ -152,8 +152,12 @@ class CliTests(unittest.TestCase):
             with (
                 patch("alohamini.runtime.startup.open_host") as open_host,
                 patch("alohamini.cli.logging.info"),
+                patch("alohamini.discovery.load_identity"),
+                patch("alohamini.discovery.advertise_robot"),
             ):
-                self.assertEqual(main(["host", "--robot_model", "alohamini2pro", *option]), 0)
+                from alohamini.cli import _main
+
+                self.assertEqual(_main(["host", "--robot_model", "alohamini2pro", *option]), 0)
                 open_host.return_value.run.assert_called_once_with(profile_timing=enabled)
 
     def test_paths_is_local_only_and_reports_all_storage_directories(self):

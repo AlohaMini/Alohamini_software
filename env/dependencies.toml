@@ -15,5 +15,5 @@ pins = [
 [groups]
 models = ["transformers", "tokenizers", "huggingface-hub", "accelerate", "diffusers", "sentencepiece", "safetensors", "einops", "timm", "ftfy", "num2words", "protobuf"]
 compute = ["torch", "torchvision", "torchcodec", "triton", "nvidia-*", "cuda-*", "av"]
-host = ["numpy", "opencv-python-headless", "pyzmq", "pyserial", "feetech-servo-sdk"]
+host = ["zeroconf", "ifaddr", "numpy", "opencv-python-headless", "pyzmq", "pyserial", "feetech-servo-sdk"]
 tools = ["*"]

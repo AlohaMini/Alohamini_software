@@ -432,6 +432,33 @@ class ClientTransportTests(unittest.TestCase):
         if not self.errors.empty():
             raise self.errors.get()
 
+    def test_selected_device_identity_is_checked_before_binding_commands(self):
+        from uuid import uuid4
+
+        device_id = str(uuid4())
+        payload = state_payload()
+        payload["_device_id"] = device_id
+        self.handler = lambda request: [request[0], *state_frames(request[1], payload)]
+        with HostClient("127.0.0.1", port=self.port, expected_model="alohamini2pro",
+                        expected_device_id=device_id, request_window=1) as client:
+            self.assertEqual(client.read().payload["_device_id"], device_id)
+            for actual in (str(uuid4()), None):
+                payload["_device_id"] = actual
+                with self.assertRaisesRegex(ProtocolError, "编号"):
+                    client.read()
+                self.assertIsNone(client._command_context)
+            payload["_device_id"] = device_id
+            self.assertEqual(client.read().payload["_device_id"], device_id)
+
+    def test_selected_device_environment_applies_to_existing_cli_clients(self):
+        from uuid import uuid4
+
+        device_id = str(uuid4())
+        with patch.dict("os.environ", {"ALOHAMINI_EXPECTED_DEVICE_ID": device_id}):
+            with HostClient("127.0.0.1", port=self.port, request_window=1) as client:
+                with self.assertRaisesRegex(ProtocolError, "编号"):
+                    client.read()
+
     def test_state_read_uses_only_dealer_and_one_token(self):
         snapshot = self.client.read()
         request = self.requests.get(timeout=1)

@@ -123,6 +123,7 @@ class NativeHost:
         camera_port: int = 5557,
         motor_calibrations: Mapping[str, MotorCalibration] | None = None,
         reference_calibration: Mapping | None = None,
+        device_id: str | None = None,
     ) -> None:
         if not isinstance(model, RobotModel):
             raise TypeError("Expected RobotModel")
@@ -280,6 +281,7 @@ class NativeHost:
                     **asdict(units),
                     "homing_offset": calibration.homing_offset,
                 }
+        self._device_id = device_id
         if reference_calibration is not None:
             self._metadata["reference_calibration"] = deepcopy(dict(reference_calibration))
         for name, profile in profiles.items():
@@ -525,6 +527,7 @@ class NativeHost:
                 )
             },
             "_robot_metadata": self._metadata,
+            **({"_device_id": self._device_id} if self._device_id is not None else {}),
             "_software": self._software,
             "_motor_feedback": {"version": 1, "motors": motors},
             "_host_timing": {

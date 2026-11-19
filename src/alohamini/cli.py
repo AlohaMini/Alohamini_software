@@ -344,6 +344,7 @@ def _main(argv: list[str] | None = None) -> int:
     host.add_argument(
         "--calibration", help="本机标定 JSON；默认取工作目录 calibration/robots/AlohaMiniRobot.json"
     )
+    host.add_argument("--name", help="局域网中显示的机器人名称；默认使用主机名")
     host.add_argument("--left_port", default="/dev/am_arm_follower_left")
     host.add_argument("--right_port", default="/dev/am_arm_follower_right")
     host.add_argument("--bind_host", default="0.0.0.0", help="仅在可信机器人网络监听")
@@ -407,8 +408,27 @@ def _main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--port", type=int, default=5556, help="状态端口，默认 5556")
     inspect.add_argument("--model", help="预期型号，不匹配时报告错误")
     inspect.add_argument("--timeout", type=float, default=1.0, help="请求超时秒数，默认 1")
+    discovery = commands.add_parser("discover", help="发现局域网中主动广播的机器人")
+    discovery.add_argument("--timeout-s", type=float, default=3.0, help="等待秒数，最多 10 秒")
+    discovery.add_argument("--json", action="store_true", help="输出设备列表 JSON")
     args = parser.parse_args(argv)
     try:
+        if args.command == "discover":
+            from dataclasses import asdict
+            from alohamini.discovery import discover_robots
+
+            robots = discover_robots(args.timeout_s)
+            if args.json:
+                print(json.dumps([asdict(robot) for robot in robots], ensure_ascii=False))
+                return 0
+            for robot in robots:
+                print(
+                    f"{robot.name} · {robot.device_id} · {robot.robot_model} · "
+                    f"{', '.join(robot.addresses)}:{robot.state_port}"
+                )
+            if not robots:
+                print("未发现广播，请确认机器人服务已启动且在同一局域网")
+            return 0
         if args.command == "find-port":
             from alohamini.hardware.find_port import find_port
 
@@ -588,16 +608,21 @@ def _main(argv: list[str] | None = None) -> int:
             logging.basicConfig(level=logging.INFO, format="%(message)s")
             if len(set(args.cameras)) != len(args.cameras):
                 raise ValueError("Camera names must be unique")
-            robot = open_host(
-                args.robot_model,
-                calibration_file=args.calibration,
-                left_port=args.left_port,
-                right_port=args.right_port,
-                bind_host=args.bind_host,
-                use_degrees=args.use_degrees,
-                cameras={name: CameraConfig(f"/dev/am_camera_{name}") for name in args.cameras},
-            )
-            robot.run(profile_timing=args.profile_timing)
+            from alohamini.discovery import advertise_robot, load_identity
+
+            identity = load_identity(WorkspacePaths(), args.name)
+            with advertise_robot(identity, args.robot_model, bind_host=args.bind_host):
+                robot = open_host(
+                    args.robot_model,
+                    calibration_file=args.calibration,
+                    left_port=args.left_port,
+                    right_port=args.right_port,
+                    bind_host=args.bind_host,
+                    device_id=identity.device_id,
+                    use_degrees=args.use_degrees,
+                    cameras={name: CameraConfig(f"/dev/am_camera_{name}") for name in args.cameras},
+                )
+                robot.run(profile_timing=args.profile_timing)
             return 0
         if args.command == "teleoperate":
             from alohamini.apps.teleoperation import teleoperate
