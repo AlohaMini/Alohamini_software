@@ -301,6 +301,8 @@ def main() -> int:
     finally:
         if rclpy.ok():
             node._cmd_vel.publish(Twist())
+        node._lift.destroy()
+        node._arm.destroy()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

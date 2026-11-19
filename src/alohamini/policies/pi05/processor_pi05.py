@@ -92,6 +92,14 @@ def fit_statistics(samples, *, delta_dims=ARM_DELTA_DIMS, report_path=None):
     return {key: {name: value.tolist() for name, value in v.items()} for key, v in stats.items()}
 
 
+def _fp64_inputs(actions, state):
+    """Retain FP64 coordinate arithmetic and autograd when Metal is the model device."""
+    device = torch.device("cpu") if actions.device.type == "mps" else actions.device
+    if isinstance(state, torch.Tensor):
+        state = state.to(device)
+    return actions.to(device), torch.as_tensor(state, device=device, dtype=torch.float64)
+
+
 @dataclass
 class PI05Processor:
     """Shared offline/online transforms; tokenizer reads a local SentencePiece asset.
@@ -150,14 +158,14 @@ class PI05Processor:
         """Differentiable inverse, followed by restoration of physical targets."""
         if actions.shape[-1] != self.action_dim:
             raise ValueError("Model action width does not match processor")
+        values, state = _fp64_inputs(actions, state)
         s = self.stats["actions"]
-        low = torch.as_tensor(s["q01"], device=actions.device, dtype=torch.float64)
-        span = torch.as_tensor(self.spans["actions"], device=actions.device, dtype=torch.float64)
-        values = (actions[..., :18].double() + 1) / 2 * span + low
-        state = torch.as_tensor(state, device=actions.device, dtype=torch.float64)
+        low = torch.as_tensor(s["q01"], device=values.device, dtype=torch.float64)
+        span = torch.as_tensor(self.spans["actions"], device=values.device, dtype=torch.float64)
+        values = (values[..., :18].double() + 1) / 2 * span + low
         offset = torch.zeros_like(state)
         offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
-        return (values + offset.unsqueeze(-2)).float()
+        return (values + offset.unsqueeze(-2)).float().to(actions.device)
 
     def encode_actions(self, actions, state):
         """Encode absolute targets relative to a new observation for RTC guidance.
@@ -166,12 +174,14 @@ class PI05Processor:
         """
         if actions.shape[-1] != 18:
             raise ValueError("RTC requires 18-D absolute PI0.5 targets")
-        state = torch.as_tensor(state, device=actions.device, dtype=torch.float64)
+        values, state = _fp64_inputs(actions, state)
         offset = torch.zeros_like(state)
         offset[..., list(self.delta_dims)] = state[..., list(self.delta_dims)]
-        low = torch.as_tensor(self.stats["actions"]["q01"], device=actions.device)
-        span = torch.as_tensor(self.spans["actions"], device=actions.device)
-        return ((actions.double() - offset.unsqueeze(-2) - low) / span * 2 - 1).float()
+        low = torch.as_tensor(self.stats["actions"]["q01"], device=values.device)
+        span = torch.as_tensor(self.spans["actions"], device=values.device)
+        return ((values.double() - offset.unsqueeze(-2) - low) / span * 2 - 1).float().to(
+            actions.device
+        )
 
     def prepare(self, state, images, prompt, actions=None, *, device="cpu"):
         """One physical sample: HWC uint8 RGB, original state and target chunk."""

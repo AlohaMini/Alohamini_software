@@ -2,7 +2,7 @@
 
 ## 1. 准备
 
-完成 [PC 安装](install.md)，按需安装[策略与功能扩展](install.md#3-可选扩展)，在仓库根目录执行：
+完成 [Linux 安装](install.md)或 [macOS 安装](macos.md#1-安装)，按需安装[策略与功能扩展](install.md#3-可选扩展)，在仓库根目录执行：
 
 ```bash
 cd ~/Alohamini
@@ -245,9 +245,9 @@ tail -f ~/Alohamini_workspace/runs/act_01/metrics.jsonl
 未指定时沿用对应训练设置，worker 为 0 时关闭多进程预取。
 ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比较。
 
-未指定视频后端时，训练器检测到已安装 TorchCodec 就使用它，否则使用 PyAV。
+未指定视频后端时，训练器优先使用可加载的 TorchCodec，原生库加载失败时选择 PyAV；实际选择随训练配置保存。
 命令行或配置中显式指定的后端（包括 checkpoint 保存的设置）优先于自动选择；
-可通过 `--video_backend=pyav` 切换到 PyAV。后端加载或解码失败时直接报错，不自动切换。
+可通过 `--video_backend=pyav` 选择 PyAV。显式指定后端时按原设置运行；读取过程中的加载或解码错误直接报出。
 视频解码器使用每个 worker 独立的有界 LRU 缓存，淘汰时关闭解码器及文件；
 `--video_cache_size=0` 表示逐次打开、读取和关闭。缓存上限不保证底层库内存始终有界。
 需要调整读取性能时，可设置 `--video_backend=pyav|torchcodec`、`--camera_workers`、
@@ -301,6 +301,24 @@ TF32 不改变参数存储类型，只影响 FP32 运算，可与 BF16/FP16 混�
 设置随 checkpoint 保存，推理沿用已保存的设置。
 `--policy.path` 开始新微调时，只默认继承 `trainable_dtype`；混合精度、TF32 使用本次配置或策略默认值。
 显式参数优先；`--resume=true` 续训须保持原设置。模型内部必须使用 FP32 的算子保留其数值保护。
+
+### Apple Silicon（MPS）
+
+将策略示例的 `--policy.device=cuda` 改为 `--policy.device=mps`，首次运行使用：
+
+```text
+--policy.device=mps --num_processes=1 --mixed_precision=none
+```
+
+CPU 训练使用 `--policy.device=cpu`。MPS 使用单进程，DataLoader 沿用默认 `spawn`；
+内存紧张时减小 `--batch_size`、`--num_workers`，并按需增加 `--gradient_accumulation_steps`。
+`--mixed_precision=bfloat16` / `float16` 按策略验证；FP16 使用 MPS GradScaler。
+可训练权重精度仍由 `--trainable_dtype` 控制，`tf32` 仅影响 CUDA。
+
+梯度累积、归一化、优化器、EMA 和调度器沿用原配置。续训保持原设备和精度；
+跨设备微调使用 `--policy.path` 加载权重。推理、评估命令使用 `--device=mps`。
+FastWAM、OpenWAM、LongWAM 和 LingBot-VA 的 GPU 运行使用 CUDA；
+Mac 可完成数采与数据处理，再将数据交给 CUDA 训练机。其余策略按对应 README 准备。
 
 ### 多卡与梯度累积
 

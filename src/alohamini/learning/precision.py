@@ -7,6 +7,20 @@ import torch
 TRAINABLE_DTYPES = ("preserve", "float32")
 
 
+def reduction_device(device):
+    """Keep FP64 accounting on CPU for Metal, without changing loss weights."""
+    device = torch.device(device)
+    return torch.device("cpu") if device.type == "mps" else device
+
+
+def synchronize_device(device):
+    device = torch.device(device)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+
 def resolve_tf32(settings):
     """Keep legacy defaults while making the matmul/convolution policy explicit."""
     value = settings.get("tf32", not settings.get("cudnn_deterministic", False))
@@ -20,6 +34,9 @@ def tf32_context(enabled):
     """Apply the same FP32 math policy to forward, backward and recomputation."""
     if type(enabled) is not bool:
         raise ValueError("tf32 must be a boolean")
+    if not torch.backends.cuda.is_built():
+        yield
+        return
     matmul, cudnn = torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32
     try:
         torch.backends.cuda.matmul.allow_tf32 = enabled

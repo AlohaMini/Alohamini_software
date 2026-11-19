@@ -52,14 +52,17 @@ def capture(cases, *, device, execution=None):
     from alohamini.learning.data import AlohaMiniDataset
     from alohamini.learning.data_fields import prepare_fields
     from alohamini.learning.policy import NativePolicy, make_processor
+    from alohamini.learning.precision import synchronize_device
 
     if not cases or len({case["name"] for case in cases}) != len(cases):
         raise ValueError("Provide nonempty cases with unique names")
     results = {}
     torch.set_num_threads(2)
     torch.backends.cudnn.benchmark = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
+    if torch.backends.cuda.is_built():
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+    compute_device = execution.device if execution is not None else torch.device(device)
     for case in cases:
         checkpoint = model_directory(case["checkpoint"])
         model = NativePolicy(
@@ -127,13 +130,12 @@ def capture(cases, *, device, execution=None):
             np.random.seed(seed)
             torch.manual_seed(seed)
             model.reset()
+            synchronize_device(compute_device)
             if device.startswith("cuda"):
-                torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
             start = time.perf_counter()
             action = model.predict(sample)
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()
+            synchronize_device(compute_device)
             durations.append(time.perf_counter() - start)
             if device.startswith("cuda"):
                 peaks.append(torch.cuda.max_memory_allocated())

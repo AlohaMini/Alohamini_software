@@ -23,7 +23,11 @@ def main(argv=None):
     print("OS:", platform.system(), platform.release())
     print("cv2 path:", cv2.__file__)
     print("cv2 version:", cv2.__version__)
-    device = f"/dev/video{int(args.camera)}" if args.camera.isdecimal() else args.camera
+    device = args.camera
+    if args.camera.isdecimal():
+        device = (
+            int(args.camera) if platform.system() == "Darwin" else f"/dev/video{int(args.camera)}"
+        )
     try:
         save_images_from_cameras(
             [{"type": "OpenCV", "id": device}], args.output_dir, args.record_time_s

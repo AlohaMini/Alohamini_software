@@ -8,6 +8,7 @@ from time import monotonic
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
@@ -125,7 +126,8 @@ class OmniBaseAdapter(Node):
 
 
 def main() -> None:
-    rclpy.init()
+    # Finish spinning before destroying the node and its simulated clock.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = OmniBaseAdapter()
     try:
         rclpy.spin(node)

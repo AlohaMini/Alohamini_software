@@ -1,17 +1,10 @@
-import importlib.util
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from alohamini_joycon_teleop import input_log
-
-SCRIPT = Path(__file__).parents[1] / "scripts" / "joycon_native_reader.py"
-SPEC = importlib.util.spec_from_file_location("joycon_native_reader", SCRIPT)
-reader = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(reader)
-
+from alohamini.inputs import joycon as reader
+from alohamini.inputs import joycon_log as input_log
 
 def test_stationary_gravity_initializes_level_attitude():
     estimator = reader.ComplementaryAttitudeEstimator()

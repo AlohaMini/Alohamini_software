@@ -1,0 +1,33 @@
+name: alohamini_ros
+channels:
+  - robostack-jazzy
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - numpy=1.26.4
+  - pip
+  - setuptools=70.3.0
+  - cmake>=3.16,<4
+  - make
+  - c-compiler
+  - cxx-compiler
+  - colcon-common-extensions
+  - colcon-notification
+  - pytest>=8,<9
+  - pyyaml
+  - pyzmq
+  - pillow
+  - opencv>=4.10,<5
+  - rsync
+  - ros-jazzy-desktop
+  - ros-jazzy-moveit
+  - ros-jazzy-ros-gz
+  - ros-jazzy-gz-ros2-control
+  - ros-jazzy-ros2-controllers
+  - ros-jazzy-ament-cmake-python
+  - ros-jazzy-ament-cmake-pytest
+  - ros-jazzy-control-msgs
+  - ros-jazzy-diagnostic-msgs
+  - ros-jazzy-joint-state-publisher
+  - ros-jazzy-tf2-ros

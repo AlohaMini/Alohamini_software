@@ -3,6 +3,7 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction
@@ -38,6 +39,9 @@ def generate_launch_description() -> LaunchDescription:
         .to_moveit_configs()
     )
     moveit_config.robot_description = {"robot_description": model.description_xml("planning")}
+    moveit_config.planning_pipelines["ompl"].update(
+        yaml.safe_load((package / "config" / "ompl_groups.yaml").read_text())
+    )
 
     # Offline display poses are model data, never commands or installed-device homing.
     semantic = ET.fromstring(moveit_config.robot_description_semantic["robot_description_semantic"])

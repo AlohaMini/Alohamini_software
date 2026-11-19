@@ -63,7 +63,7 @@ class BimanualLeader:
             if active_sides and sys.platform in ("darwin", "win32") and self._ports == {
                 side: f"/dev/am_arm_leader_{side}" for side in ("left", "right")
             }:
-                self._ports = connected_leader_ports(paths)
+                self._ports = connected_leader_ports(paths, active_sides)
                 if not self._ports:
                     raise ValueError(
                         "Connect the registered leader pair. "

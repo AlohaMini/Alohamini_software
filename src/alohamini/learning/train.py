@@ -53,7 +53,12 @@ from alohamini.learning.logging import (
 from alohamini.learning.metrics import MetricAccumulator, format_metrics
 from alohamini.learning.optim import make_optimizer_and_scheduler, resolve_optimization
 from alohamini.learning.policy import NativePolicy, make_policy, make_processor
-from alohamini.learning.precision import resolve_tf32, tf32_context, validate_trainable_dtype
+from alohamini.learning.precision import (
+    reduction_device,
+    resolve_tf32,
+    tf32_context,
+    validate_trainable_dtype,
+)
 from alohamini.learning.statistics import sample_arguments, training_statistics, write_statistics
 from alohamini.learning.streaming import StreamingBatchSampler
 from alohamini.learning.train_config import resolve_dataset_options
@@ -111,6 +116,9 @@ def launch_training(settings):
                 "-m",
                 "torch.distributed.run",
                 "--standalone",
+                # This launcher starts local workers; use the loopback address
+                # directly instead of resolving the machine hostname.
+                "--local-addr=127.0.0.1",
                 f"--nproc_per_node={processes}",
                 "-m",
                 "alohamini.learning.train",
@@ -239,7 +247,7 @@ def _offline_evaluate_chunks(
         total += ((predicted - targets).abs() * mask[..., None]).sum((0, 1))
         count += int(mask.sum())
     if reduce is not None:
-        packed = torch.cat((total, total.new_tensor([count]))).to(device)
+        packed = torch.cat((total, total.new_tensor([count]))).to(reduction_device(device))
         packed = reduce(packed, reduction="sum").cpu()
         total, count = packed[:-1], int(packed[-1])
     if not count:
@@ -814,7 +822,7 @@ def _train(settings, execution):
                     and step % eval_steps == 0
                 ):
                     # Evaluation must not perturb dropout/CVAE RNG for subsequent updates.
-                    rng = rng_state()
+                    rng = rng_state(device)
                     try:
                         if execution.main:
                             logger.info(
@@ -868,7 +876,7 @@ def _train(settings, execution):
                     # Snapshot consumed work, not sampler prefetch; keep one RNG per rank.
                     ranks = execution.gather(
                         dict(
-                            rng=rng_state(),
+                            rng=rng_state(device),
                             loader_epoch_rng=(
                                 loader_epoch_rng
                                 if consumed % sampler.batches

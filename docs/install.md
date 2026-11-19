@@ -2,6 +2,8 @@
 
 PC 使用 `alohamini` 环境进行遥操、数采和开发；树莓派使用轻量的 `alohamini_host` 环境连接硬件。
 
+macOS 的安装与使用见 [macOS 使用手册](macos.md)。
+
 ## 0. 仓库与环境准备
 
 未安装 Git 时，在 Bash 中执行：
@@ -23,8 +25,8 @@ source "$HOME/.bashrc"
 克隆仓库，再进入仓库根目录：
 
 ```bash
-git clone https://github.com/AlohaMini/Alohamini_software.git
-cd Alohamini_software
+git clone https://github.com/AlohaMini/Alohamini_software.git Alohamini
+cd Alohamini
 ```
 
 已有仓库时，直接进入其根目录，无需重复克隆。
@@ -176,35 +178,61 @@ tar -xzf /path/to/alohamini-mujoco-assets-v1.tar.gz \
 
 将 `/path/to/` 替换为资产包所在目录。模型查看、场景、回放与采集命令见[仿真](simulation.md)。
 
-## 5. ROS2 依赖
+## 5. ROS2 环境
 
-Joy-Con 差分 IK 使用 `alohamini` 环境中的 Pink 工作进程。在该环境安装：
+PC 的 ROS2 使用单独的 `alohamini_ros` Conda 环境，包含 RoboStack 提供的 ROS2、MoveIt、Gazebo、colcon 和 Python 依赖。训练、Pink IK 与 Joy-Con 驱动继续使用 `alohamini` 环境。
+
+从仓库根目录按操作系统安装锁定环境（Linux x86-64）：
+
+| PC 系统 | ROS2 | 锁文件 |
+| --- | --- | --- |
+| Ubuntu 22.04 | Humble | `ros2/locks/humble-linux-64.txt` |
+| Ubuntu 24.04 | Jazzy | `ros2/locks/jazzy-linux-64.txt` |
+
+Ubuntu 24.04：
 
 ```bash
-conda activate alohamini
-python -m pip install -e '.[kinematics]'
-conda deactivate
+cd ~/Alohamini
+conda create -n alohamini_ros --file ros2/locks/jazzy-linux-64.txt
 ```
 
-Ubuntu 22.04 使用 ROS2 Humble，Ubuntu 24.04 使用 ROS2 Jazzy；分别安装对应发行版的 colcon 和 rosdep。在系统 Python 终端中，从仓库根目录执行：
+Ubuntu 22.04：
+
+```bash
+cd ~/Alohamini
+conda create -n alohamini_ros --file ros2/locks/humble-linux-64.txt
+```
+
+只创建当前系统对应的一套环境。使用 RoboStack 时不加载 `/opt/ros/.../setup.bash`；上述流程无需安装 `python3-rosdep2` 或运行 `rosdep install`。锁文件已包含本仓库 ROS 包和 Gazebo 扩展所需的依赖；依赖声明位于对应的 `ros2/environment-<发行版>.yml`。
+
+创建后检查：
 
 ```bash
 source ros2/env.bash --base
-cd ros2
-rosdep install --from-paths src --ignore-src -r -y
+python -c 'import sys, rclpy; print(sys.executable); print(rclpy.__file__)'
+python -m pip check
+ros2 pkg prefix moveit_ros_move_group
+ros2 pkg prefix gz_ros2_control
 ```
 
-Gazebo Fortress 扩展的依赖：
+Python 和 ROS 包路径都应位于 `alohamini_ros` 环境内。构建、模型和规划验收见 [ROS2](ros2.md)。
+
+### Joy-Con 与 Pink IK
+
+使用 Joy-Con 遥操时，在 `alohamini` 环境安装读取器和 Pink IK：
 
 ```bash
-rosdep install --from-paths src/alohamini_core ../simulation/gazebo --ignore-src -r -y
+cd ~/Alohamini
+conda activate alohamini
+python -m pip install -e '.[joycon,kinematics]'
+source ros2/env.bash
 ```
 
-构建与启动见 [ROS2](ros2.md)。
+最后一条命令切回 `alohamini_ros`。启动入口自动调用 `alohamini` 环境中的工作进程。
 
 ## 6. 检查安装
 
-在各自环境中执行：
+在 PC 的 `alohamini` 或树莓派的 `alohamini_host` 环境中执行：
 
 ```bash
 python -m pip check
@@ -219,7 +247,7 @@ ROS2 相机客户端的构建与启动见 [ROS2 相机](ros2.md)；树莓派环�
 
 ## 7. 更新后同步环境
 
-更新代码后，在对应环境中执行：
+更新代码后，在 PC 的 `alohamini` 或树莓派的 `alohamini_host` 环境中执行：
 
 ```bash
 alohamini env check
@@ -229,3 +257,5 @@ alohamini env sync
 启动命令会检查相关依赖并提示版本差异，不自动安装。`sync` 按当前代码的锁文件同步，支持 `--dry-run` 预检；Host 环境可显式指定 `--role host`。尚未安装命令时，使用 `python env/manage.py check` 或 `python env/manage.py sync`。
 
 同步前先结束该环境中的训练、推理、Host 和 Notebook。额外包存在版本冲突时会在安装前退出；成功后不保留记录，安装失败或中断时将诊断信息保存在工作目录的 `logs/environment/`。Python 大小版本变化时按前述步骤重新创建环境。
+
+ROS 环境由 `ros2/locks/` 中的锁文件管理，不使用 `alohamini env sync`。

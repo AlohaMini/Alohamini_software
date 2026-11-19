@@ -1,18 +1,27 @@
 # ROS2
 
-树莓派按使用手册启动 Host；PC 的 ROS 节点使用系统 Python，不在 Conda 环境中运行。
+树莓派按使用手册启动 Host。PC 的 ROS2、MoveIt、Gazebo 和 ROS 节点使用 `alohamini_ros` Conda 环境；Pink IK 和 Joy-Con 读取器由启动入口调用现有的 `alohamini` 环境。
 
-| PC 系统 | ROS2 | 系统 Python |
+| PC 系统 | ROS2 | Gazebo |
 |---|---|---|
-| Ubuntu 22.04 | Humble | 3.10 |
-| Ubuntu 24.04 | Jazzy | 3.12 |
+| Ubuntu 22.04 | Humble | Fortress |
+| Ubuntu 24.04 | Jazzy | Harmonic |
 
-两套组合共用源码、模型与配置；构建及安装目录按 ROS 发行版隔离，不能复用另一发行版的编译产物。
-Pink／Pinocchio 安装在 `alohamini` 环境；ROS 遥操通过本机 IPC 调用常驻 IK 工作进程，不在 ROS Python 中安装其二进制依赖。
+源码、模型和配置共用；构建及安装目录按 ROS 发行版隔离，不能复用另一发行版的编译产物。
+
+## 加载环境
+
+完成 [ROS2 环境安装](install.md#5-ros2-环境)，在每个 ROS 终端加载：
+
+```bash
+source ~/Alohamini/ros2/env.bash
+```
+
+脚本激活 `alohamini_ros` 并加载当前发行版的工作区。不要同时加载系统 `/opt/ros` 或 Python venv。Python 与 ROS 依赖的检查命令见[安装](install.md#5-ros2-环境)。
 
 ## 构建
 
-完成 [ROS2 依赖安装](install.md#5-ros2-依赖)，在系统 Python 终端构建：
+以下路径对应默认克隆目录，已有其他目录时使用实际路径：
 
 ```bash
 cd ~/Alohamini
@@ -20,9 +29,21 @@ bash ros2/build.bash
 source ros2/env.bash
 ```
 
-环境脚本按 Ubuntu 版本选择 Humble 或 Jazzy，也可先设置 `export ALOHAMINI_ROS_DISTRO=humble` 或 `jazzy`。切换发行版须使用新终端；依赖分别安装。构建目录为 `ros2/build/<发行版>`，安装目录为 `ros2/install/<发行版>`。
+环境脚本按 Ubuntu 版本选择 Humble 或 Jazzy，也可先设置 `export ALOHAMINI_ROS_DISTRO=humble` 或 `jazzy`。切换发行版须使用新终端及对应的 ROS Conda 环境。构建目录为 `ros2/build/<发行版>`，安装目录为 `ros2/install/<发行版>`。
 
 `alohamini_core` 从平台根目录安装同一份 Python 源码和模型资产，无需另装 LeRobot、PyTorch 或新建 Conda 环境。
+
+安装依赖、构建和节点启动是独立的检查。在已构建并加载环境的终端中运行仓库测试：
+
+```bash
+cd ~/Alohamini/ros2
+"$ALOHAMINI_ROS_PYTHON" -m colcon --log-base "log/$ROS_DISTRO" test \
+  --build-base "build/$ROS_DISTRO" --install-base "install/$ROS_DISTRO" \
+  --executor sequential --event-handlers console_direct+
+"$ALOHAMINI_ROS_PYTHON" -m colcon test-result --test-result-base "build/$ROS_DISTRO" --verbose
+```
+
+Bridge、轨迹及 MoveIt 集成测试使用本机模拟 Host；这些测试不替代真实机器人、相机或 Joy-Con 的验收。
 
 ## 整机状态与 TF
 
@@ -118,12 +139,11 @@ ros2 run alohamini_validation validate_tf
 适用 `alohamini2`、`alohamini2pro`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
 
 ```bash
-conda deactivate
 source ~/Alohamini/ros2/env.bash
 ros2 launch alohamini_joycon_teleop preview.launch.py
 ```
 
-启动后保持手柄静止约两秒完成 IMU 校准。读取器独立运行于 `alohamini` 环境；ROS 节点使用系统 Python。预览无需 Host，同时启动只规划的 MoveIt，状态、TF 和 FK/IK 服务位于 `/alohamini_plan_only`。不要再单独启动 `plan_only.launch.py`。不接手柄时可加 `start_native_reader:=false`，无桌面时加 `use_rviz:=false`。
+启动后保持手柄静止约两秒完成 IMU 校准。读取器独立运行于 `alohamini` 环境；ROS 节点使用 `alohamini_ros` 环境。预览无需 Host，同时启动只规划的 MoveIt，状态、TF 和 FK/IK 服务位于 `/alohamini_plan_only`。不要再单独启动 `plan_only.launch.py`。不接手柄时可加 `start_native_reader:=false`，无桌面时加 `use_rviz:=false`。
 
 启动入口自动启动 Pink IK 工作进程，默认使用 `conda run -n alohamini python`；可通过 `ik_python:=/绝对路径/python` 指定已安装 `kinematics` 扩展的解释器。工作进程只计算关节目标；Host 命令仍由 ROS Bridge 发送。停止 launch 时一并退出，工作进程异常退出会结束该 launch。
 
@@ -157,14 +177,20 @@ ros2 run alohamini_joycon_teleop joycon_input_log replay joycon.ndjson
 
 ## Gazebo 仿真
 
-Gazebo Fortress 扩展在 `simulation/gazebo/`。安装 [Gazebo 依赖](install.md#5-ros2-依赖) 后，在 ROS2 终端构建并启动：
+`simulation/gazebo/` 根据 ROS 发行版选择 Gazebo：Humble 使用 Fortress，Jazzy 使用 Harmonic。Gazebo 依赖随 `alohamini_ros` 安装。构建并启动，沿用按发行版隔离的目录：
 
 ```bash
-cd ~/Alohamini/ros2
-/usr/bin/python3 -m colcon build --base-paths src ../simulation/gazebo \
+cd ~/Alohamini
+bash ros2/build.bash --base-paths src ../simulation/gazebo \
   --packages-up-to alohamini_gazebo
-source install/local_setup.bash
+source ros2/env.bash
 ros2 launch alohamini_gazebo simulation.launch.py
+```
+
+构建后可运行离线检查，自动验证仿真时钟、关节、控制器和升降轨迹，并在结束时关闭仿真：
+
+```bash
+python simulation/gazebo/test/stack_check.py
 ```
 
 无图形界面时追加 `headless:=true`。运行自动升降抓放演示时，改用 `lift_pick_place_demo.launch.py`；成功或失败后自动退出。

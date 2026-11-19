@@ -226,6 +226,7 @@ def leader_calibration_directory(workspace, leader_id, ports, active_sides=("lef
 
 
 def _connected_pair(known, available):
+    """Match registered controller identities independently of current port names."""
     matches = []
     for bindings in known.values():
         try:
@@ -240,9 +241,10 @@ def _connected_pair(known, available):
     return matches[0] if matches else None
 
 
-def connected_leader_ports(workspace):
-    """按序列号查询已登记的整对主臂，不打开串口或更改登记。"""
-    pair = _connected_pair(_known_leaders(workspace.calibration / "devices"), usb_ports())
+def connected_leader_ports(workspace, active_sides=("left", "right")):
+    known = _known_leaders(workspace.calibration / "devices")
+    selected = {key: {side: pair[side] for side in active_sides} for key, pair in known.items()}
+    pair = _connected_pair(selected, usb_ports())
     return pair[1] if pair else {}
 
 
@@ -274,10 +276,10 @@ def _ensure_leader_ports(workspace, aliases):
             bindings = capture_bindings("leader")
         matched = _matched_ports(bindings, usb_ports())
     known[_pair_key(bindings)] = bindings
-    rules = _leader_rules(known)
     prepared = directory / "leader.rules"
     payloads = {directory / "leader.json": json_bytes(_binding_document(bindings))}
     if aliases:
+        rules = _leader_rules(known)
         payloads[prepared] = rules
     anchor = directory / "leader-legacy.json"
     active = directory / "leader.json"

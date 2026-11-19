@@ -4,6 +4,8 @@
 
 命令在仓库根目录执行。示例保留 episode 1 用于验证；单回合数据省略 `--dataset.eval_episodes` 和 `--eval_steps`。
 
+Apple Silicon 将 `--policy.device=cuda` 改为 `--policy.device=mps`，公共参数见 [MPS 配置](../../../../docs/training.md#apple-siliconmps)。
+
 ```bash
 python -m alohamini.learning.train \
   --dataset.root="$HOME/Alohamini_workspace/datasets/task_demo_ready" \

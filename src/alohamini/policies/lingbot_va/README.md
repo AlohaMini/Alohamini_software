@@ -2,6 +2,8 @@
 
 [策略索引](../../../../docs/training.md#策略选择)
 
+GPU 训练与推理使用 CUDA。
+
 下载本地基座，目录须包含 `transformer/`、`vae/`、`text_encoder/` 和 `tokenizer/`：
 
 ```bash

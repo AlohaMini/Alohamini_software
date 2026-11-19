@@ -2,6 +2,8 @@
 
 [策略索引](../../../../docs/training.md#策略选择) · [公共训练参数](../../../../docs/training.md)
 
+GPU 训练与推理使用 CUDA。
+
 本地基座目录需包含转换后的 `config.json`、`model.safetensors`（或分片与索引），
 以及 `tokenizer/` 下的 UMT5 tokenizer。模型配置须包含 video、VAE 和 text encoder 配置。
 

@@ -1,0 +1,82 @@
+name: macOS native compatibility
+
+on:
+  pull_request:
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/workflows/macos.yml"]
+  push:
+    branches: [main, feat/macos-native]
+    paths: ["pyproject.toml", "environment.yml", "env/**", "src/**", "tests/**", ".github/workflows/macos.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  serial:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+          - runner: macos-15-intel
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb
+        with:
+          miniforge-version: latest
+          activate-environment: alohamini
+          python-version: "3.12"
+          auto-activate-base: false
+      - name: Install and verify hardware dependencies
+        run: |
+          python -m pip install --require-hashes --no-build-isolation -r env/hardware.lock
+          python -m pip install 'setuptools>=77' wheel pytest==8.4.2
+          python -m pip install --no-deps --no-build-isolation -e .
+          python -m pip check
+          python env/macos_validation.py --sections serial --output reports/macos-serial
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: macos-serial-${{ runner.arch }}
+          path: reports/macos-serial/
+  pc:
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      HF_HUB_OFFLINE: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb
+        with:
+          miniforge-version: latest
+          activate-environment: alohamini
+          environment-file: environment.yml
+          auto-activate-base: false
+      - name: Install native Apple Silicon dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          python -m pip install --require-hashes --no-build-isolation -r env/pc-osx-arm64.lock
+          python -m pip install --no-deps --no-build-isolation -e '.[pc]'
+          python -m pip check
+          python env/dependencies.py check
+      - name: Native PC validation
+        run: python env/macos_validation.py --output reports/macos-pc
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: macos-pc-${{ github.sha }}
+          path: reports/macos-pc/

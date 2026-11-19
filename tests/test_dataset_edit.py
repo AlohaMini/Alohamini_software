@@ -442,7 +442,10 @@ def test_delete_invalid_index_does_not_create_pending_directory(source, tmp_path
     assert not list(tmp_path.glob("bad_indices*"))
 
 
-def test_native_repair_indices_and_orphan_jpegs(source, tmp_path):
+def test_native_repair_indices_and_orphan_jpegs(tmp_path):
+    from test_dataset_migration import historical
+
+    source = historical(tmp_path / "source", count=4, episodes=3, previews=False)
     for old, new in reversed([(0, 2), (1, 5), (2, 8)]):
         directory = source / "episodes" / f"episode_{old:06d}"
         table = pq.read_table(directory / "frames.parquet")
@@ -504,7 +507,7 @@ def test_native_repair_compacts_only_ordered_video_references(source, tmp_path, 
     from alohamini.datasets.video import _encode_frames, file_sha256
 
     video = tmp_path / "video"
-    run(source, video, "convert_image_to_video")
+    run(source, video, "reencode_videos")
     directory = video / "episodes/episode_000000"
     path = directory / "frames.parquet"
     table = pq.read_table(path)

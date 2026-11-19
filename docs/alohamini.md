@@ -2,6 +2,8 @@
 
 先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文将 `<型号>` 替换为实际型号，`<树莓派_IP>` 替换为树莓派地址。
 
+Mac 的安装与操作流程见 [macOS 使用手册](macos.md)。
+
 ## 1. 型号与接线
 
 | 型号 | 单侧从臂 | 主臂标定 ID |
@@ -50,9 +52,7 @@ conda activate alohamini
 alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
 ```
 
-Windows、macOS 和 Linux 使用同一套主臂标定流程。在 Studio 中打开「标定主臂」，首次可点击「一键准备标定环境」。按提示拔下两根 USB 线后按回车，先插左臂，识别后保持连接，再插右臂。两臂摆好 Home 后按回车记录零位。
-
-Studio 按控制板序列号记住左右臂。换 USB 口后，Windows 会找到新的 COM 口，macOS 会找到当前串口，Linux 会使用系统设备别名。Linux 首次安装别名时可能提示输入系统密码。
+首次按提示记录左右主臂 USB 控制板序列号并绑定设备名：拔下左右主臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码。
 
 同一 PC 可保存多套主臂：新主臂执行上述命令登记并标定，已登记主臂接回后自动使用各自的记录。同一时间只连接一套主臂。
 
@@ -174,6 +174,7 @@ alohamini record \
 | 参数 | 用途 |
 | --- | --- |
 | `--video-encoder nvenc` | 使用 NVIDIA GPU 编码 H.264，需驱动和 PyAV NVENC 支持；默认 `cpu` |
+| `--video-encoder videotoolbox` | macOS Apple VideoToolbox 硬件编码，不可用时回退 CPU |
 | `--no-background-video-encoding` | 关闭后台编码，默认开启 |
 | `--video-encoding-workers 2` | 限制同时编码的相机数量，默认按启用相机数 |
 | `--video-encoding-memory-mib 2048` | 编码子进程的内存限额（MiB）；不包含整个录制程序或 GPU 显存 |

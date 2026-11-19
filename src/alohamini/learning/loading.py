@@ -1,10 +1,27 @@
 """Shared loader settings for training and ordered offline evaluation."""
 
 import importlib.util
+import logging
 import multiprocessing
+from functools import lru_cache
 
 import torch
 from torch.utils.data import DataLoader, default_collate
+
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _torchcodec_usable():
+    """A wheel's presence does not establish that its native FFmpeg libraries load."""
+    try:
+        from torchcodec.decoders import VideoDecoder
+
+        return VideoDecoder is not None
+    except (ImportError, OSError, RuntimeError) as exc:
+        reason = str(exc).partition("\n")[0] or type(exc).__name__
+        logger.warning("TorchCodec decoder unavailable (%s); using PyAV", reason)
+        return False
 
 
 def collate_samples(samples):
@@ -28,10 +45,13 @@ def collate_samples(samples):
 
 
 def resolve_data_pipeline(cfg):
-    """Prefer installed TorchCodec and preserve explicit loader settings."""
+    """Prefer usable TorchCodec and preserve explicit loader settings."""
     cfg = dict(cfg)
     if "video_backend" not in cfg:
-        cfg["video_backend"] = "torchcodec" if importlib.util.find_spec("torchcodec") else "pyav"
+        cfg["video_backend"] = (
+            "torchcodec"
+            if importlib.util.find_spec("torchcodec") and _torchcodec_usable() else "pyav"
+        )
     cfg.setdefault("camera_workers", 3)
     cfg.setdefault("video_cache_size", 32)
     cfg.setdefault("return_uint8", True)
@@ -77,6 +97,11 @@ def make_loader(
         raise ValueError("Unsupported dataloader_multiprocessing_context")
     if batch_sampler is None and (type(batch_size) is not int or batch_size < 1):
         raise ValueError("batch_size must be a positive integer")
+    if (
+        torch.device(device).type == "mps" and num_workers
+        and (multiprocessing_context or multiprocessing.get_start_method()) == "fork"
+    ):
+        raise ValueError("MPS DataLoader workers require spawn or forkserver, not fork")
     return DataLoader(
         samples,
         **(

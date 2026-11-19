@@ -255,9 +255,9 @@ def _main(argv: list[str] | None = None) -> int:
     )
     recorder.add_argument(
         "--video-encoder",
-        choices=("cpu", "nvenc"),
+        choices=("cpu", "nvenc", "videotoolbox"),
         default="cpu",
-        help="H.264 编码器：CPU libx264 或 NVIDIA NVENC（不可用时回退 CPU）",
+        help="H.264 编码器：CPU、NVIDIA NVENC 或 Apple VideoToolbox（不可用时回退 CPU）",
     )
     recorder.add_argument(
         "--background-video-encoding",

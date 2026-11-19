@@ -1,12 +1,13 @@
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Capture and image handling adapted from LeRobot OpenCVCamera and AlohaMini Host.
-"""V4L2 capture and JPEG production outside the motor-control process/thread."""
+"""Local camera capture and JPEG production outside the motor-control process/thread."""
 
 from __future__ import annotations
 
 import math
 import multiprocessing
+import platform
 import threading
 import time
 from collections import deque
@@ -16,24 +17,38 @@ from queue import Empty, Full
 
 @dataclass(frozen=True)
 class CameraConfig:
-    device: str
+    device: str | int
     width: int = 640
     height: int = 480
     fps: int = 30
     rotation: int = 0
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.device, str)
-            or not self.device.startswith("/dev/")
-            or "\x00" in self.device
+        if isinstance(self.device, str) and self.device.isascii() and self.device.isdecimal():
+            object.__setattr__(self, "device", int(self.device))
+        if not (
+            (type(self.device) is int and 0 <= self.device < 60)
+            or (isinstance(self.device, str) and self.device.startswith("/dev/")
+                and "\x00" not in self.device)
         ):
-            raise ValueError("Camera device must be an explicit /dev/ path")
+            raise ValueError("Camera device must be a local index (0–59) or explicit /dev/ path")
         for name, maximum in (("width", 4096), ("height", 2160), ("fps", 30)):
             if type(getattr(self, name)) is not int or not 1 <= getattr(self, name) <= maximum:
                 raise ValueError(f"{name} must be an integer in [1, {maximum}]")
         if type(self.rotation) is not int or self.rotation not in (0, 90, 180, 270):
             raise ValueError("rotation must be 0, 90, 180 or 270 degrees clockwise")
+
+
+def camera_backend():
+    """Select the local capture API without accepting video files or network URLs."""
+    import cv2
+
+    system = platform.system()
+    if system == "Darwin":
+        return cv2.CAP_AVFOUNDATION
+    if system == "Linux":
+        return cv2.CAP_V4L2
+    raise ValueError("Local camera capture supports Linux and macOS")
 
 
 @dataclass(frozen=True)
@@ -47,7 +62,7 @@ class JpegSnapshot:
 
 
 def _capture(config: CameraConfig, output, stop, stream_enabled) -> None:
-    """Child owns V4L2 and OpenCV; a stuck driver can be terminated on shutdown."""
+    """Child owns OpenCV capture; a stuck driver can be terminated on shutdown."""
     capture = None
     # Do not let an unread IPC queue keep the child alive during shutdown.
     output.cancel_join_thread()
@@ -55,9 +70,15 @@ def _capture(config: CameraConfig, output, stop, stream_enabled) -> None:
         import cv2
 
         cv2.setNumThreads(1)
-        capture = cv2.VideoCapture(config.device, cv2.CAP_V4L2)
+        if platform.system() == "Darwin" and type(config.device) is not int:
+            raise ValueError("macOS cameras require a numeric index; run alohamini find-cameras")
+        capture = cv2.VideoCapture(config.device, camera_backend())
         if not capture.isOpened():
-            raise OSError(f"Cannot open camera: {config.device}")
+            hint = (
+                "; allow camera access for the terminal/app in macOS Privacy & Security"
+                if platform.system() == "Darwin" else ""
+            )
+            raise OSError(f"Cannot open camera: {config.device}{hint}")
         for prop, value in (
             (cv2.CAP_PROP_FRAME_WIDTH, config.width),
             (cv2.CAP_PROP_FRAME_HEIGHT, config.height),

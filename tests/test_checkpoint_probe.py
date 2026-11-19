@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 import pytest
+import torch
 from test_native_learning import recording as recording
 
 from env.checkpoint_probe import compare, digest
@@ -147,7 +148,12 @@ def test_input_digest_tracks_tensor_contents_and_field_names():
     assert digest(torch.tensor(1.0)) != digest(torch.tensor(2.0))
 
 
-def test_capture_restores_an_existing_checkpoint_with_reproducible_outputs(recording, tmp_path):
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_capture_restores_an_existing_checkpoint_with_reproducible_outputs(
+    recording, tmp_path, device
+):
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("Requires a Mac with MPS access")
     from test_native_learning import model_options
 
     from alohamini.learning.data import AlohaMiniDataset
@@ -172,8 +178,8 @@ def test_capture_restores_an_existing_checkpoint_with_reproducible_outputs(recor
             "seed": 42,
         }
     ]
-    old = capture(cases, device="cpu")
-    new = capture(cases, device="cpu")
+    old = capture(cases, device=device)
+    new = capture(cases, device=device)
     assert compare(old, new)["passed"]
     row = old["cases"]["act"]
     assert row["sample_locations"] == [[0, 0], [0, 1]]

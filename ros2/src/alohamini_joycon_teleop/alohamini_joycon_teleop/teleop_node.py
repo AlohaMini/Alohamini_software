@@ -376,6 +376,12 @@ class JoyConTeleop(Node):
         self.zmq_context.term()
         if self.ik_worker is not None:
             self.ik_worker.close()
+        # Humble's Node.destroy_node does not release action waitables. They
+        # must be closed while this node's ROS context is still alive.
+        for clients in (self.arm_clients, self.gripper_clients):
+            for client in clients.values():
+                client.destroy()
+            clients.clear()
         return super().destroy_node()
 
     def on_bridge_status(self, message: DiagnosticArray) -> None:
@@ -683,7 +689,7 @@ class JoyConTeleop(Node):
 
     def retry_ik_mode(self, side: str, proposed_pose: dict, reason: str) -> None:
         self.get_logger().info(
-            f"[{side}] {reason}; retrying with LMA IK "
+            f"[{side}] {reason}; retrying with cached IK "
             f"pos={[round(v, 4) for v in proposed_pose['position']]} "
             f"orient={[round(v, 4) for v in proposed_pose['orientation']]} "
             f"seed={[round(v, 4) for v in self.arm_seed(side) or []]}"

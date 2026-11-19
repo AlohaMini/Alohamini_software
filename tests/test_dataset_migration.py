@@ -30,11 +30,11 @@ migration = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(migration)
 
 
-def historical(root, image_format="tar", count=3):
+def historical(root, image_format="tar", count=3, *, episodes=2, previews=True):
     with contextlib.closing(
         _EpisodeWriter(root, fps=30, task="pick", robot_metadata=metadata(("forward", "wrist")))
     ) as dataset:
-        for _ in range(2):
+        for _ in range(episodes):
             add_episode(dataset, count)
             dataset.save_episode()
     info = as_png_v1(root)
@@ -58,7 +58,8 @@ def historical(root, image_format="tar", count=3):
                 episode / "frames.parquet",
             )
         (root / "meta/info.json").write_text(json.dumps(info))
-    generate_previews(root)
+    if previews:
+        generate_previews(root)
     return root
 
 
