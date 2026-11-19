@@ -72,6 +72,7 @@ def test_identity_helpers_run_only_on_first_call(monkeypatch, tmp_path):
         "package_version": "test-version",
         "source_sha256": "b" * 64,
         "git_revision": None,
+        "git_branch": None,
     }
     assert version.software_identity() == expected
     assert version.software_identity() == expected
@@ -98,6 +99,7 @@ def test_unreadable_source_keeps_available_version_and_git_revision(tmp_path, mo
         "package_version": "installed",
         "source_sha256": None,
         "git_revision": "c" * 40,
+        "git_branch": None,
     }
 
 
@@ -156,6 +158,7 @@ def test_missing_package_directory_keeps_installed_version(monkeypatch, failure)
         "package_version": "installed",
         "source_sha256": None,
         "git_revision": None,
+        "git_branch": None,
     }
 
 
@@ -168,3 +171,28 @@ def test_missing_empty_or_externally_linked_source_is_not_reported_as_equal(tmp_
     (target / "module.py").write_text("outside = True\n")
     (root / "linked").symlink_to(target, target_is_directory=True)
     assert version._source_sha256(root) is None
+
+
+def test_identity_captures_branch_once_and_preserves_commit_after_branch_change(
+    tmp_path, monkeypatch
+):
+    root = package(tmp_path)
+    repository = root.parents[1]
+    subprocess.run(
+        ["git", "init", "-b", "feat/macos", str(repository)], check=True, capture_output=True
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "-c", "user.name=版本测试", "-c",
+                    "user.email=version@example.test", "commit", "-m", "初始化测试源码"],
+                   check=True, capture_output=True)
+    monkeypatch.setattr(version, "_package_root", lambda: root)
+    first = version.software_identity().copy()
+    subprocess.run(
+        ["git", "-C", str(repository), "checkout", "--detach"], check=True, capture_output=True
+    )
+    assert version.software_identity() == first
+    version.software_identity.cache_clear()
+    detached = version.software_identity()
+    assert first["git_branch"] == "feat/macos"
+    assert detached["git_branch"] is None
+    assert detached["git_revision"] == first["git_revision"]

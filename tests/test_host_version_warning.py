@@ -102,6 +102,7 @@ def test_equal_sources_do_not_warn_even_when_version_or_git_history_differ(
     for _ in range(2):
         snapshot = client.read()
         assert snapshot.payload["_software"] == remote
+        assert client.software_version["status"] == "matching"
         assert snapshot.robot_model == "alohamini2pro"
         assert snapshot.payload["arm_left_shoulder_pan.pos"] == -12.5
     assert not diagnostic_messages(caplog)
@@ -115,6 +116,8 @@ def test_different_source_warns_once_and_preserves_snapshot_and_command_context(
     client = client_factory([payload(remote)] * 3)
     snapshots = [client.read() for _ in range(3)]
     messages = diagnostic_messages(caplog)
+    assert client.software_version["status"] == "different"
+    assert client.software_version["host"]["source_sha256"] == remote["source_sha256"]
     assert len(messages) == 1
     assert "pc/host code mismatch" in messages[0].lower()
     assert all(snapshot.payload["_software"] == remote for snapshot in snapshots)
@@ -132,6 +135,8 @@ def test_old_host_without_identity_warns_once_and_remains_readable(
     messages = diagnostic_messages(caplog)
     assert len(messages) == 1
     assert "cannot verify" in messages[0].lower()
+    assert client.software_version["status"] == "unconfirmed"
+    assert client.software_version["host"] is None
 
 
 @pytest.mark.parametrize(

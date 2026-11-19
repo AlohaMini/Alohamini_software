@@ -99,9 +99,17 @@ def software_identity() -> dict:
         root = _package_root()
     except (OSError, RuntimeError):
         root = None
+    revision = _git_revision(root) if root is not None else None
+    branch = None
+    if revision is not None:
+        try:
+            branch = _git_output(root, "branch", "--show-current") or None
+        except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
+            pass
     return {
         "schema_version": 1,
         "package_version": _package_version(),
         "source_sha256": _source_sha256(root) if root is not None else None,
-        "git_revision": _git_revision(root) if root is not None else None,
+        "git_revision": revision,
+        "git_branch": branch,
     }

@@ -134,6 +134,7 @@ class HostClient:
         # work belongs in the observation/control loop.
         self._software = dict(software_identity())
         self._software_check_key = object()
+        self.software_version = {"status": "unconfirmed", "pc": self._software, "host": None}
         self._timeout_s = float(timeout_s)
         self._context = None
         self._socket = None
@@ -336,6 +337,19 @@ class HostClient:
             return
         self._software_check_key = key
         local_digest = _source_digest(self._software)
+        # 可选版本元信息在 SDK 边界归一化，界面不再解析报文或重复比对源码。
+        self.software_version = {
+            "status": "unconfirmed" if local_digest is None or remote_digest is None
+                else "matching" if local_digest == remote_digest else "different",
+            "pc": self._software,
+            "host": {
+                "schema_version": 1,
+                "source_sha256": remote_digest,
+                **{key: remote.get(key) if isinstance(remote.get(key), str) else None
+                   for key in ("package_version", "git_revision", "git_branch")},
+            } if isinstance(remote, Mapping) and type(remote.get("schema_version")) is int
+                and remote["schema_version"] == 1 else None,
+        }
         if local_digest is None or remote_digest is None:
             logger.warning(
                 "Cannot verify PC/Host code versions: PC %s; Host %s. "
