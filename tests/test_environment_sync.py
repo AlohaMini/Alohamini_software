@@ -331,6 +331,8 @@ import sys, runpy
 from pathlib import Path
 from alohamini import environment
 environment.checkout = lambda: Path({str(repository)!r})
+environment.platform.system = lambda: 'Linux'
+environment.platform.machine = lambda: 'x86_64'
 sys.path.insert(0, {str(tmp_path)!r})
 sys.argv = ['train']
 runpy.run_module('alohamini.learning.train', run_name='__main__')

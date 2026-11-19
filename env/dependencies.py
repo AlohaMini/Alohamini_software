@@ -180,6 +180,27 @@ def check(root):
             raise ValueError(f"PC lock does not satisfy {req}")
     if (root / "env/pc-osx-arm64.in").read_text() != mac_input:
         raise ValueError("env/pc-osx-arm64.in is stale; run python env/dependencies.py mac-lock")
+    for name, extra, architecture, system in (
+        ("connection", "connection", "x86_64", "Linux"),
+        ("recording-linux-64", "recording", "x86_64", "Linux"),
+        ("recording-osx-arm64", "recording", "arm64", "Darwin"),
+    ):
+        locked = requirements(root / f"env/{name}.lock")
+        for package, (requirement, line) in locked.items():
+            version = exact_version(requirement)
+            if "--hash=sha256:" not in line:
+                raise ValueError(f"Missing SHA256 for {package} in {name}")
+            if package in pc and version != exact_version(pc[package][0]):
+                raise ValueError(f"Feature/PC version mismatch: {package}")
+        for package, constraints in declared(
+            root, [extra], architecture=architecture, system=system
+        ).items():
+            if package not in locked or any(
+                exact_version(locked[package][0]) not in req.specifier for req in constraints
+            ):
+                raise ValueError(f"{name} does not satisfy {package}")
+        if {"torch", "transformers", "torchcodec"} & locked.keys():
+            raise ValueError(f"Training dependencies found in {name}")
 
 
 def dependency_group(name, groups):
@@ -398,6 +419,7 @@ def _refresh(root, *, group=None):
         GENERATED + "-r runtime-linux-64.lock\n" + pc["ruff"][1] + "\n"
     )
     refresh_macos(root)
+    refresh_features(root)
     check(root)
 
 
@@ -417,6 +439,30 @@ def refresh_macos(root):
             else:
                 path.write_bytes(content)
         raise
+
+
+def refresh_features(root):
+    """复用 PC 版本和官方解析器生成轻量功能锁，保留所有间接依赖的哈希。"""
+    with tempfile.TemporaryDirectory(prefix="alohamini-feature-lock-") as directory:
+        directory = Path(directory)
+        for name, extra, architecture, system, machine in (
+            ("connection", "connection", "linux-64", "Linux", "x86_64"),
+            ("recording-linux-64", "recording", "linux-64", "Linux", "x86_64"),
+            ("recording-osx-arm64", "recording", "osx-arm64", "Darwin", "arm64"),
+        ):
+            source, output = directory / f"{name}.in", directory / f"{name}.lock"
+            existing = root / f"env/{name}.lock"
+            if existing.exists():
+                output.write_bytes(existing.read_bytes())
+            source.write_text("\n".join(
+                str(req) for constraints in declared(
+                    root, [extra], system=system, architecture=machine
+                ).values() for req in constraints
+            ) + "\n")
+            compile_lock(root, source, output, architecture=architecture,
+                         constraint=root / "env/pc-linux-64.lock")
+        for output in directory.glob("*.lock"):
+            (root / "env" / output.name).write_bytes(output.read_bytes())
 
 
 def write_report(before, root, output):
@@ -440,7 +486,7 @@ def write_report(before, root, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "inputs", "refresh", "ci-lock", "mac-lock"))
+    parser.add_argument("command", choices=("check", "inputs", "refresh", "ci-lock", "mac-lock", "feature-locks"))
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--group", choices=tuple(policy(ROOT)["groups"]))
     parser.add_argument("--output", type=Path)
@@ -455,6 +501,9 @@ def main(argv=None):
         (root / "env/pc-osx-arm64.in").write_text(
             pc_input(root, system="Darwin", architecture="arm64")
         )
+    elif args.command == "feature-locks":
+        refresh_features(root)
+        check(root)
     elif args.command == "mac-lock":
         refresh_macos(root)
         check(root)

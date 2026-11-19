@@ -150,74 +150,9 @@ def command_packages(argv):
 
 
 def inspect_pc_environment():
-    """检查本机录制与训练入口，部署版本以同一份 PC 锁文件为准。"""
-    import io
-    from contextlib import redirect_stdout
-    from importlib import import_module
-
-    names = command_packages(["record"]) | command_packages(["train"]) | command_packages(["calibrate"])
-    # 发行包名与 Python 导入名不同，版本要求来自命令和部署锁。
-    modules = {"pyzmq": "zmq", "opencv-python-headless": "cv2", "pyserial": "serial",
-               "feetech-servo-sdk": "scservo_sdk.protocol_packet_handler",
-               "huggingface-hub": "huggingface_hub", "pillow": "PIL.Image"}
-    packages = []
-    usable = set()
-    cuda = mps = False
-    torch_version = ""
-    for name in sorted(names | {"pillow"}):
-        try:
-            version = metadata.version(name)
-            if name == "opencv-python-headless" and platform.system() == "Darwin":
-                # 两个 macOS 视频轮子各自携带 FFmpeg，同时导入会重复注册原生类。
-                probe = subprocess.run([sys.executable, "-c", "import cv2"], capture_output=True,
-                                       text=True, timeout=10)
-                if probe.returncode:
-                    raise RuntimeError(probe.stderr.strip() or "Failed to import OpenCV")
-            else:
-                module = import_module(modules.get(name, name))
-            if name == "torch":
-                cuda, mps = module.cuda.is_available(), module.backends.mps.is_available()
-                torch_version = version
-            usable.add(name)
-        except (ImportError, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-            version = str(error)
-        packages.append({"name": name, "display_name": name, "installed": name in usable,
-                         "version": version})
-
-    try:
-        from alohamini.learning.train_config import parse_training_args
-        with redirect_stdout(io.StringIO()):
-            parse_training_args(["--help"])
-        trainer, detail = True, ""
-    except SystemExit as error:
-        trainer, detail = error.code == 0, str(error)
-    except (ImportError, OSError, ValueError, RuntimeError) as error:
-        trainer, detail = False, str(error)
-    packages.append({"name": "trainer", "display_name": "训练入口", "installed": trainer,
-                     "version": detail})
-    dependencies_ready = all(p["installed"] for p in packages)
-    root = checkout()
-    supported, differences = True, []
-    if root is not None:
-        try:
-            lock_path(root, "pc")
-        except ValueError:
-            supported = False
-        if supported:
-            differences = inspect_environment(root, "pc", names | {"pillow"})["differences"]
-    installation_ready = dependencies_ready and not differences
-    ready = supported and installation_ready
-    problems = [p["display_name"] for p in packages if not p["installed"]]
-    message = "电脑所需依赖已通过检查。" if not problems else "请准备或修复：" + "、".join(problems)
-    if differences:
-        message = "电脑环境与当前 software 版本不一致：" + "、".join(row["package"] for row in differences)
-    return {"is_ready": ready, "installation_ready": installation_ready,
-            "deployment_supported": supported, "can_connect": {"pyzmq", "pillow"} <= usable,
-            "installation_message": message,
-            "status_message": message if supported else "当前 software 的录制和训练部署环境支持 Linux x86_64。主臂标定可单独使用。",
-            "packages": packages, "python_path": sys.executable,
-            "python_version": sys.version.split()[0], "torch_version": torch_version,
-            "compute_device": "cuda" if cuda else "mps" if mps else "cpu"}
+    """完整 PC 环境沿用训练部署锁，阶段检查使用 feature_environment。"""
+    from alohamini.feature_environment import inspect_feature_environment
+    return inspect_feature_environment("training")
 
 
 def inferred_role():
@@ -474,6 +409,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="alohamini env", description="检查和同步当前代码的依赖")
     parser.add_argument("operation", choices=["check", "sync"])
     parser.add_argument("--role", choices=["pc", "host"], default=inferred_role())
+    from alohamini.feature_environment import FEATURES
+    parser.add_argument("--feature", choices=FEATURES, help="只检查或安装指定工作阶段")
     parser.add_argument("--dry-run", action="store_true", help="仅解析同步计划，不安装")
     parser.add_argument("--json", action="store_true", help="输出环境检查 JSON")
     args = parser.parse_args(argv)
@@ -481,6 +418,17 @@ def main(argv=None):
     if root is None:
         parser.error("需要从源码仓库以 editable 方式安装 AlohaMini。")
     try:
+        if args.feature:
+            from alohamini.feature_environment import (
+                inspect_feature_environment,
+                sync_feature_environment,
+            )
+            if args.operation == "sync":
+                sync_feature_environment(root, args.feature, dry_run=args.dry_run)
+                return 0
+            report = inspect_feature_environment(args.feature)
+            print(json.dumps(report, ensure_ascii=False) if args.json else report["status_message"])
+            return 0 if report["is_ready"] else 1
         if args.operation == "sync":
             sync_environment(root, args.role, dry_run=args.dry_run)
             return 0
