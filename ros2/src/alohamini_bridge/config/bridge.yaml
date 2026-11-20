@@ -5,6 +5,7 @@ alohamini_lerobot_bridge:
     observation_port: 5556
     request_window: 3
     rate_hz: 50.0
+    # State publication freshness; command expiry follows the Host watchdog.
     observation_timeout_sec: 0.5
     request_timeout_sec: 1.0
     # Reject genuinely delayed replies before receipt-time stamping can make

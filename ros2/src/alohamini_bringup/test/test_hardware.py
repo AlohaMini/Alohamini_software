@@ -194,7 +194,7 @@ def test_mapping_and_units_match_existing_host_and_ros_names(bridge):
     assert derived.header.stamp == joints.header.stamp
 
 
-@pytest.mark.parametrize("event", ["joint_hold_events", "watchdog_events", "control_epoch"])
+@pytest.mark.parametrize("event", ["joint_hold_events"])
 def test_diagnostics_report_protection_even_with_fresh_joint_state(bridge, event):
     client = Mock(client_id="ros-test")
     first = observation()
@@ -642,7 +642,7 @@ def test_worker_timeout_preserves_control_handshake_and_uses_feedback_expiry():
         assert factory.call_args.kwargs["request_window"] == 3
         client.connect_control.assert_called_once()
         assert client.read.call_count == 2
-    receiver.commands.discard_feedback.assert_called_once_with("request timed out")
+    receiver.commands.step.assert_any_call(client, None)
     receiver.commands.fail.assert_not_called()
     assert receiver.take()[1] == 0
 
@@ -773,17 +773,35 @@ def test_command_enable_requires_new_input_and_preserves_wire_units(command_chan
     assert not channel.enable()[0]  # Re-enable must not replay an active setpoint.
 
 
-def test_response_age_and_observation_gap_have_independent_limits(command_channel):
+@pytest.mark.parametrize("budget", [1.0, 2.0])
+def test_control_uses_host_budget_independently_of_publication_age(command_channel, budget):
     channel, client = command_channel
     start_command(channel, client)
-    channel._sample_received -= 0.3  # > 250 ms response limit, < 500 ms feedback timeout.
-    channel.step(client, command_reply(channel, sample=10.04, command={}))
+    received, sample = channel._sample_received, channel._sample
+    channel._snapshot.payload["_safety"]["command_watchdog_timeout_s"] = budget
+    channel._snapshot.request_started_s -= budget * 0.6
+    channel.step(client, None)
     assert channel.status()[0]
     assert client.send_command.call_count == 2
-    channel._sample_received -= 0.6
-    channel.step(client, command_reply(channel, sample=10.06, command={}))
+    assert channel._sample_received == received and channel._sample == sample
+    channel._snapshot.request_started_s -= budget * 0.6
+    channel.step(client, None)
     assert channel.status()[0]
-    assert set(client.send_command.call_args.args[0].values()) == {0.0}
+    assert channel._feedback_paused
+    assert client.send_command.call_count == 2
+
+
+def test_command_enable_uses_host_feedback_not_publication_freshness(bridge):
+    client = Mock(client_id="ros-test")
+    snapshot = observation()
+    snapshot.request_started_s -= 0.4
+    bridge.commands.step(client, snapshot)
+    bridge.handle_observation(snapshot)
+    assert bridge.last_observation_monotonic is None
+    response = bridge.on_command_enable(SetBool.Request(data=True), SetBool.Response())
+    assert response.success
+    assert bridge.commands.status()[0]
+    client.send_command.assert_not_called()
 
 
 def test_configured_bridge_parameters_reach_consumers(ros, tmp_path):
@@ -877,9 +895,7 @@ def test_latest_commands_do_not_wait_for_individual_host_ack(command_channel):
     assert client.send_command.call_args.args[0]["x.vel"] == 0.04
 
 
-@pytest.mark.parametrize(
-    "event", ["disable", "joint_hold_events", "watchdog_events", "calibration"]
-)
+@pytest.mark.parametrize("event", ["disable", "joint_hold_events", "calibration"])
 def test_disable_and_protection_send_one_owned_stop(command_channel, event):
     channel, client = command_channel
     start_command(channel, client)
@@ -905,11 +921,8 @@ def test_disable_and_protection_send_one_owned_stop(command_channel, event):
     "changes",
     [
         {"host_session_id": "host-b"},
-        {"control_epoch": 1},
         {"control_owner": "other-client"},
-        {"feedback_valid": False},
         {"phase": "fault"},
-        {"lift_reference_valid": False},
     ],
 )
 def test_no_stop_or_motion_into_invalid_or_foreign_lease(command_channel, changes):
@@ -920,42 +933,102 @@ def test_no_stop_or_motion_into_invalid_or_foreign_lease(command_channel, change
     assert client.send_command.call_count == 1
 
 
-def test_repeated_or_old_feedback_cannot_renew_motion(command_channel):
+@pytest.mark.parametrize("changes", [{"feedback_valid": False}, {"lift_reference_valid": False}])
+def test_temporarily_unready_host_waits_without_disabling(command_channel, changes):
     channel, client = command_channel
     start_command(channel, client)
-    channel._sample_received -= 1
-    channel.step(client, command_reply(channel))
+    channel.step(client, command_reply(channel, sample=10.04, **changes))
     assert channel.status()[0]
-    assert channel._snapshot is None
+    assert channel._feedback_paused
+    channel.step(client, None)
+    assert client.send_command.call_count == 1
+    channel.step(client, command_reply(channel, sample=10.06))
+    assert channel.status()[0]
+    assert not channel._feedback_paused
+    assert set(client.send_command.call_args.args[0].values()) == {0.0}
+
+
+@pytest.mark.parametrize("epoch", [1, 4])
+def test_same_host_watchdog_recovery_discards_old_motion_without_reenabling(command_channel, epoch):
+    channel, client = command_channel
+    start_command(channel, client)
+    channel._snapshot.request_started_s -= 3
+    channel.step(client, None)
+    recovered = dict(control_epoch=epoch, watchdog_events=2, control_owner=None, command={})
+    channel.step(client, command_reply(channel, sample=10.04, **recovered))
+    assert channel.status()[0]
+    assert channel._identity is None
+    assert channel._command is None
+    assert not channel.status()[1]
+    assert client.send_command.call_count == 1  # Do not claim an idle lease just to stop it.
+    channel.accept(BodyVelocity(0.2, 0, 0), channel.input_epoch)
+    channel.step(client, command_reply(channel, sample=10.06, **recovered))
+    assert client.send_command.call_args.args[0]["x.vel"] == 0.2
+    assert channel._identity.control_epoch == epoch
+
+
+def test_lift_reference_change_cannot_resume_the_old_control_session(command_channel):
+    channel, client = command_channel
+    start_command(channel, client)
+    changed = command_reply(channel, sample=10.04, control_epoch=1, watchdog_events=1)
+    changed.payload["lift_axis.reference_sequence"] = 1
+    channel.step(client, changed)
+    assert not channel.status()[0]
     assert client.send_command.call_count == 1
 
 
-@pytest.mark.parametrize("kind", ["duplicate", "rollback", "delayed", "aged"])
+def test_watchdog_status_before_new_measurement_does_not_revalidate_the_old_lease(command_channel):
+    channel, client = command_channel
+    start_command(channel, client)
+    changed = dict(control_epoch=1, watchdog_events=1, control_owner=None, command={})
+    channel.step(client, command_reply(channel, **changed))  # Same motor sample; new safety status.
+    assert channel.status()[0] and channel._feedback_paused
+    channel.step(client, None)
+    assert channel.status()[0]
+    assert client.send_command.call_count == 1
+    channel.step(client, command_reply(channel, sample=10.04, **changed))
+    assert channel.status()[0] and not channel._feedback_paused
+    channel.accept(BodyVelocity(0.2, 0, 0), channel.input_epoch)
+    channel.step(client, command_reply(channel, sample=10.06, **changed))
+    assert channel._identity.control_epoch == 1
+
+
+def test_repeated_or_old_feedback_cannot_renew_motion(command_channel):
+    channel, client = command_channel
+    start_command(channel, client)
+    channel._snapshot.request_started_s -= 3
+    channel.step(client, command_reply(channel))
+    assert channel.status()[0]
+    assert channel._feedback_paused
+    assert client.send_command.call_count == 1
+
+
+@pytest.mark.parametrize("kind", ["duplicate", "rollback", "delayed"])
 def test_single_discarded_feedback_does_not_cancel_commands(command_channel, kind):
     channel, client = command_channel
     start_command(channel, client)
     previous, received, sample = channel._snapshot, channel._sample_received, channel._sample
+    channel.accept(BodyVelocity(0.2, 0, 0), channel.input_epoch)
     snapshot = command_reply(channel, sample=10.04)
     if kind in ("duplicate", "rollback"):
         snapshot = command_reply(channel, sample=10.02 if kind == "duplicate" else 9.0)
     elif kind == "delayed":
-        snapshot.request_started_s -= 1
-    else:
-        snapshot.payload["_safety"]["sampled_at_monotonic_s"] += 1
+        snapshot.request_started_s -= 3
     channel.step(client, snapshot)
     assert channel.status()[0]
     assert channel._snapshot is previous
     assert channel._sample_received == received
     assert channel._sample == sample
-    assert client.send_command.call_count == 1
+    assert client.send_command.call_count == 2
+    assert client.send_command.call_args.args[0]["x.vel"] == 0.2
     channel.step(client, command_reply(channel, sample=10.06))
     assert channel.status()[0]
-    assert client.send_command.call_count == 2
-    channel._sample_received -= 1
+    assert client.send_command.call_count == 3
+    channel._snapshot.request_started_s -= 3
     channel.step(client, snapshot)
     assert channel.status()[0]
-    assert channel._snapshot is None
-    assert client.send_command.call_count == 2
+    assert channel._feedback_paused
+    assert client.send_command.call_count == 3
     channel.step(client, command_reply(channel, sample=10.08))
     assert channel.status()[0]
     assert set(client.send_command.call_args.args[0].values()) == {0.0}
@@ -969,10 +1042,10 @@ def test_request_timeout_pauses_only_after_last_valid_feedback_expires(command_c
     assert channel.status()[0]
     assert channel._sample_received == received
     assert client.send_command.call_count == 1
-    channel._sample_received -= 1
+    channel._snapshot.request_started_s -= 3
     channel.discard_feedback("request timed out")
     assert channel.status()[0]
-    assert channel._snapshot is None
+    assert channel._feedback_paused
     assert not channel.diagnostics()["command_fault"]
     assert client.send_command.call_count == 1
 
@@ -981,7 +1054,7 @@ def test_feedback_recovery_accepts_new_input_without_replaying_expired_motion(co
     channel, client = command_channel
     start_command(channel, client)
     epoch = channel.input_epoch
-    channel._sample_received -= 1
+    channel._snapshot.request_started_s -= 3
     channel.discard_feedback("request timed out")
     assert channel.status()[0]
     assert channel._command is None
@@ -1000,7 +1073,7 @@ def test_feedback_recovery_accepts_new_input_without_replaying_expired_motion(co
 def test_fresh_reply_after_unobserved_gap_also_discards_old_input(command_channel):
     channel, client = command_channel
     start_command(channel, client)
-    channel._sample_received -= 1
+    channel._snapshot.request_started_s -= 3
     channel.step(client, command_reply(channel, sample=10.04))
     assert channel.status()[0]
     assert channel._command is None
@@ -1010,7 +1083,7 @@ def test_fresh_reply_after_unobserved_gap_also_discards_old_input(command_channe
 def test_repeated_timeouts_keep_new_input_received_while_feedback_is_paused(command_channel):
     channel, client = command_channel
     start_command(channel, client)
-    channel._sample_received -= 1
+    channel._snapshot.request_started_s -= 3
     channel.discard_feedback("request timed out")
     assert channel.accept(BodyVelocity(0.2, 0, 0), channel.input_epoch)
     channel.discard_feedback("request timed out")
@@ -1024,7 +1097,7 @@ def test_repeated_timeouts_keep_new_input_received_while_feedback_is_paused(comm
 def test_feedback_gap_never_claims_control_when_no_motion_was_sent(command_channel):
     channel, client = command_channel
     assert channel.enable()[0]
-    channel._sample_received -= 1
+    channel._snapshot.request_started_s -= 3
     channel.discard_feedback("request timed out")
     channel.step(client, command_reply(channel, sample=10.04))
     assert channel.status()[0]
@@ -1034,16 +1107,16 @@ def test_feedback_gap_never_claims_control_when_no_motion_was_sent(command_chann
 @pytest.mark.parametrize(
     "changes",
     [
-        {"watchdog_events": 1},
-        {"control_epoch": 1},
+        {"phase": "fault"},
+        {"joint_hold_events": 1},
         {"control_owner": "other"},
-        {"feedback_valid": False},
+        {"fault": "motor bus disconnected"},
     ],
 )
 def test_protection_after_feedback_gap_still_requires_explicit_enable(command_channel, changes):
     channel, client = command_channel
     start_command(channel, client)
-    channel._sample_received -= 1
+    channel._snapshot.request_started_s -= 3
     channel.discard_feedback("request timed out")
     channel.step(client, command_reply(channel, sample=10.04, **changes))
     assert not channel.status()[0]
@@ -1061,7 +1134,7 @@ def test_feedback_timeout_aborts_trajectory_without_disabling_future_goals(comma
     points = (TrajectorySample(0, positions), TrajectorySample(10, positions))
     goal = channel.start_goal("left_arm", resource.joints, points, channel.input_epoch)
     channel.step(client, command_reply(channel))
-    channel._sample_received -= 1
+    channel._snapshot.request_started_s -= 3
     channel.discard_feedback("request timed out")
     assert channel.status()[0]
     assert resource.terminal(goal).state is TerminalState.STALE
@@ -1090,14 +1163,53 @@ def test_publication_gap_does_not_pause_worker_with_fresh_feedback(bridge):
     assert bridge.commands._snapshot is latest
 
 
+def test_cached_feedback_cannot_complete_a_trajectory(command_channel):
+    _, client = command_channel
+    channel = RobotCommands(0.25, mapper=JointMapper())
+    channel.step(client, observation())
+    channel.enable()
+    resource = channel.resources["left_arm"]
+    positions = {joint: channel.positions[joint] for joint in resource.joints}
+    goal = channel.start_goal(
+        "left_arm", resource.joints, (TrajectorySample(0, positions),), channel.input_epoch
+    )
+    channel.step(client, command_reply(channel))
+    received, sample = channel._sample_received, channel._sample
+    channel.step(client, None)
+    assert resource.active_goal_id == goal
+    assert channel._sample_received == received and channel._sample == sample
+    channel.step(client, command_reply(channel, sample=10.04))
+    assert resource.terminal(goal).state is TerminalState.SUCCEEDED
+
+
+def test_delayed_measurement_within_host_budget_cannot_complete_a_trajectory(command_channel):
+    _, client = command_channel
+    channel = RobotCommands(0.25, mapper=JointMapper())
+    channel.step(client, observation())
+    channel.enable()
+    resource = channel.resources["left_arm"]
+    positions = {joint: channel.positions[joint] for joint in resource.joints}
+    goal = channel.start_goal(
+        "left_arm", resource.joints, (TrajectorySample(0, positions),), channel.input_epoch
+    )
+    channel.step(client, command_reply(channel))
+    delayed = command_reply(channel, sample=10.04)
+    delayed.request_started_s -= 0.4  # Too old for measurement, within the Host control budget.
+    channel.step(client, delayed)
+    assert resource.active_goal_id == goal
+    assert channel.status()[0] and not channel._feedback_paused
+    assert channel.goal_status("left_arm", goal)[2] == {}
+    channel.step(client, command_reply(channel, sample=10.06))
+    assert resource.terminal(goal).state is TerminalState.SUCCEEDED
+
+
 @pytest.mark.parametrize(
     "changes",
     [
-        {"feedback_valid": False},
+        {"phase": "fault"},
         {"control_owner": "other"},
-        {"control_epoch": 1},
         {"joint_hold_events": 1},
-        {"watchdog_events": 1},
+        {"fault": "motor bus disconnected"},
     ],
 )
 def test_delayed_feedback_still_invalidates_changed_safety_context(command_channel, changes):
@@ -1295,7 +1407,7 @@ def test_network_recovery_stops_old_motion_and_accepts_new_commands(host):
         assert commands.accept(BodyVelocity(0.1, 0, 0), commands.input_epoch)
         wait_result(receiver, lambda result: bool(state["commands"]))
         state["respond"] = False
-        wait_result(receiver, lambda result: bool(result[2]) and commands._snapshot is None)
+        wait_result(receiver, lambda result: bool(result[2]) and commands._feedback_paused)
         assert commands.status()[0]
         assert commands._command is None
         state["respond"] = True
@@ -1305,6 +1417,39 @@ def test_network_recovery_stops_old_motion_and_accepts_new_commands(host):
         assert commands.accept(BodyVelocity(0.15, 0, 0), commands.input_epoch)
         wait_result(receiver, lambda result: state["commands"][-1]["x.vel"] == 0.15)
     finally:
+        receiver.close()
+
+
+def test_worker_resamples_new_ros_input_during_a_bounded_response_gap(host):
+    port, state = host
+    commands = RobotCommands(0.1)
+    receiver = StateReceiver(
+        "127.0.0.1",
+        port,
+        "alohamini2pro",
+        0.05,
+        50,
+        commands=commands,
+        command_port=state["command_port"],
+    )
+    try:
+        wait_result(receiver, lambda result: result[0] is not None)
+        assert commands.enable()[0]
+        commands.accept(BodyVelocity(0.1, 0, 0), commands.input_epoch)
+        wait_result(receiver, lambda result: bool(state["commands"]))
+        state["respond"] = False
+        wait_result(receiver, lambda result: isinstance(result[2], ResponseTimeoutError))
+        previous, received, sample = commands._snapshot, commands._sample_received, commands._sample
+        commands.accept(BodyVelocity(0.2, 0, 0), commands.input_epoch)
+        wait_result(receiver, lambda result: state["commands"][-1]["x.vel"] == 0.2)
+        assert commands._snapshot is previous
+        assert commands._sample_received == received and commands._sample == sample
+        assert commands.status()[0] and not commands._feedback_paused
+        state["respond"] = True
+        wait_result(receiver, lambda result: result[0] is not None)
+        assert commands.status()[0]
+    finally:
+        state["respond"] = True
         receiver.close()
 
 

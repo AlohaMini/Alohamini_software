@@ -86,7 +86,7 @@ ros2 service call /alohamini_lerobot_bridge/command_enable std_srvs/srv/SetBool 
 ros2 service call /alohamini_lerobot_bridge/command_enable std_srvs/srv/SetBool '{data: false}'
 ```
 
-停止请求状态见 `/diagnostics` 的 `stop_pending`、`command_status`，仍须确认实物停止。反馈超时暂停发送并中止当前轨迹；新鲜反馈恢复后可直接提交新指令，无需重新启用。Host 保护、控制权变化或连接异常后仍须重新启用；更换客户端前等待 Host 释放控制权。
+停止请求状态见 `/diagnostics` 的 `stop_pending`、`command_status`，仍须确认实物停止。短时缺帧与原生遥操共用有时限的反馈缓存，超过 Host 反馈有效期才暂停发送。同一标定的 Host 看门狗停止后可用新输入恢复；Host 故障、保护、标定变化或其他客户端接管后仍须重新启用。状态发布和轨迹完成判定只使用新测量。
 
 ## 轨迹与 Jog
 

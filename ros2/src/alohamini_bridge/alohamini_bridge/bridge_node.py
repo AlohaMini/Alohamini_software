@@ -101,7 +101,7 @@ class StateReceiver:
                     except ResponseTimeoutError as exc:
                         result = None, generation, exc
                         if self.commands is not None:
-                            self.commands.discard_feedback(str(exc))
+                            self.commands.step(client, None)
                     except AlohaMiniError as exc:
                         control_connected = False
                         generation += 1
@@ -345,41 +345,31 @@ class AlohaMiniBridge(Node):
 
     def on_command_enable(self, request, response):
         if request.data:
-            if (
-                self.last_observation_monotonic is None
-                or time.monotonic() - self.last_observation_monotonic > self.obs_timeout
-            ):
-                response.success, response.message = (
-                    False,
-                    "Fresh valid Host feedback is required",
+            response.success, response.message = self.commands.enable()
+            if response.success:
+                if self.cmd_subscription is not None:
+                    self.destroy_subscription(self.cmd_subscription)
+                # A new volatile subscription discards the pre-enable queue;
+                # the captured epoch rejects callbacks already in the executor.
+                epoch = self.commands.input_epoch
+                self.command_enabled_at_ns = self.get_clock().now().nanoseconds
+                self.cmd_subscription = self.create_subscription(
+                    Twist,
+                    self.cmd_vel_topic,
+                    lambda message: self.on_cmd_vel(message, epoch),
+                    1,
                 )
-            else:
-                response.success, response.message = self.commands.enable()
-                if response.success:
-                    if self.cmd_subscription is not None:
-                        self.destroy_subscription(self.cmd_subscription)
-                    # Humble callbacks receive no MessageInfo. A new volatile
-                    # subscription discards the pre-enable queue; the captured
-                    # epoch also rejects callbacks already taken by the executor.
-                    epoch = self.commands.input_epoch
-                    self.command_enabled_at_ns = self.get_clock().now().nanoseconds
-                    self.cmd_subscription = self.create_subscription(
-                        Twist,
-                        self.cmd_vel_topic,
-                        lambda message: self.on_cmd_vel(message, epoch),
+                for subscription in self.jog_subscriptions:
+                    self.destroy_subscription(subscription)
+                self.jog_subscriptions = [
+                    self.create_subscription(
+                        JointJog,
+                        self.jog_topics[name],
+                        lambda message, resource=name: self.on_jog(message, resource, epoch),
                         1,
                     )
-                    for subscription in self.jog_subscriptions:
-                        self.destroy_subscription(subscription)
-                    self.jog_subscriptions = [
-                        self.create_subscription(
-                            JointJog,
-                            self.jog_topics[name],
-                            lambda message, resource=name: self.on_jog(message, resource, epoch),
-                            1,
-                        )
-                        for name in (() if self.base_only else ("left_arm", "right_arm", "lift"))
-                    ]
+                    for name in (() if self.base_only else ("left_arm", "right_arm", "lift"))
+                ]
         else:
             self.commands.disable()
             if self.cmd_subscription is not None:
@@ -485,9 +475,15 @@ class AlohaMiniBridge(Node):
             metadata["robot_model"] != self.model.model_id
             or type(safety.get("version")) is not int
             or safety["version"] != 1
-            or safety.get("feedback_valid") is not True
         ):
             raise ValueError("Host model mismatch or invalid feedback")
+        if safety.get("feedback_valid") is not True:
+            self.reject(
+                "Host feedback is unavailable",
+                temporary=not safety.get("fault")
+                and safety.get("phase") not in ("fault", "closed"),
+            )
+            return
         session = safety.get("host_session_id")
         if not isinstance(session, str) or not session:
             raise ValueError("Host session is missing")

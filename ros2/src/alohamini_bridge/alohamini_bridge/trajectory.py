@@ -233,7 +233,13 @@ class TrajectoryResource:
         return dict(previous)
 
     def update(
-        self, measured: dict[str, float], fresh: bool, now: float, *, allow_success=True
+        self,
+        measured: dict[str, float],
+        fresh: bool,
+        now: float,
+        *,
+        allow_success=True,
+        measured_fresh=True,
     ) -> dict[str, float] | None:
         if not fresh:
             if self.active:
@@ -241,17 +247,38 @@ class TrajectoryResource:
             return None
         if self.stream_positions is not None:
             if now > self.stream_until:
-                self._finish(TerminalState.CANCELED, "JointJog timed out", measured, now)
-                return dict(self.hold_positions)
+                self._finish(
+                    TerminalState.CANCELED,
+                    "JointJog timed out",
+                    measured if measured_fresh else None,
+                    now,
+                    hold=measured_fresh,
+                )
+                return dict(self.hold_positions) if self.hold_positions else None
             error = max(
                 abs(self.stream_positions[joint] - measured[joint]) for joint in self.joints
             )
-            if error > self.tracking_error:
+            if measured_fresh and error > self.tracking_error:
                 self._finish(TerminalState.ABORTED, "JointJog tracking error", measured, now)
                 return dict(self.hold_positions)
             return dict(self.stream_positions)
         if self.active_goal_id is not None:
             desired = self._interpolate(now - self.start_time)
+            if not measured_fresh:
+                self.desired = desired
+                if (
+                    now - self.start_time
+                    > self.samples[-1].time_from_start + self.goal_time_tolerance
+                ):
+                    self._finish(
+                        TerminalState.STALE,
+                        "No fresh feedback by the goal deadline",
+                        None,
+                        now,
+                        hold=False,
+                    )
+                    return None
+                return desired
             errors = {joint: abs(desired[joint] - measured[joint]) for joint in self.joints}
             error = max(errors.values())
             violation = next(
