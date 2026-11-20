@@ -360,7 +360,7 @@ class ReplayGuard:
             self._initial_idle = False
 
 
-def run_replay(client, episode, *, fps=None, speed=1.0, verbose_actions=False):
+def run_replay(client, episode, *, fps=None, speed=1.0, verbose_actions=False, interaction=None):
     """Absolute-time playback with feedback supervision, not per-row ACK blocking.
 
     Overdue rows are skipped rather than burst or replayed for extra time.
@@ -398,6 +398,8 @@ def run_replay(client, episode, *, fps=None, speed=1.0, verbose_actions=False):
         watchdog = snapshot.payload["_safety"]["command_watchdog_timeout_s"]
         timeout_count = 0
         while True:
+            if interaction is not None:
+                interaction.check_cancelled()
             now = time.monotonic()
             if snapshot is None:
                 if now >= end:
@@ -494,13 +496,16 @@ def replay(
     fps=None,
     speed=1.0,
     verbose_actions=False,
+    interaction=None,
 ):
     path = Path(root).expanduser() if root is not None else WorkspacePaths().dataset(dataset_name)
     data = load_episode(path, episode)
     if data.robot_model != robot_model:
         raise ValueError("Dataset robot_model does not match --robot_model")
+    if interaction is not None:
+        interaction.check_cancelled()
     with HostClient(
         host, expected_model=robot_model, timeout_s=0.2, prefetch_before_decode=True
     ) as client:
         client.connect_control()
-        run_replay(client, data, fps=fps, speed=speed, verbose_actions=verbose_actions)
+        run_replay(client, data, fps=fps, speed=speed, verbose_actions=verbose_actions, interaction=interaction)

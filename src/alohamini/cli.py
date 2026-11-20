@@ -135,6 +135,7 @@ def _main(argv: list[str] | None = None) -> int:
                 help="从已有图像型 v3 导出纯视觉副本，保留 action 和索引",
             )
     replayer = commands.add_parser("replay", help="通过 Host 回放本地数据集的动作目标")
+    replayer.add_argument("--gui", action="store_true", help="通过桌面协议接收停止并输出进度")
     replayer.add_argument("--dataset", "--dataset.repo_id", dest="dataset_name", required=True)
     replayer.add_argument("--root", "--dataset.root", dest="root", help="本地数据集自定义目录")
     replayer.add_argument("--host", "--robot.remote_ip", dest="host", required=True)
@@ -150,6 +151,7 @@ def _main(argv: list[str] | None = None) -> int:
     replayer.add_argument("--speed", "--replay.speed", dest="speed", type=float, default=1.0)
     replayer.add_argument("--verbose-actions", action="store_true")
     evaluator = commands.add_parser("evaluate", help="运行本地策略并可选录制评估数据")
+    evaluator.add_argument("--gui", action="store_true", help="通过桌面协议接收停止并输出进度")
     evaluator.add_argument("--host", "--robot.remote_ip", dest="host", required=True)
     evaluator.add_argument(
         "--robot_model",
@@ -371,6 +373,7 @@ def _main(argv: list[str] | None = None) -> int:
         help="启用的相机名，设备为 /dev/am_camera_<名称>；不填名称则不启用相机",
     )
     teleop = commands.add_parser("teleoperate", help="双主臂与键盘遥操；使用已有标定")
+    teleop.add_argument("--gui", action="store_true", help="通过桌面协议接收停止并输出进度")
     teleop.add_argument("--verify", action="store_true", help="通过桌面工作流验证双臂跟随")
     teleop.add_argument(
         "--host", "--robot.remote_ip", "--remote_ip", dest="host", default="127.0.0.1"
@@ -520,6 +523,7 @@ def _main(argv: list[str] | None = None) -> int:
             logging.basicConfig(level=logging.WARNING, format="%(message)s")
             options = vars(args).copy()
             options.pop("command")
+            desktop = options.pop("gui")
             checkpoint = options.pop("checkpoint")
             device = options.pop("device")
             from alohamini.trajectory_execution import pop_inference_options
@@ -570,6 +574,10 @@ def _main(argv: list[str] | None = None) -> int:
                 options["policy_factory"] = load_checkpoint
             elif device is not None or overrides or execution != type(execution)():
                 raise ValueError("Checkpoint options require --policy.path, not --policy")
+            if desktop:
+                from alohamini.interaction import run_desktop_operation
+
+                return run_desktop_operation("evaluating", evaluate, **options)
             evaluate(**options)
             return 0
         if args.command == "replay":
@@ -578,6 +586,10 @@ def _main(argv: list[str] | None = None) -> int:
             logging.basicConfig(level=logging.WARNING, format="%(message)s")
             options = vars(args).copy()
             options.pop("command")
+            if options.pop("gui"):
+                from alohamini.interaction import run_desktop_operation
+
+                return run_desktop_operation("replaying", replay, **options)
             replay(**options)
             return 0
         if args.command == "record":
@@ -655,8 +667,13 @@ def _main(argv: list[str] | None = None) -> int:
             options = vars(args).copy()
             options.pop("command")
             host, model = options.pop("host"), options.pop("robot_model")
+            desktop = options.pop("gui")
             if options.pop("verify"):
                 return verify_teleoperation(host, model, **options)
+            if desktop:
+                from alohamini.interaction import run_desktop_operation
+
+                return run_desktop_operation("teleoperating", teleoperate, host, model, **options)
             teleoperate(host, model, **options)
             return 0
         with HostClient(

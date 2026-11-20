@@ -465,6 +465,32 @@ def test_missing_ack_does_not_block_action_queue_or_recording(setup):
     stop.assert_called_once()
 
 
+def test_desktop_stop_discards_action_computed_while_stopping(setup):
+    from queue import Queue
+
+    from alohamini.interaction import DesktopInteraction
+
+    _, client, policy, stop = setup
+    original = policy.select_action.side_effect
+    messages = Queue()
+    interaction = DesktopInteraction(iter(messages.get, None), io.StringIO(), actions=("finish",))
+
+    def select(snapshot):
+        if policy.select_action.call_count == 2:
+            messages.put('{"action":"finish"}')
+            assert interaction.cancelled.wait(1)
+        return original(snapshot)
+
+    policy.select_action.side_effect = select
+    try:
+        with pytest.raises(InterruptedError):
+            run_evaluation(client, policy, "alohamini2pro", duration_s=0.15, interaction=interaction)
+    finally:
+        messages.put(None)
+    assert len(client.sent) == 1
+    stop.assert_called_once_with(client, "alohamini2pro", client.sent[0][2])
+
+
 def test_inference_finishing_after_deadline_drops_action(setup):
     clock, client, policy, _ = setup
     original = policy.select_action.side_effect

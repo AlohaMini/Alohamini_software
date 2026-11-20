@@ -426,6 +426,7 @@ def teleoperate(
     arm_profile=None,
     tracking=False,
     verification=None,
+    interaction=None,
 ):
     if no_leader and no_keyboard:
         raise ValueError("不能同时关闭主臂与键盘。")
@@ -441,6 +442,8 @@ def teleoperate(
     expected_profile = "so-arm-5dof" if robot_model == "alohamini1" else "am-leader-6dof"
     if arm_profile is not None and arm_profile != expected_profile:
         raise ValueError(f"{robot_model} requires leader profile {expected_profile}")
+    if interaction is not None:
+        interaction.check_cancelled()
     with ExitStack() as cleanup:
         # Validate both calibration files and keyboard availability before serial I/O.
         leader = (
@@ -502,7 +505,7 @@ def teleoperate(
             camera_fps=camera_fps,
             on_frame=on_frame,
             tracking=tracking_log,
-            stop_event=verification.cancelled if verification is not None else None,
+            stop_event=(verification or interaction).cancelled if verification or interaction else None,
             verification=verification,
         )
 

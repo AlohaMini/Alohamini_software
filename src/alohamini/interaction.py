@@ -52,3 +52,21 @@ class DesktopInteraction:
             if response["prompt_id"] != self.sequence:
                 raise ValueError("操作步骤已变化，请按当前页面操作")
             return
+
+
+def run_desktop_operation(step, operation, *args, **options):
+    """沿用终端友好的任务实现，桌面通道只传进度和停止。"""
+    import sys
+    from contextlib import redirect_stdout
+
+    interaction = DesktopInteraction(sys.stdin, sys.stdout, actions=("finish",))
+    with redirect_stdout(sys.stderr):
+        try:
+            interaction.notify(step)
+            interaction.check_cancelled()
+            operation(*args, **options, interaction=interaction)
+        except InterruptedError:
+            interaction.notify("cancelled")
+            return 0
+    interaction.notify("cancelled" if interaction.cancelled.is_set() else "succeeded")
+    return 0

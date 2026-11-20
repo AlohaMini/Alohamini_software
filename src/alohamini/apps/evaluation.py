@@ -171,7 +171,7 @@ def _log_fixed_targets(policy, fixed_config):
     print(f"Fixed deployment configuration: {report}", flush=True)
 
 
-def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, dataset=None):
+def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, dataset=None, interaction=None):
     """Run one episode. The caller owns the client, policy and optional open dataset.
 
     policy.robot_metadata must describe its trained absolute command coordinates;
@@ -285,6 +285,8 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
         selected = submitted_count = changed = 0
         last_action = None
         while time.monotonic() < deadline:
+            if interaction is not None:
+                interaction.check_cancelled()
             loop_started = time.monotonic()
             if loop_started - report_started >= 2.0:
                 elapsed = loop_started - report_started
@@ -337,6 +339,8 @@ def run_evaluation(client, policy, robot_model, *, fps=30, duration_s=60, datase
             inference_started = time.monotonic()
             # Preserve the exact input for recording even if a policy mutates its argument.
             value = policy.select_action(deepcopy(observation))
+            if interaction is not None:
+                interaction.check_cancelled()
             if value is None and getattr(policy, "asynchronous", False) is True:
                 time.sleep(max(0, min(loop_started + 1 / fps, deadline) - time.monotonic()))
                 continue
@@ -444,6 +448,7 @@ def evaluate(
     reset_time_s=10,
     dataset_name=None,
     task="robot task",
+    interaction=None,
 ):
     """Load a developer-supplied policy factory before opening any robot connection."""
     _options(fps, episode_time_s)
@@ -480,6 +485,8 @@ def evaluate(
     with ExitStack() as cleanup:
         if getattr(policy, "asynchronous", False) is True:
             cleanup.callback(policy.close)
+        if interaction is not None:
+            interaction.check_cancelled()
         client = cleanup.enter_context(
             HostClient(
                 host,
@@ -512,11 +519,14 @@ def evaluate(
                 path, policy, evaluation_context, fps=fps, task=task, num_episodes=num_episodes
             )
         for episode in range(num_episodes):
+            if interaction is not None:
+                interaction.check_cancelled()
             if dataset is not None:
                 dataset.begin_episode()
             print(f"Eval episode {episode + 1} of {num_episodes}", flush=True)
             count = run_evaluation(
-                client, policy, robot_model, fps=fps, duration_s=episode_time_s, dataset=dataset
+                client, policy, robot_model, fps=fps, duration_s=episode_time_s, dataset=dataset,
+                interaction=interaction,
             )
             if dataset is not None:
                 dataset.save_episode()
@@ -524,6 +534,8 @@ def evaluate(
             if episode + 1 < num_episodes:
                 deadline = time.monotonic() + reset_time_s
                 while time.monotonic() < deadline:
+                    if interaction is not None:
+                        interaction.check_cancelled()
                     print(
                         f"\r[RESET] {math.ceil(deadline - time.monotonic())}s", end="", flush=True
                     )
