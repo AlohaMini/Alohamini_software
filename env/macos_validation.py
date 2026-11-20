@@ -15,7 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = {
     "serial": [
-        "test_macos_serial.py", "test_calibration_procedure.py",
+        "test_macos_serial.py", "test_feetech_packet_port.py",
+        "test_calibration_procedure.py",
         "test_encoding_process.py::test_native_resident_memory_is_positive",
         "test_encoding_process.py::test_parent_pipe_closure_exits_child_without_linux_prctl",
     ],

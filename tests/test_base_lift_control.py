@@ -884,6 +884,7 @@ class BaseLiftIntegrationTests(unittest.TestCase):
         self.assertEqual(self.control.lift_homing_phase, "complete")
         self.assertEqual(self.serial.get(4, 40, 1), 0)
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_first_homing_group_write_tolerates_short_usb_delay(self):
         from serial import SerialTimeoutException
 

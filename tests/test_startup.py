@@ -680,6 +680,7 @@ class StartupTests(unittest.TestCase):
             finally:
                 host.close()
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_full_startup_and_cleanup_allow_slow_usb_writes_and_fragmented_replies(self):
         from serial import SerialTimeoutException
 

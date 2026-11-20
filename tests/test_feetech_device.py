@@ -483,6 +483,7 @@ class FeetechDeviceTests(unittest.TestCase):
         self.assertEqual(writes[0][7:-1], bytes([1, 0, 9]))
         self.assertEqual(writes[1][7:-1], bytes([2, 0x14, 0x85]))
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_group_writes_allow_short_usb_delay_without_changing_feedback_budget(self):
         from serial import SerialTimeoutException
 
@@ -510,6 +511,7 @@ class FeetechDeviceTests(unittest.TestCase):
             self.assertAlmostEqual(self.device._packet_port().deadline - clock.now, 0.008)
         self.assertEqual(self.serial.write_timeout, 0.005)
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_group_write_timeout_is_bounded_contextual_and_never_retried(self):
         from serial import SerialTimeoutException
 
@@ -1650,6 +1652,7 @@ class FeetechDeviceTests(unittest.TestCase):
             self.device._write_register("wheel", 46, 2, 0)
         self.assertEqual(len(self.serial.requests), 1)
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_cyclic_register_fallback_does_not_retry_or_extend_deadline(self):
         self.connect()
         self.serial.drop.add((1, 2, 69))
@@ -1826,6 +1829,7 @@ class FeetechDeviceTests(unittest.TestCase):
         self.assertEqual(len(self.serial.requests), 4)
         self.assertFalse(self.writes())
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_register_fallback_write_cannot_exceed_its_cyclic_deadline(self):
         self.connect()
         with patch("time.monotonic", return_value=1.0):

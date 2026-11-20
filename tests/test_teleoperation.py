@@ -452,6 +452,7 @@ class LeaderTests(unittest.TestCase):
             with self.assertRaises(ConnectionError):
                 leader.read(units)
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_passive_query_allows_delayed_write_and_restores_serial_timeout(self):
         with self.leader() as leader:
             serial = self.serials["left"]
@@ -529,6 +530,7 @@ class LeaderTests(unittest.TestCase):
             self.assertEqual(len(attempts), 2)
             self.assertEqual(attempts[0], attempts[1])
 
+    @patch("alohamini.hardware.feetech._PLATFORM", "linux")
     def test_passive_query_bounds_timeout_retries_and_reports_bus_context(self):
         from serial import SerialTimeoutException
 

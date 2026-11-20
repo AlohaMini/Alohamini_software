@@ -6,6 +6,7 @@
 import threading
 import time
 from collections.abc import Sequence
+from sys import platform as _PLATFORM
 from typing import Protocol
 
 from alohamini._validation import finite_number, identifier
@@ -89,6 +90,16 @@ class _PacketPort:
 
     def writePort(self, packet: list[int]) -> int:
         self._check_deadline()
+        if _PLATFORM == "darwin":
+            # pySerial reconfigures macOS custom baud rates even when only the
+            # write timeout changes. Restoring it after TX can discard the reply.
+            timeout = self.serial.write_timeout
+            finite_number(timeout, "serial write_timeout")
+            if timeout <= 0:
+                raise ValueError("Serial write_timeout must be positive")
+            if self.deadline - time.monotonic() < timeout:
+                raise TimeoutError("Insufficient time for the configured serial write timeout")
+            return self.serial.write(bytes(packet))
         if self.write_timeout_s is None:
             return self.serial.write(bytes(packet))
         previous = self.serial.write_timeout
