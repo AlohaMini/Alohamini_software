@@ -15,25 +15,9 @@ Starting a native Host with only `--robot_model alohamini2edu` does not enable l
 
 ROS control is disabled by default and must be explicitly enabled; navigation also needs an initial pose and goal. Native teleoperation commands do not pass through ROS collision monitoring.
 
-| Layer | Location and responsibility |
-| --- | --- |
-| Model assets | `models/alohamini2edu/`: motor inventory, URDF/meshes, dual-arm kinematics, sensor mounts, and navigation presets |
-| Hardware control | Native `NativeHost` exclusively owns motor serial ports; ROS does not start a separate `ros2_control` motor driver |
-| ROS access | One HostClient in `alohamini_bridge`: commands, state, independent base timeout, and control-ownership checks |
-| Sensors | `alohamini_rplidar_c1`, `alohamini_imu`: USB drivers; `alohamini_sensors`: mounting TF and scan filtering |
-| Localization/navigation | `alohamini_navigation`: EKF, slam_toolbox, Nav2, map versioning, and rosbag recording |
+Connect lidar and IMU to Raspberry Pi USB. Run the Host and sensor drivers on the Pi, and the Bridge, EKF, and SLAM/Nav2 on the PC. Use the same `ROS_DOMAIN_ID` on both machines and ensure DDS connectivity. Motor serial ports belong exclusively to the Host.
 
-```text
-ROS /cmd_vel → collision_monitor → /cmd_vel_safe → Bridge → ZMQ → Host → motor bus
-Host measured wheel velocities → Bridge /wheel/twist ─┐
-USB IMU → /imu/data_raw ───────────┴→ EKF → /odom, odom→base_link
-USB C1 → /scan → /scan_filtered ─────→ AMCL → map→odom
-                  └→ scan_gate → /scan_slam → SLAM → map→odom
-```
-
-Lidar and IMU connect separately to the Raspberry Pi over USB, outside the Feetech motor bus and Host motor-state JSON. Use the same ROS_DOMAIN_ID on both machines and ensure DDS connectivity; the Host still uses ZMQ. Run the Bridge, EKF, and SLAM/Nav2 on the PC; the Raspberry Pi only needs the Host and required sensor drivers.
-
-Use ROS domain IDs 0–101 (this workflow uses 5 for hardware and 42–44 offline) to avoid conflicts with Linux ephemeral ports; see the [ROS 2 domain ID documentation](https://github.com/ros2/ros2_documentation/blob/humble/source/Concepts/Intermediate/About-Domain-ID.rst).
+Use ROS domain IDs 0–101 to avoid conflicts with Linux ephemeral ports; see the [ROS 2 domain ID documentation](https://github.com/ros2/ros2_documentation/blob/humble/source/Concepts/Intermediate/About-Domain-ID.rst).
 
 ## Installation and devices
 
@@ -82,7 +66,7 @@ sudo udevadm control --reload-rules
 ls -l /dev/lidar_c1 /dev/imu_usb
 ```
 
-Sensor mounts are configured in `models/alohamini2edu/config/sensors.yaml`, relative to the Pro REP-103 `base_link`: X forward, Y left, Z up. The legacy CAD lidar transform has been converted to this frame; do not apply an additional base rotation. The default lidar position is nominal. IMU translation has not been measured, so only translation-independent Z-axis angular velocity is used. Store measured extrinsics in a configuration copy under the workspace's `calibration/sensors/` and select it with `sensor_profile:=/absolute/path/sensors.yaml`.
+Sensor mounts are configured in `models/alohamini2edu/config/sensors.yaml`, using REP-103 `base_link`: X forward, Y left, Z up. The default lidar position is nominal. IMU translation has not been measured; localization uses only Z-axis angular velocity. Store measured extrinsics in a configuration copy under the workspace's `calibration/sensors/` and select it with `sensor_profile:=/absolute/path/sensors.yaml`.
 
 ## Start sensors independently
 
@@ -105,7 +89,7 @@ Start the Host and Raspberry Pi sensors first, then run on the PC:
 ros2 launch alohamini_navigation mapping.launch.py host:=192.168.44.4
 ```
 
-If the sensors also connect to the PC, add `start_sensors:=true` and stop the drivers elsewhere. The default `base_only:=true` needs no arm/lift URDF mapping, but still requires the Host's normal readiness and control-ownership conditions. Use `base_only:=false` to show the actual full robot. The navigation description removes the planning virtual root joint to avoid conflicting with the EKF's `odom→base_link`.
+If sensors connect to the PC, add `start_sensors:=true` and stop drivers elsewhere. The default `base_only:=true` needs no arm/lift URDF mapping, but still requires a ready Host and control ownership. Use `base_only:=false` to show the actual full robot.
 
 By default, the EKF fuses wheel vx/vy and IMU gz, excluding gravity-containing acceleration and uncalibrated absolute heading. Without an IMU, explicitly add `use_imu:=false` to use wheel-derived yaw rate; this is not an automatic runtime fallback.
 
@@ -118,7 +102,7 @@ ros2 run alohamini_navigation base_teleop
 
 `w/s`: forward/backward; `a/d`: rotation; `z/x`: lateral motion; Space: stop; `q`: exit. Velocity returns to zero 0.35 s after the last repeated key event; the Bridge separately enforces a 0.5 s `/cmd_vel` timeout. The keyboard does not automatically enable control or depend on leader-arm teleoperation.
 
-Mapping uses asynchronous 2D scan matching in slam_toolbox, with 5 cm resolution, 8 m maximum range, and loop closure by default. `slam_scan_gate` filters `/scan_filtered` using `/odom`, publishing `/scan_slam` after 5 cm translation or 0.05 rad rotation to support mapping during rotation in place. Collision monitoring continues to use full-rate `/scan_filtered`. SLAM parameters are in the model's `config/navigation/slam.yaml`; retain `/scan_slam` input and a zero internal translation threshold. Set the RViz fixed frame to `map`.
+SLAM defaults to 5 cm resolution, 8 m maximum range, and loop closure. Its `/scan_slam` input updates after 5 cm translation or 0.05 rad rotation. Collision monitoring uses full-rate `/scan_filtered`. Configuration is in the model's `config/navigation/slam.yaml`; retain `/scan_slam` input and a zero internal translation threshold in custom configurations. Set the RViz fixed frame to `map`.
 
 ## Save, resume, and use maps
 
@@ -142,7 +126,7 @@ Before exiting or switching modes, disable control and lifecycle nodes, then pre
 ros2 run alohamini_navigation map_session stop
 ```
 
-This order lets Nav2/collision monitoring clean up before TF providers exit. Humble collision monitoring may crash if TF removal and cleanup happen together; run the stop command above before closing launch.
+On Humble, run the stop command above before closing launch; simultaneous TF removal and cleanup may crash collision monitoring.
 
 After stopping the original mapping process, resume from the pose graph with the robot at its original mapping start position:
 
@@ -160,7 +144,7 @@ ros2 launch alohamini_navigation navigation.launch.py host:=192.168.44.4 \
 
 Set the initial pose in RViz, then enable the Bridge and send a navigation goal. Do not run `mapping.launch.py`, `navigation.launch.py`, or another full-robot bringup simultaneously.
 
-Nav2 defaults to OmniMotionModel, NavFn, DWB, and velocity smoothing, with commands passing through collision monitoring before the Bridge. The current forward 180° scan preset permits only forward automatic translation and disables reverse recovery. Observe the surroundings manually during reverse/lateral keyboard motion. The footprint in `config/navigation/nav2.yaml` describes only the nominal folded base, excluding extended arms. After expanding lidar coverage and verifying the hardware footprint, enable the corresponding omnidirectional velocities in custom `nav2_params:=/path/to/nav2.yaml` and configure matching collision-monitor coverage with `collision_params:=/path/to/collision.yaml`.
+Navigation velocity commands pass through collision monitoring. The forward 180° scan preset permits only forward automatic translation and disables reverse recovery. Observe the surroundings manually during reverse/lateral keyboard motion. The footprint in `config/navigation/nav2.yaml` covers only the nominal folded base, excluding extended arms. After expanding lidar coverage and verifying the hardware footprint, enable corresponding omnidirectional velocities in custom `nav2_params:=/path/to/nav2.yaml` and configure matching collision-monitor coverage with `collision_params:=/path/to/collision.yaml`.
 
 ## ROS recording and dual arms
 
@@ -168,9 +152,9 @@ Nav2 defaults to OmniMotionModel, NavFn, DWB, and velocity smoothing, with comma
 ros2 run alohamini_navigation map_session record office_episode_001
 ```
 
-Recording writes to the workspace's `runs/office_episode_001/bag/`, including scans, IMU, wheel velocity, odometry, TF, joints, camera JPEG/intrinsics, sampling-clock correlations, maps, ROS commands, and diagnostics. Ctrl+C flushes files normally; the final manifest lists message counts and missing topics. For dual-front-camera EDU, select cameras with `--cameras forward_left forward_right wrist_right`; `--duration 30` stops after a fixed duration, and `--require-topics /scan /imu/data_raw` checks required topics. The recorder creates no HostClient and enables no motion. Absent topics produce no data.
+Recording writes to the workspace's `runs/office_episode_001/bag/`, including scans, IMU, wheel velocity, odometry, TF, joints, camera JPEG/intrinsics, sampling-clock correlations, maps, ROS commands, and diagnostics. Ctrl+C flushes files normally; the final manifest lists message counts and missing topics. For dual-front-camera EDU, select cameras with `--cameras forward_left forward_right wrist_right`; `--duration 30` stops after a fixed duration, and `--require-topics /scan /imu/data_raw` checks required topics. Recording enables no motion. Absent topics produce no data.
 
-Dual-arm FK/IK uses the same platform algorithms, loading EDU's own model assets. Use `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu` for full ROS hardware bringup; MoveIt/Joy-Con previews support the same argument. Joint mappings automatically read the EDU Host's Home calibration. Device offsets and travel limits remain in each robot's own calibration files.
+Use `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu` for full ROS hardware bringup; MoveIt/Joy-Con previews support the same argument. Joint mappings automatically read the EDU Host's Home calibration. Device offsets and travel limits remain in each robot's calibration files.
 
 ## Raspberry Pi containers and device checks
 
@@ -234,7 +218,6 @@ In navigation mode, Nav2 publishes velocity and directional keyboard input is di
 
 Use `--no-rviz` for headless or unattended tasks. Check the corresponding `manifest.json` `status` to determine recording completeness.
 
-
 Standalone mapping/navigation launches also support `enable_cameras:=true use_rviz:=true`. Cameras use the Host image stream rather than opening USB cameras separately. Override configuration with `ekf_params` and `collision_params`; use `slam_params` for mapping or `nav2_params` for navigation.
 
 ## Align with native collection episodes
@@ -246,7 +229,7 @@ ros2 launch alohamini_camera camera.launch.py host:=192.168.44.4 \
   timestamp_mode:=host_wall publish_raw:=false
 ```
 
-The camera node publishes Host-session and monotonic/Unix clock correlations without creating an extra HostClient. Once the native episode and rosbag are saved, align recordings from the same Host session:
+Once the native episode and rosbag are saved, align recordings from the same Host session:
 
 ```bash
 ros2 run alohamini_navigation map_session attach /absolute/path/recording/bag \
@@ -276,7 +259,7 @@ ros2 run alohamini_navigation edu_session --simulation \
   --map-name simulated_room --record simulated_run_001
 ```
 
-`simulation/navigation/` provides geometry, lidar ray casting, IMU, simulated measured velocities, and `/clock`, running the real EKF, SLAM, collision monitoring, and Nav2. It uses no HostClient, USB driver, or camera network connection. Planar kinematics and a circular collision footprint are used; tire contact, slip, IMU noise, and extended arms are not simulated. The default environment is `worlds/room.yaml`.
+`simulation/navigation/` uses the `worlds/room.yaml` scene and simulation clock `/clock`, supporting EKF, SLAM, collision monitoring, and Nav2 without connecting to a Host, USB devices, or hardware cameras. Simulation covers planar motion and circular base collisions, excluding tire contact, slip, IMU noise, and extended arms.
 
 ```bash
 ros2 launch alohamini_nav_sim simulation.launch.py mode:=navigation \

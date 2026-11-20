@@ -87,7 +87,7 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 ```
 
 以 `alohamini2pro` 为例，默认 state 为双臂位置 14 维、底盘速度 3 维、升降高度 1 维。
-纯视觉副本保留视频和 action，去掉数值观测输入；视频直接复制，不改变配对、帧数或时间戳。早期导出的图片内嵌 Parquet 数据仍可读取，但不是当前采集格式。
+纯视觉副本保留视频和 action，去掉数值观测输入；视频直接复制，不改变配对、帧数或时间戳。
 
 ### 输入参数
 
@@ -250,8 +250,7 @@ ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比�
 未指定视频后端时，训练器检测到已安装 TorchCodec 就使用它，否则使用 PyAV。
 命令行或配置中显式指定的后端（包括 checkpoint 保存的设置）优先于自动选择；
 可通过 `--video_backend=pyav` 切换到 PyAV。后端加载或解码失败时直接报错，不自动切换。
-视频解码器使用每个 worker 独立的有界 LRU 缓存，淘汰时关闭解码器及文件；
-`--video_cache_size=0` 表示逐次打开、读取和关闭。缓存上限不保证底层库内存始终有界。
+`--video_cache_size` 按 worker 设置解码器缓存数量；`0` 不复用解码器。底层库还可能保留额外内存。
 需要调整读取性能时，可设置 `--video_backend=pyav|torchcodec`、`--camera_workers`、
 `--video_cache_size`；增大 worker、预取与缓存会增加主机内存占用。
 图像按各策略的尺寸、裁剪和归一化规则处理，配置随 checkpoint 保存。
@@ -302,7 +301,7 @@ TF32 不改变参数存储类型，只影响 FP32 运算，可与 BF16/FP16 混�
 
 设置随 checkpoint 保存，推理沿用已保存的设置。
 `--policy.path` 开始新微调时，只默认继承 `trainable_dtype`；混合精度、TF32 使用本次配置或策略默认值。
-显式参数优先；`--resume=true` 续训须保持原设置。模型内部必须使用 FP32 的算子保留其数值保护。
+显式参数优先；`--resume=true` 续训须保持原设置。
 
 ### 多卡与梯度累积
 
@@ -319,12 +318,10 @@ TF32 不改变参数存储类型，只影响 FP32 运算，可与 BF16/FP16 混�
 多进程尾批默认重复样本补齐，`--drop_last=true` 改为丢弃。
 `num_workers`、`prefetch_factor` 和视频缓存按进程生效，多卡时需合计 CPU 内存与解码负载。
 DataLoader 默认使用 `spawn`；可用 `--dataloader_multiprocessing_context=forkserver` 切换。
-多卡启动时，rank 0 检查数据并计算或加载归一化统计，其他 rank 校验后复用；文件变化时重新检查。
 `--stats` 可跨训练复用统计；启动结果同步默认最多等待 3600 秒，可用 `--dataset_preparation_timeout_s` 调整。
 多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
 
-FSDP2 由通用训练器管理参数、梯度和优化器分片，保留所选参数存储精度与冻结设置。
-每个进程需要足够 CPU 内存构建模型；保存时同时导出分片训练状态和完整推理权重，主进程需留出完整权重的 CPU 内存。
+每个进程需足够 CPU 内存加载模型；主进程保存时还须容纳完整推理权重。
 FSDP2 不分摊输入激活；单卡仍需容纳当前计算模块及其激活。不支持 ZeRO 或张量并行。
 FastWAM 的外置冻结 VAE／文本编码器仍在每张卡保留一份。
 
@@ -336,9 +333,9 @@ EMA 使用策略预设，未配置时关闭；使用 `--ema.enable=true` 开启�
 `--ema.schedule=power_law` 使用 `(1-1/n)^power`，`n` 为预热后的成功更新次数；
 默认 `inverse_power` 使用 `1-(1+(n-1)/inv_gamma)^(-power)`。策略可提供各自的指数与上限。
 
-EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
+EMA 以 FP32 追踪可训练参数，按成功的优化器更新计数。
 验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
-支持单设备、DDP 和 FSDP2；FSDP2 的 EMA 参数按相同布局分片。评估／导出需要临时内存。
+支持单设备、DDP 和 FSDP2；评估／导出需要临时内存。
 
 ## 5. 保存与续训
 
@@ -598,7 +595,7 @@ TCP 暂不支持 `rtc`、ACT 时间融合、单个手臂关节固定覆盖及 Ho
 预测过期、有效轨迹耗尽或 Host 状态变化时停止使用旧计划；TCP 异步执行只在上述恢复预算内保持等待。
 评估记录保存执行参数及源观测时间。云端服务默认 `async`，支持 `rtc`，TCP 动作 checkpoint 也可选择 `sync`；
 使用相同 `--inference.*` 参数，Pi 从服务端握手读取配置。
-两端必须使用相同平台版本，旧动作块协议不兼容。
+两端必须使用相同平台版本。
 
 ### 固定维度的训练与推理
 
@@ -614,7 +611,7 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 
 支持左右臂、升降、底盘组和具名关节，字段与采集选项相同。已有固定配置继续继承，补选只增加固定维度。
 新增位置目标使用训练 **action 的物理坐标均值**；旧模型相应 state 输入采用 checkpoint 的
-**state 均值**，避免微小测量差异被归一化放大。真实反馈仍用于安全检查和记录。
+**state 均值**。真实反馈仍用于安全检查和记录。
 固定底盘仍为零速度。把训练中活动的维度改为固定，会改变部署条件，不等同于恢复原任务效果。
 保持遥操摆好的当前位置，`--fixed-current` 不需要 `--fixed-dataset`，也不读取训练数据来决定位置。支持 `arm_left`、`arm_right`、
 `lift_axis`、`base` 和单个具名动作字段。模型加载后，Host 握手的首次新鲜、可控制反馈决定目标，
@@ -770,7 +767,7 @@ TCP 同样支持 `--chunk-size`，执行端须安装 `kinematics` 扩展。
 
 固定当前关节时，在云端 `serve` 和树莓派 `run` 两端传入相同的 `--fixed-current FIELD ...`。
 支持 `base`、`lift_axis`、`arm_left`、`arm_right` 或具名 Host 字段；树莓派从新鲜反馈捕获固定目标。
-PI05／SmolVLA 可在服务端开启[RTC 引导](#推理模式)，仅提供推理期引导，不包含 RTC 训练。
+PI05／SmolVLA 可在服务端开启 [RTC 引导](#推理模式)。
 Spirit 使用普通动作块推理。实际链路时延与真机成功率须分别评估，不通过放宽控制 watchdog 补偿网络延迟。
 
 ## 8. 对比评估与训练示范

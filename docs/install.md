@@ -158,7 +158,7 @@ python -m pip install -e . -e ./simulation/robotwin
 python -m pip check
 ```
 
-The ManiSkill adapter uses SAPIEN 3.0.3; the RoboTwin adapter uses SAPIEN 3.0.0b1. Both share the platform robot assets.
+ManiSkill uses SAPIEN 3.0.3; RoboTwin uses SAPIEN 3.0.0b1.
 
 Use Xephyr for windows on Linux X11 systems with hybrid graphics:
 

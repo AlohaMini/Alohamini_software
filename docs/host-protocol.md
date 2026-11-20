@@ -16,7 +16,7 @@ physical_xml = model.description_xml("collision")
 planning_xml = model.description_xml("planning")
 ```
 
-The Pro `planning` and `kinematic` views are generated from the same physical description and do not correspond to separate files. `description_xml()` returns XML ready for ROS; `description_tree()` returns an independent element tree. Use `description_path()` only for actual source files. `description_names` lists all source descriptions and generated views. Restart affected processes after updating model assets.
+`description_xml()` returns ROS XML; `description_tree()` returns an independently editable element tree. Read `planning` and `kinematic` views through these interfaces; use `description_path()` only for actual source files. `description_names` lists available descriptions. Restart affected processes after updating model assets.
 
 ## Reading from Python
 
@@ -55,18 +55,18 @@ Call `set_recording_cameras(True)` at recording start, then use `read(include_im
 `send_command(targets, based_on=snapshot)` uses PUSH to Host port 5555. Configure `expected_model` explicitly and call `connect_control()` before the control loop to establish state and action connections. Anonymous commands are not sent to a Host lacking session/epoch information.
 
 - `targets` is a nonempty mapping accepting model arm `*.pos`, `x.vel`, `y.vel`, `theta.vel`, `lift_axis.height_mm`, and `lift_axis.stop`. Values must be finite. The client does not fill omitted axes or expose raw lift-velocity commands.
-- On receipt of a ZMQ command, the Host sets omitted base velocity axes to zero; an arm-only command also stops earlier base motion. Omitted arm/lift targets retain their previous targets. Internal partial `RobotCommand` updates have separate retention semantics that do not apply directly to the network protocol. The ROS Bridge composes complete three-axis base targets and handles `/cmd_vel` timeouts independently.
+- On receipt of a ZMQ command, the Host sets omitted base velocity axes to zero; an arm-only command also stops earlier base motion. Omitted arm/lift targets retain their previous targets.
 - `lift_axis.stop=1` stops only the lift and is mutually exclusive with a height target. The Host sends zero velocity, waits at least 100 ms, then holds using local height feedback sampled afterward. Without a valid height reference it only stops and does not create a reference. Confirm rest using subsequent feedback.
 - Joint positions follow Host calibration and normalization. Base x/y use m/s, theta uses deg/s, and lift targets use mm. See [ROS 2](ros2.md) for ROS unit conversions.
 - JSON contains targets and `_command`, whose fields are `client_id`, monotonically increasing `sequence`, `host_session_id`, and `control_epoch`.
 - Commands bind to the session and ownership in `based_on`; use a new snapshot after an epoch change. Release by the same client watchdog can recover, but Host restarts or takeover by another client must not resume old actions directly.
-- The complete message is validated before sending. The command socket is created on demand with `IMMEDIATE`, `CONFLATE`, and zero linger. Unavailable connections do not buffer offline targets, and targets are not resent automatically.
+- Targets are validated before sending. Unavailable connections do not buffer offline targets, and targets are not resent automatically.
 - A returned `CommandIdentity` means the message entered the transport queue, not that the Host accepted it or motors executed it. Later targets may overwrite unsent targets.
 - If the channel is temporarily unwritable, returns `None` immediately while retaining the connection. The target was not sent and must not be recorded as a sent action. Generate a target from fresh state on the next cycle instead of resending the old one.
 
 Action submission is nonblocking; state reads wait at most `timeout_s`. Without valid feedback for longer than the Host watchdog period, `send_command()` returns `None`; brief timeouts do not immediately disable sending. Applications manage policy queues; the Host enforces hardware protection and command admission.
 
-The Host renews command time only after controller hardware writes complete for a valid, admitted command, then checks the 2-second command timeout. Merely caching targets does not renew it. Invalid, repeated, or other-owner commands do not renew it; write failures enter fault handling.
+The Host watchdog timeout is 2 seconds. Only valid commands that complete hardware writes renew it. Invalid, repeated, or other-owner commands do not renew it; write failures enter fault handling.
 
 `close()` discards unsent messages and closes connections. It does not implicitly send position targets, disable torque, or home the robot. The Host watchdog handles stopping after the controller disconnects.
 
@@ -135,4 +135,4 @@ When cameras are enabled, the Host provides a separate publication channel on TC
 - `capture_monotonic_s` marks completion of the camera read, not exposure time; `capture_unix_ns` is converted using the same machine's `host_clock_reference`. Synchronize system clocks before using wall-clock timestamps across machines.
 - JPEG data can be used directly in ROS `CompressedImage`.
 
-Subscriptions use cameras that are already enabled, acquire no motion control, and consume no recording cursor. No extra encoding occurs without subscribers. Slow subscribers may drop frames without blocking Host control. With `--profile_timing`, `[HOST CAMERA STREAM avg ms/frame]` reports subscription-stream encoding time separately.
+Subscriptions use cameras that are already enabled, acquire no motion control, and consume no recording cursor. Slow subscribers may drop frames without blocking Host control. With `--profile_timing`, `[HOST CAMERA STREAM avg ms/frame]` reports subscription-stream encoding time separately.

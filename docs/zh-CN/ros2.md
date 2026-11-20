@@ -31,7 +31,7 @@ bash ros2/build.bash
 source ros2/env.bash
 ```
 
-安装依赖、构建和节点启动是独立的检查。在已构建并加载环境的终端中运行仓库测试：
+在已构建并加载环境的终端中运行仓库测试：
 
 ```bash
 cd ~/Alohamini/ros2
@@ -132,8 +132,6 @@ ros2 run alohamini_validation validate_tf
 
 依次检查模型/FK/碰撞几何、MoveIt 和 TF。后两项默认访问 `/alohamini_plan_only`；检查真机 ROS 图时加 `--ros-args -r __ns:=/`。工具不发送动作，实机仍须检查运动区域。
 
-两种入口使用相同的参考姿态、折叠、闭爪及已知碰撞样例检查实际有效性；这些样例不替代实机间隙验证。
-
 ## Joy-Con 遥操
 
 适用 `alohamini2`、`alohamini2pro`、`alohamini2edu`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
@@ -145,7 +143,7 @@ ros2 launch alohamini_joycon_teleop preview.launch.py
 
 启动后保持手柄静止约两秒完成 IMU 校准。读取器独立运行于 `alohamini` 环境；ROS 节点使用 `alohamini_ros` 环境。预览无需 Host，同时启动只规划的 MoveIt，状态、TF 和 FK/IK 服务位于 `/alohamini_plan_only`。不要再单独启动 `plan_only.launch.py`。不接手柄时可加 `start_native_reader:=false`，无桌面时加 `use_rviz:=false`。
 
-启动入口自动启动 Pink IK 工作进程，默认使用 `conda run -n alohamini python`；可通过 `ik_python:=/绝对路径/python` 指定已安装 `kinematics` 扩展的解释器。工作进程只计算关节目标；Host 命令仍由 ROS Bridge 发送。停止 launch 时一并退出，工作进程异常退出会结束该 launch。
+Pink IK 默认由 `conda run -n alohamini python` 启动；自定义解释器用 `ik_python:=/绝对路径/python`，并安装 `kinematics` 扩展。IK 进程异常退出会结束 launch。
 
 真机整机启动（不要重复启动 Bringup 或读取器）：
 
@@ -164,7 +162,7 @@ ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型
 - 未按 `SL/SR` 时，摇杆控制底盘；右肩键加横向摇杆转向，左肩键加纵向摇杆控制升降。
 
 默认差分 IK 不做碰撞规划，须留出安全空间。Host 电流保护与 ROS 关节限位仍有效，不能替代避障。
-差分跟踪使用 Pink／Pinocchio／DAQP，按实际控制周期限制关节位置、速度及加速度。`ik_max_joint_acceleration_rad_s2` 默认 8；`dls_*` 增益、速度、位移及限位余量参数继续有效。RPC 超时默认 0.05 s，失败时停止双臂的新动作并锁定故障。参数文件为 `ros2/src/alohamini_joycon_teleop/config/joycon.yaml`。
+关节位置、速度和加速度限幅按实际控制周期生效。`ik_max_joint_acceleration_rad_s2` 默认 8；`dls_*` 用于配置增益、速度、位移及限位余量。RPC 超时默认 0.05 s，失败时停止双臂的新动作并锁定故障。参数文件为 `ros2/src/alohamini_joycon_teleop/config/joycon.yaml`。
 
 记录原始手柄输入并离线回放（相对路径保存到工作区 `logs/`）：
 
@@ -195,7 +193,7 @@ python simulation/gazebo/test/stack_check.py
 
 无图形界面时追加 `headless:=true`。运行自动升降抓放演示时，改用 `lift_pick_place_demo.launch.py`；成功或失败后自动退出。
 
-仿真命令、状态、TF 和时钟位于 `/alohamini_sim`，不启动真机桥。使用平台同一份模型几何；底盘采用平面运动控制、手臂采用理想位置执行、抓取采用固定连接，不用于验证真实轮地摩擦、夹持力或重力补偿。
+仿真命令、状态、TF 和时钟位于 `/alohamini_sim`，不连接真机。底盘为平面运动，手臂为理想位置控制，抓取为固定连接；不能用于验证真实轮地摩擦、夹持力或重力补偿。
 
 ## 单独订阅相机
 
@@ -294,7 +292,7 @@ ros2 run alohamini_calibration calibrate_hand_eye \
   --capture-dir <手眼采集目录> --intrinsics <右腕内参文件>
 ```
 
-`--preset` 支持 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right` 或 YAML 路径。预设提供标定类型、话题、坐标系、板定义和采样阈值，显式参数优先；采集目录保存实际配置与板文件，求解自动读取。旧采集目录没有板信息时，仍须提供 `--board` 和 `--optical-frame`。
+`--preset` 支持 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right` 或 YAML 路径。显式参数覆盖预设；求解默认读取采集目录保存的配置与板文件。目录缺少板信息时须提供 `--board` 和 `--optical-frame`。
 
 通过已有控制方式改变手臂姿态，每个姿态稳定后自动采样；须包含多个旋转轴。固定相机使用 `eye_to_hand`：标定板固定在手臂上，采集期间保持相机、底盘与升降不动，并填写对应话题及坐标系。工具按图像时间查询 TF，不自动确认时钟同步或时间戳配置。
 

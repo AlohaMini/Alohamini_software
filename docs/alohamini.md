@@ -51,14 +51,6 @@ Home pose:
 | 2: shoulder lift, 3: elbow flex, 4: wrist flex | Fold inward until the corresponding links or housing surfaces just touch |
 | Gripper | Closed |
 
-Make gentle contact without pressing into printed parts. Calibration does not enable torque or move the robot automatically. If either side fails, the previous calibration is restored.
-
-The Home reference for left and right wrist flex is 87°, with model limits of −95° to 91°. Home is not the upper limit. Model control keeps a 2° inward margin, giving a normal command upper limit of 89°; startup feedback tolerance is checked separately.
-
-When upgrading from the old 87° upper limit, update code on both the PC and Raspberry Pi, stop the Host and teleoperation, then run the leader and follower calibration commands below and press Enter to reuse calibration. The procedure retains zero offsets and Home, updates only the upper limits of both wrists, writes and verifies them, and saves the result with automatic backups. No new Home pose is needed. Finish both sides before teleoperation. Existing datasets and model weights retain their original calibration semantics and must not be treated as using the new range.
-
-At startup, the Host checks and clears retained encoder turns with torque disabled, then proceeds only after verification. If `Cannot clear retained encoder turn` occurs, cycle motor power and retry while retaining the saved calibration; reconnecting USB alone is insufficient. Home calibration uses the endpoint tolerance defined by the model (currently 2°): small excursions clamp only the hold target to the valid boundary, without changing feedback or calibration limits. Startup aborts only outside that tolerance.
-
 ### Leader calibration and serial-number registration (PC)
 
 ```bash

@@ -158,7 +158,7 @@ python -m pip install -e . -e ./simulation/robotwin
 python -m pip check
 ```
 
-ManiSkill 适配使用 SAPIEN 3.0.3，RoboTwin 适配使用 SAPIEN 3.0.0b1。两者共用平台机器人资产。
+ManiSkill 使用 SAPIEN 3.0.3，RoboTwin 使用 SAPIEN 3.0.0b1。
 
 Linux X11 混合显卡窗口使用 Xephyr：
 

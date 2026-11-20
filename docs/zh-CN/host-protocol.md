@@ -16,7 +16,7 @@ physical_xml = model.description_xml("collision")
 planning_xml = model.description_xml("planning")
 ```
 
-Pro 的 `planning` 和 `kinematic` 视图由同一物理描述生成，不对应独立文件。`description_xml()` 返回可直接用于 ROS 的 XML，`description_tree()` 返回独立元素树；`description_path()` 只用于真实源文件。`description_names` 列出全部源描述与生成视图。更新模型资产后重启相关进程。
+`description_xml()` 返回 ROS XML，`description_tree()` 返回可独立修改的元素树。`planning` 和 `kinematic` 视图使用这两个接口读取；`description_path()` 仅用于真实源文件。`description_names` 列出可用描述。更新模型资产后重启相关进程。
 
 ## Python 读取
 
@@ -55,18 +55,18 @@ with HostClient("robot-host", expected_model="alohamini2pro") as robot:
 `send_command(targets, based_on=snapshot)` 使用 PUSH 连接 Host 的 5555 端口。必须显式配置 `expected_model`，控制循环开始前调用 `connect_control()` 建立状态和动作连接；不向缺少会话/epoch 信息的 Host 发送匿名命令。
 
 - `targets` 是非空映射，允许该型号的机械臂 `*.pos`、`x.vel`、`y.vel`、`theta.vel`、`lift_axis.height_mm` 和 `lift_axis.stop`。数值必须有限；客户端不补齐未指定轴，不提供升降原始速度旁路。
-- Host 接收 ZMQ 命令时，将省略的底盘速度轴置零；只发手臂目标也会停止之前的底盘运动。省略的手臂／升降目标保持原目标。内部 `RobotCommand` 的局部更新另有保留语义，不能直接套用到网络协议；ROS Bridge 会合成完整底盘三轴目标，并独立处理 `/cmd_vel` 超时。
+- Host 接收 ZMQ 命令时，将省略的底盘速度轴置零；只发手臂目标也会停止之前的底盘运动。省略的手臂／升降目标保持原目标。
 - `lift_axis.stop=1` 仅停止升降，与高度目标互斥。Host 先发送零速度，等待至少 100 ms，再以此后采集的本机高度反馈保持位置；没有有效高度参考时只停止，不创建参考。须结合后续反馈确认静止。
 - 关节位置沿用 Host 标定与归一化；底盘 x/y 为 m/s、theta 为 deg/s，升降目标为 mm。ROS 接口的单位转换见 [ROS2](ros2.md)。
 - JSON 包含目标及 `_command`，后者携带 `client_id`、单调递增 `sequence`、`host_session_id`、`control_epoch`。
 - 命令绑定 `based_on` 快照的会话与控制权；epoch 改变后须使用新快照。自身看门狗释放可恢复，Host 重启或其他客户端接管不可直接恢复旧动作。
-- 消息先完整校验再发送。命令 socket 按需创建，启用 `IMMEDIATE`、`CONFLATE` 和零 linger；连接不可用时不会缓存离线目标，没有自动重发。
+- 目标完整校验后发送；连接不可用时不缓存离线目标，也不自动重发。
 - 返回的 `CommandIdentity` 表示消息已排入通信队列，不是 Host 接受或电机执行回执。后续目标可能覆盖尚未发送的目标。
 - 通道暂时不可写时立即返回 `None`，保留连接；本次目标未发送，不应记录为已发送动作。下一周期根据新状态生成目标，不重发旧目标。
 
 动作发送非阻塞，状态读取由 `timeout_s` 限制等待。超过 Host 看门狗时长仍无有效反馈时，`send_command()` 返回 `None`；短暂超时不会立即禁发。应用负责策略队列管理，Host 负责硬件保护和命令准入。
 
-Host 对有效且获准的命令完成控制器硬件写入后，才更新命令时间并检查 2 秒无命令超时；仅缓存目标不续期。无效、重复或其他控制者的命令不续期，写入异常进入故障处理。
+Host 看门狗超时为 2 秒。只有完成硬件写入的有效命令可续期；无效、重复或非当前控制者的命令不续期，写入异常进入故障处理。
 
 `close()` 丢弃未发送消息并关闭连接，不隐式发送位置目标、失能或回零；断开控制者后的停止由 Host watchdog 负责。
 
@@ -135,4 +135,4 @@ Host 开启相机时，在同一监听地址的 TCP 5557 提供独立发布通�
 - `capture_monotonic_s` 标记相机读取完成，不是曝光时间；`capture_unix_ns` 由同机时钟对 `host_clock_reference` 换算。跨机器使用墙上时间前须同步系统时钟。
 - JPEG 可直接用于 ROS `CompressedImage`。
 
-订阅仅使用已开启的相机，不取得运动控制权，也不消耗数采游标。无订阅时不额外编码；慢订阅者可能丢帧，不阻塞 Host 控制。`--profile_timing` 下的 `[HOST CAMERA STREAM avg ms/frame]` 单独报告订阅流的编码耗时。
+订阅仅使用已开启的相机，不取得运动控制权，也不消耗数采游标。慢订阅者可能丢帧，不阻塞 Host 控制。`--profile_timing` 下的 `[HOST CAMERA STREAM avg ms/frame]` 单独报告订阅流的编码耗时。

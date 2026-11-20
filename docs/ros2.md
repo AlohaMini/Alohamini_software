@@ -31,7 +31,7 @@ bash ros2/build.bash
 source ros2/env.bash
 ```
 
-Dependency installation, building, and node startup are separate checks. Run repository tests in a terminal with the workspace built and loaded:
+Run repository tests in a terminal with the workspace built and loaded:
 
 ```bash
 cd ~/Alohamini/ros2
@@ -132,8 +132,6 @@ ros2 run alohamini_validation validate_tf
 
 Check model/FK/collision geometry, MoveIt, and TF in sequence. The last two default to `/alohamini_plan_only`; add `--ros-args -r __ns:=/` to inspect a hardware ROS graph. The tools send no actions; inspect the hardware motion area separately.
 
-Both entry points check validity using the same reference, folded, closed-gripper, and known-collision poses. These cases do not replace physical clearance checks.
-
 ## Joy-Con teleoperation
 
 Supported models: `alohamini2`, `alohamini2pro`, `alohamini2edu`. Pair Joy-Cons with the PC, install the [`joycon` extension](install.md#3-optional-extensions), and build the ROS packages as described at the start of this guide:
@@ -145,7 +143,7 @@ ros2 launch alohamini_joycon_teleop preview.launch.py
 
 Keep controllers still for about two seconds after startup for IMU calibration. The reader runs separately in `alohamini`; ROS nodes use `alohamini_ros`. Preview needs no Host and also starts planning-only MoveIt; state, TF, and FK/IK services use `/alohamini_plan_only`. Do not start `plan_only.launch.py` separately. Add `start_native_reader:=false` without controllers or `use_rviz:=false` without a desktop.
 
-The launch entry point starts a Pink IK worker using `conda run -n alohamini python` by default. Select an interpreter with the `kinematics` extension installed using `ik_python:=/absolute/path/python`. The worker computes joint targets only; the ROS Bridge still sends Host commands. It exits with launch, and an unexpected worker exit terminates that launch.
+Pink IK starts with `conda run -n alohamini python` by default. Select a custom interpreter with `ik_python:=/absolute/path/python` and install the `kinematics` extension in it. An unexpected IK-process exit terminates launch.
 
 Full hardware startup (do not start duplicate bringup or reader processes):
 
@@ -164,7 +162,7 @@ After checking the pose, manually enable through `command_enable` as above. Rele
 - Without `SL/SR`, sticks control the base. Right shoulder plus horizontal stick controls turning; left shoulder plus vertical stick controls the lift.
 
 Default differential IK does not plan around collisions; provide safe clearance. Host current protection and ROS joint limits remain active and do not replace obstacle avoidance.
-Differential tracking uses Pink/Pinocchio/DAQP, limiting joint position, velocity, and acceleration according to the actual control period. `ik_max_joint_acceleration_rad_s2` defaults to 8; `dls_*` gain, velocity, displacement, and limit-margin parameters remain effective. The RPC timeout defaults to 0.05 s; failure stops new arm motion and latches a fault. Parameters are in `ros2/src/alohamini_joycon_teleop/config/joycon.yaml`.
+Joint position, velocity, and acceleration limits follow the actual control period. `ik_max_joint_acceleration_rad_s2` defaults to 8; `dls_*` configures gains, velocity, displacement, and limit margins. The RPC timeout defaults to 0.05 s; failure stops new arm motion and latches a fault. Parameters are in `ros2/src/alohamini_joycon_teleop/config/joycon.yaml`.
 
 Record raw controller input and replay offline (relative output paths are placed in the workspace's `logs/`):
 
@@ -195,7 +193,7 @@ python simulation/gazebo/test/stack_check.py
 
 Add `headless:=true` without a graphical interface. Use `lift_pick_place_demo.launch.py` for the automatic lift pick-and-place demo; it exits after success or failure.
 
-Simulation commands, state, TF, and clock use `/alohamini_sim`, without a hardware bridge. Geometry is shared with platform models. The base uses planar motion control, arms use ideal position actuation, and grasping uses fixed attachments. This does not validate real wheel-ground friction, gripping force, or gravity compensation.
+Simulation commands, state, TF, and clock use `/alohamini_sim`, without a hardware connection. The base uses planar motion, arms use ideal position control, and grasping uses fixed attachments. This cannot validate real wheel-ground friction, gripping force, or gravity compensation.
 
 ## Subscribe to cameras independently
 
@@ -294,7 +292,7 @@ ros2 run alohamini_calibration calibrate_hand_eye \
   --capture-dir <HAND_EYE_CAPTURE_DIR> --intrinsics <RIGHT_WRIST_INTRINSICS_FILE>
 ```
 
-`--preset` accepts `forward`, `backward`, `chest`, `wrist_left`, `wrist_right`, or a YAML path. Presets supply calibration type, topics, frames, board definition, and sampling thresholds; explicit arguments take precedence. Capture directories save the effective configuration and board file for automatic solver loading. Legacy capture directories without board metadata still require `--board` and `--optical-frame`.
+`--preset` accepts `forward`, `backward`, `chest`, `wrist_left`, `wrist_right`, or a YAML path. Explicit arguments override presets; solving defaults to configuration and board files saved in the capture directory. If board metadata is missing, provide `--board` and `--optical-frame`.
 
 Change arm poses using existing controls; sampling occurs automatically after each pose settles. Include multiple rotation axes. For fixed cameras, use `eye_to_hand`: fix the board to the arm, keep the camera, base, and lift stationary during capture, and specify the corresponding topics and frames. The tool looks up TF at image timestamps; it does not automatically verify clock synchronization or timestamp configuration.
 

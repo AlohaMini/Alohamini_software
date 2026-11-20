@@ -87,7 +87,7 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
 ```
 
 For example, `alohamini2pro` defaults to 14 arm-position dimensions, 3 base-velocity dimensions, and 1 lift-height dimension.
-Vision-only copies retain videos and actions while removing numeric observation inputs. Videos are copied directly without changing pairing, frame counts, or timestamps. Earlier exports with images embedded in Parquet remain readable but are not the current collection format.
+Vision-only copies retain videos and actions while removing numeric observation inputs. Videos are copied directly without changing pairing, frame counts, or timestamps.
 
 ### Input arguments
 
@@ -250,8 +250,7 @@ ACT/AM-ACT validation action loss excludes KL and cannot be directly compared wi
 When no video backend is specified, the trainer uses TorchCodec if installed, otherwise PyAV.
 An explicit backend in CLI arguments or configuration (including checkpoint settings) takes precedence over automatic selection;
 switch to PyAV with `--video_backend=pyav`. Backend load or decode errors are reported without automatic fallback.
-Each worker has its own bounded LRU video-decoder cache; eviction closes decoders and files.
-`--video_cache_size=0` opens, reads, and closes on each access. The cache limit does not guarantee bounded memory in underlying libraries.
+`--video_cache_size` sets the decoder-cache count per worker; `0` disables decoder reuse. Underlying libraries may retain additional memory.
 To tune loading performance, set `--video_backend=pyav|torchcodec`, `--camera_workers`,
 and `--video_cache_size`. More workers, prefetching, and caching increase host memory use.
 Images follow each policy's size, cropping, and normalization rules, saved with the checkpoint.
@@ -302,7 +301,7 @@ With `--cudnn_deterministic=true`, TF32 defaults to disabled; explicit `--tf32` 
 
 Settings are saved with checkpoints and reused for inference.
 Starting new fine-tuning with `--policy.path` inherits only `trainable_dtype` by default; mixed precision and TF32 follow the new configuration or policy defaults.
-Explicit arguments take precedence; `--resume=true` requires the original settings. Operators requiring FP32 internally retain their numeric safeguards.
+Explicit arguments take precedence; `--resume=true` requires the original settings.
 
 ### Multiple GPUs and gradient accumulation
 
@@ -319,12 +318,10 @@ Effective batch size is generally `batch_size × process count × accumulation s
 Multiprocess final batches repeat samples for padding by default; `--drop_last=true` drops them instead.
 `num_workers`, `prefetch_factor`, and video caches apply per process. Account for combined CPU memory and decoding load across GPUs.
 DataLoader uses `spawn` by default; switch with `--dataloader_multiprocessing_context=forkserver`.
-At distributed startup, rank 0 checks data and computes or loads normalization statistics; other ranks validate and reuse them. Changed files trigger rechecking.
 `--stats` reuses statistics across runs. Startup synchronization waits up to 3600 seconds by default; adjust with `--dataset_preparation_timeout_s`.
 For multiple nodes, use `torchrun ... -m alohamini.learning.train --config train.json`. Nodes must share the output directory and use identical data and asset paths.
 
-The common trainer manages FSDP2 parameter, gradient, and optimizer sharding, preserving selected parameter-storage precision and freezing settings.
-Each process needs enough CPU memory to construct the model. Saving exports both sharded training state and full inference weights; the main process needs CPU memory for the full weights.
+Each process needs enough CPU memory to load the model; the main process also needs room for full inference weights when saving.
 FSDP2 does not shard input activations; each GPU must still fit the current compute module and its activations. ZeRO and tensor parallelism are unsupported.
 FastWAM's external frozen VAE/text encoder still has one copy on each GPU.
 
@@ -336,9 +333,9 @@ For fixed decay, use `--ema.decay=0.99`; this is mutually exclusive with custom 
 `--ema.schedule=power_law` uses `(1-1/n)^power`, where `n` counts successful post-warmup updates;
 the default `inverse_power` uses `1-(1+(n-1)/inv_gamma)^(-power)`. Policies can supply their own exponent and upper bound.
 
-EMA tracks trainable parameters in FP32 after every successful optimizer update. Frozen parameters are not copied; BatchNorm buffers are copied directly.
+EMA tracks trainable parameters in FP32 and counts successful optimizer updates.
 Validation uses EMA weights by default; `--ema.use_for_eval=false` selects online weights.
-Single-device, DDP, and FSDP2 are supported; FSDP2 EMA parameters use matching shards. Evaluation/export needs temporary memory.
+Single-device, DDP, and FSDP2 are supported; evaluation/export needs temporary memory.
 
 ## 5. Saving and resuming
 
@@ -598,7 +595,7 @@ TCP currently does not support `rtc`, ACT temporal ensembling, individual arm-jo
 Old plans are discarded when predictions expire, valid trajectories run out, or Host state changes. Asynchronous TCP waits only within the recovery budget above.
 Evaluation records execution parameters and source-observation times. Cloud serving defaults to `async`, supports `rtc`, and also allows `sync` for TCP-action checkpoints;
 it uses the same `--inference.*` arguments, with the Pi reading configuration from the server handshake.
-Both machines must use the same platform version; the old action-chunk protocol is incompatible.
+Both machines must use the same platform version.
 
 ### Fixed dimensions in training and inference
 
@@ -614,7 +611,7 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
 
 Left/right arm, lift, base groups, and named joints are supported, using the same fields as collection options. Existing fixed configuration is inherited; additional selection only adds fixed dimensions.
 New position targets use the training **action mean in physical coordinates**. Corresponding state inputs for older models use the checkpoint's
-**state mean** to avoid normalization amplifying small measurement differences. Real feedback remains available for safety checks and recording.
+**state mean**. Real feedback remains available for safety checks and recording.
 A fixed base still receives zero velocity. Fixing dimensions active during training changes deployment conditions and does not reproduce original task performance.
 To hold positions arranged through teleoperation, `--fixed-current` requires no `--fixed-dataset` and reads no training data to select positions. It supports `arm_left`, `arm_right`,
 `lift_axis`, `base`, and individual named action fields. After model loading, the first fresh, controllable feedback in the Host handshake determines targets;
@@ -770,7 +767,7 @@ These settings do not guarantee cloud results at the execution rate. Late result
 
 To fix current joints, pass identical `--fixed-current FIELD ...` selections to cloud `serve` and Pi `run`.
 Supported fields are `base`, `lift_axis`, `arm_left`, `arm_right`, and named Host fields. The Pi captures fixed targets from fresh feedback.
-PI05/SmolVLA can enable server-side [RTC guidance](#inference-modes); this provides inference-time guidance only, without RTC training.
+PI05/SmolVLA can enable server-side [RTC guidance](#inference-modes).
 Spirit uses ordinary action-chunk inference. Evaluate actual network latency and hardware success separately; do not compensate for latency by relaxing the control watchdog.
 
 ## 8. Compare evaluation runs and training demonstrations

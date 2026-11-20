@@ -15,25 +15,9 @@ EDU 按 2 Pro 的机械、电机与运动学配置增加 C1 雷达和幻尔 USB 
 
 ROS 控制默认禁用，须显式使能；导航还需要初始位姿和目标。原生遥操命令不经过 ROS 碰撞监测。
 
-| 层级 | 位置与职责 |
-| --- | --- |
-| 机型资源 | `models/alohamini2edu/`：电机清单、URDF／网格、双臂运动学、传感器安装与导航预设 |
-| 硬件控制 | 原生 `NativeHost` 独占电机串口；ROS 不另启 `ros2_control` 电机驱动 |
-| ROS 接入 | `alohamini_bridge` 内的一个 HostClient：命令、状态、独立底盘超时与控制权校验 |
-| 传感器 | `alohamini_rplidar_c1`、`alohamini_imu`：USB 驱动；`alohamini_sensors`：安装 TF、扫描过滤 |
-| 定位／导航 | `alohamini_navigation`：EKF、slam_toolbox、Nav2、地图版本与 rosbag 录制 |
+雷达和 IMU 接树莓派 USB。树莓派运行 Host 和传感器驱动，PC 运行 Bridge、EKF、SLAM／Nav2。两端使用相同的 `ROS_DOMAIN_ID` 并保证 DDS 可达；电机串口由 Host 独占。
 
-```text
-ROS /cmd_vel → collision_monitor → /cmd_vel_safe → Bridge → ZMQ → Host → 电机总线
-Host 实测轮速 → Bridge /wheel/twist ─┐
-USB IMU → /imu/data_raw ───────────┴→ EKF → /odom、odom→base_link
-USB C1 → /scan → /scan_filtered ─────→ AMCL → map→odom
-                  └→ scan_gate → /scan_slam → SLAM → map→odom
-```
-
-雷达／IMU 独立接树莓派 USB，不接入 Feetech 电机总线，也不放入 Host 电机状态 JSON。两端使用同一 ROS_DOMAIN_ID 并保证 DDS 可达；Host 仍用 ZMQ。PC 运行 Bridge、EKF、SLAM／Nav2，树莓派只需运行 Host 和所需传感器驱动。
-
-ROS 域建议使用 0–101（本流程实机用 5、离线用 42–44），避免 Linux 临时端口范围的冲突，参见 [ROS 2 域编号说明](https://github.com/ros2/ros2_documentation/blob/humble/source/Concepts/Intermediate/About-Domain-ID.rst)。
+ROS 域建议使用 0–101，避免与 Linux 临时端口范围冲突，参见 [ROS 2 域编号说明](https://github.com/ros2/ros2_documentation/blob/humble/source/Concepts/Intermediate/About-Domain-ID.rst)。
 
 ## 安装与设备
 
@@ -82,7 +66,7 @@ sudo udevadm control --reload-rules
 ls -l /dev/lidar_c1 /dev/imu_usb
 ```
 
-传感器安装配置为 `models/alohamini2edu/config/sensors.yaml`。以 Pro 的 REP-103 `base_link` 为基准：X 前、Y 左、Z 上。雷达的旧 CAD 安装变换已换算到此坐标系，不再额外旋转底盘。默认雷达位置是名义值；IMU 平移尚未实测，只使用不依赖平移的 Z 轴角速度。实际外参放入工作区 `calibration/sensors/` 的配置副本，通过 `sensor_profile:=/绝对路径/sensors.yaml` 指定。
+传感器安装配置为 `models/alohamini2edu/config/sensors.yaml`，坐标系为 REP-103 `base_link`：X 前、Y 左、Z 上。默认雷达位置是名义值；IMU 平移尚未实测，定位仅使用 Z 轴角速度。实际外参放入工作区 `calibration/sensors/` 的配置副本，通过 `sensor_profile:=/绝对路径/sensors.yaml` 指定。
 
 ## 独立启动传感器
 
@@ -105,7 +89,7 @@ ros2 launch alohamini_sensors sensors.launch.py
 ros2 launch alohamini_navigation mapping.launch.py host:=192.168.44.4
 ```
 
-传感器也连接 PC 时追加 `start_sensors:=true`，并停止另一处驱动。默认 `base_only:=true`，无需双臂／升降 URDF 映射；仍要求 Host 原有就绪状态与控制权条件。需要显示真实整机时使用 `base_only:=false`。导航描述移除了规划用虚拟根关节，避免与 EKF 的 `odom→base_link` 冲突。
+传感器也连接 PC 时追加 `start_sensors:=true`，并停止另一处驱动。默认 `base_only:=true`，无需双臂／升降 URDF 映射；仍要求 Host 就绪并满足控制权条件。需要显示真实整机时使用 `base_only:=false`。
 
 默认 EKF 融合轮速的 vx／vy 和 IMU 的 gz，不融合含重力的加速度或未标定绝对航向。没有 IMU 时显式追加 `use_imu:=false`，改用轮速推算的 yaw rate；这不是运行中自动降级。
 
@@ -118,7 +102,7 @@ ros2 run alohamini_navigation base_teleop
 
 `w/s` 前后、`a/d` 旋转、`z/x` 横移，空格停、`q` 退出。最后一次按键重复后 0.35 s 归零，Bridge 的 `/cmd_vel` 另有 0.5 s 超时。键盘不自动使能控制，也不依赖主臂遥操。
 
-建图使用 slam_toolbox 的异步 2D 扫描匹配，默认 5 cm 分辨率、8 m 最大范围并启用回环。`slam_scan_gate` 根据 `/odom` 筛选 `/scan_filtered`，移动达到 5 cm 或转动达到 0.05 rad 时发布 `/scan_slam`，支持原地旋转建图；碰撞监测继续使用完整频率的 `/scan_filtered`。SLAM 参数位于模型的 `config/navigation/slam.yaml`，应保留 `/scan_slam` 输入和为零的内部平移门限。RViz 固定坐标系选 `map`。
+SLAM 默认使用 5 cm 分辨率、8 m 最大范围并启用回环；输入为 `/scan_slam`，底盘移动达到 5 cm 或转动达到 0.05 rad 时更新。碰撞监测使用完整频率的 `/scan_filtered`。配置位于模型的 `config/navigation/slam.yaml`；自定义配置须保留 `/scan_slam` 输入和为零的内部平移门限。RViz 固定坐标系选 `map`。
 
 ## 保存、继续建图与使用地图
 
@@ -142,7 +126,7 @@ ros2 run alohamini_navigation map_session save office
 ros2 run alohamini_navigation map_session stop
 ```
 
-此顺序让 Nav2／碰撞监测在 TF 提供者退出前清理。Humble 碰撞监测在同时撤销 TF 与清理时可能崩溃，应先执行上述停止命令再关闭 launch。
+Humble 下先执行上述停止命令再关闭 launch；同时撤销 TF 与清理可能导致碰撞监测崩溃。
 
 结束原建图进程后，从位姿图继续（机器人置于原首次建图位置）：
 
@@ -160,7 +144,7 @@ ros2 launch alohamini_navigation navigation.launch.py host:=192.168.44.4 \
 
 在 RViz 设置初始位姿，再启用 Bridge 并发送导航目标。不要同时启动 `mapping.launch.py`、`navigation.launch.py` 或另一个整机 Bringup。
 
-默认 Nav2 使用 OmniMotionModel、NavFn、DWB 和速度平滑，经过碰撞监测后才到 Bridge。当前前方 180° 扫描预设限制自动平移为前进，恢复行为不倒车；键盘反向／横移需人工观察。`config/navigation/nav2.yaml` 的轮廓仅描述名义收拢底盘，不包含伸展双臂。扩大雷达覆盖和核对实机轮廓后，才在自定义 `nav2_params:=/路径/nav2.yaml` 中启用相应全向速度，并以 `collision_params:=/路径/collision.yaml` 配置对应的碰撞监测范围。
+导航速度指令经碰撞监测后发送。前方 180° 扫描预设限制自动平移为前进，恢复行为不倒车；键盘反向／横移需人工观察。`config/navigation/nav2.yaml` 的轮廓仅描述名义收拢底盘，不包含伸展双臂。扩大雷达覆盖并核对实机轮廓后，在自定义 `nav2_params:=/路径/nav2.yaml` 中启用相应全向速度，并以 `collision_params:=/路径/collision.yaml` 配置对应的碰撞监测范围。
 
 ## ROS 数据录制与双臂
 
@@ -168,9 +152,9 @@ ros2 launch alohamini_navigation navigation.launch.py host:=192.168.44.4 \
 ros2 run alohamini_navigation map_session record office_episode_001
 ```
 
-写入工作区 `runs/office_episode_001/bag/`，记录扫描、IMU、轮速、里程计、TF、关节、相机 JPEG／内参、采样时钟关联、地图、ROS 命令和诊断。Ctrl+C 正常刷新文件；结束清单列出各话题消息数和缺失项。双前视 EDU 可用 `--cameras forward_left forward_right wrist_right` 选择相机，`--duration 30` 定时结束，`--require-topics /scan /imu/data_raw` 检查必需话题。录制器不创建 HostClient、不启用运动，不存在的话题不会产生数据。
+写入工作区 `runs/office_episode_001/bag/`，记录扫描、IMU、轮速、里程计、TF、关节、相机 JPEG／内参、采样时钟关联、地图、ROS 命令和诊断。Ctrl+C 正常刷新文件；结束清单列出各话题消息数和缺失项。双前视 EDU 可用 `--cameras forward_left forward_right wrist_right` 选择相机，`--duration 30` 定时结束，`--require-topics /scan /imu/data_raw` 检查必需话题。录制不启用运动；不存在的话题不会产生数据。
 
-双臂 FK／IK 使用平台的同一套算法，EDU 通过自己的模型资源加载。完整 ROS 整机入口用 `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu`；MoveIt／Joy-Con 预览同样支持该参数。关节映射自动读取 EDU Host 的 Home 标定；设备零偏与行程保存在各机器自己的标定文件中。
+完整 ROS 整机入口用 `alohamini_bringup hardware.launch.py robot_model:=alohamini2edu`；MoveIt／Joy-Con 预览同样支持该参数。关节映射自动读取 EDU Host 的 Home 标定；设备零偏与行程保存在各机器自己的标定文件中。
 
 ## 树莓派容器与设备检查
 
@@ -234,7 +218,6 @@ RViz 预置地图、扫描、覆盖范围、全局／局部路径、全局／局
 
 无桌面或无人值守任务用 `--no-rviz`；录制是否完整以对应 `manifest.json` 的 `status` 为准。
 
-
 独立 mapping/navigation launch 同样支持 `enable_cameras:=true use_rviz:=true`；相机使用 Host 图像流，不另开 USB 摄像头。可用 `ekf_params`、`collision_params` 覆盖配置；建图用 `slam_params`，导航用 `nav2_params`。
 
 ## 对齐原生数采回合
@@ -246,7 +229,7 @@ ros2 launch alohamini_camera camera.launch.py host:=192.168.44.4 \
   timestamp_mode:=host_wall publish_raw:=false
 ```
 
-相机节点发布 Host 会话及单调时钟／Unix 时钟关联，不额外创建 HostClient。原生回合和 rosbag 保存结束后，用同一 Host 会话的记录对齐：
+原生回合和 rosbag 保存结束后，用同一 Host 会话的记录对齐：
 
 ```bash
 ros2 run alohamini_navigation map_session attach /绝对路径/记录/bag \
@@ -276,7 +259,7 @@ ros2 run alohamini_navigation edu_session --simulation \
   --map-name simulated_room --record simulated_run_001
 ```
 
-`simulation/navigation/` 提供几何环境、雷达射线、IMU、模拟实测速度和 `/clock`，运行真实 EKF、SLAM、碰撞监测与 Nav2；没有 HostClient、USB 驱动或相机网络连接。使用平面运动学及圆形轮廓碰撞约束，不模拟轮胎接触、打滑、IMU 噪声和伸展手臂。默认环境在 `worlds/room.yaml`。
+`simulation/navigation/` 使用 `worlds/room.yaml` 场景及仿真时钟 `/clock`，支持 EKF、SLAM、碰撞监测和 Nav2，不连接 Host、USB 设备或真机相机。仿真仅包含平面运动和圆形底盘碰撞，不模拟轮胎接触、打滑、IMU 噪声或伸展手臂。
 
 ```bash
 ros2 launch alohamini_nav_sim simulation.launch.py mode:=navigation \
