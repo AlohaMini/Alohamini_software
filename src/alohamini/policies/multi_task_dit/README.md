@@ -1,8 +1,8 @@
 # Multi-Task DiT
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例保留 episode 1 用于验证；单回合数据省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Examples reserve episode 1 for validation; for single-episode data, omit `--dataset.eval_episodes` and `--eval_steps`.
 
 ```bash
 conda activate alohamini
@@ -16,29 +16,29 @@ python -m alohamini.learning.train \
   --ema.enable=true --save_freq=10000 --log_freq=100 --background
 ```
 
-| 项目 | 默认配置 |
+| Item | Default configuration |
 | --- | --- |
-| 观测／预测／执行 | 2 帧／32 步／24 步；排除最后 7 个采样起点 |
-| DiT | 隐藏维度 512、6 层、8 heads、AdaLN-Zero、RoPE |
-| 视觉 | CLIP ViT-B/16，共享相机编码器；缩放 256×256，训练随机／推理中心裁剪至 224×224 |
-| 语言 | 必需的非空 `task`，最长 77 tokens；文本编码器冻结，投影层训练 |
-| 归一化 | RGB：CLIP `MEAN_STD`；state/action：训练集 `MIN_MAX`，保留原字段与单位 |
-| 优化 | Adam `2e-5`，视觉学习率 ×0.1；cosine，无 warmup |
-| 生成目标 | diffusion，DDPM 100 步 |
+| Observation / prediction / execution | 2 frames / 32 steps / 24 steps; exclude final 7 sampling starts |
+| DiT | Hidden dimension 512, 6 layers, 8 heads, AdaLN-Zero, RoPE |
+| Vision | CLIP ViT-B/16, shared camera encoder; resize to 256×256, random training / center inference crop to 224×224 |
+| Language | Required nonempty `task`, up to 77 tokens; frozen text encoder, trainable projection |
+| Normalization | RGB: CLIP `MEAN_STD`; state/action: training-set `MIN_MAX`, original fields/units retained |
+| Optimization | Adam `2e-5`, visual learning rate ×0.1; cosine, no warmup |
+| Generation objective | Diffusion, 100 DDPM steps |
 
-state 必须存在。CLIP 权重与 tokenizer 默认读取工作区 `pretrained/clip-vit-base-patch16/`
-（默认 `~/Alohamini_workspace/`，支持 `ALOHAMINI_WORKSPACE`），须提前下载 `openai/clip-vit-base-patch16`。
-`--policy.vision_encoder_name`、`--policy.text_encoder_name` 可指定本地目录或在线模型 ID；本地目录缺文件时报错。设置 `HF_HUB_OFFLINE=1` 可禁止模型 ID 联网加载。
-尾部排除数按同一时序公式计算；`--policy.do_mask_loss_for_padding=true` 可屏蔽补齐动作的损失。
+State is required. CLIP weights/tokenizer default to workspace `pretrained/clip-vit-base-patch16/`
+(workspace defaults to `~/Alohamini_workspace/`, respecting `ALOHAMINI_WORKSPACE`). Download `openai/clip-vit-base-patch16` beforehand.
+`--policy.vision_encoder_name` and `--policy.text_encoder_name` accept local directories or online model IDs. Missing local files cause an error. Set `HF_HUB_OFFLINE=1` to prevent online model-ID loading.
+Trailing-start exclusion uses the same temporal formula; `--policy.do_mask_loss_for_padding=true` masks padded-action loss.
 
 ```bash
 # DDIM
 --policy.noise_scheduler_type=DDIM --policy.num_inference_steps=10
 
-# Flow matching；integration_method 也支持 rk4
+# Flow matching; integration_method also supports rk4
 --policy.objective=flow_matching --policy.num_integration_steps=10 \
   --policy.integration_method=euler --policy.timestep_sampling_strategy=beta
 ```
 
-支持单设备、DDP、FSDP2 和训练器 EMA。
-checkpoint 打包权重、CLIP 配置和 tokenizer；EMA 部署使用 `checkpoint-ema`，续训使用在线 checkpoint。
+Supports single-device, DDP, FSDP2, and trainer EMA.
+Checkpoints include weights, CLIP configuration, and tokenizer. Use `checkpoint-ema` for EMA deployment and the online checkpoint for resume.

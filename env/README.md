@@ -1,8 +1,8 @@
-# 依赖维护
+# Dependency Maintenance
 
-项目依赖在 `pyproject.toml` 声明。`dependencies.toml` 选择 PC 所需 extras、部署版本和更新分组；`.in`、pip `.lock` 文件由脚本生成。Conda 的 Python、FFmpeg 和基础工具版本仍通过 `environment.yml`、`host.yml` 及对应 explicit 文件维护。
+`pyproject.toml` declares project dependencies. `dependencies.toml` selects PC extras, deployment versions, and update groups; scripts generate `.in` and pip `.lock` files. Conda Python, FFmpeg, and base-tool versions remain in `environment.yml`, `host.yml`, and their explicit files.
 
-在 Conda `alohamini` 环境中运行，先安装 `dependencies.toml` 指定版本的 `uv`：
+Run in the `alohamini` Conda environment, first installing the `uv` version specified in `dependencies.toml`:
 
 ```bash
 python env/dependencies.py check
@@ -10,26 +10,26 @@ python env/dependencies.py refresh
 python env/dependencies.py refresh --group models --report /tmp/dependency-changes.md
 ```
 
-`refresh` 只修改依赖文件。已有锁定版本优先保留；指定分组时，检查同一主版本中发布满 7 天的稳定版本并重新解析。解析失败会恢复原文件。`models`、`compute`、`host`、`tools` 分别维护模型、计算、硬件与其余工具/数据依赖。PC/Host 的公共依赖保持相同版本。
+`refresh` modifies dependency files only. Existing locked versions are preferred. With a group specified, it checks stable releases at least 7 days old within the same major version and resolves again. Resolution failure restores original files. `models`, `compute`, `host`, and `tools` manage model, compute, hardware, and remaining tool/data dependencies, respectively. PC/Host shared dependencies keep identical versions.
 
-指定分组只更新该组及属于该组的间接依赖，其他组保持锁定；不自动降级或跨主版本。需要联动迁移多个组时，先显式修改项目声明或部署约束，再运行不带 `--group` 的 `refresh` 并执行回归。
+A selected group updates only that group and its transitive dependencies, keeping other groups locked, without automatic downgrades or major upgrades. For coordinated group migrations, explicitly change project declarations or deployment constraints first, then run `refresh` without `--group` and run regression checks.
 
 ## GitHub Actions
 
-- `Dependency validation`：相关 PR、main 提交及手动触发；检查清单，在新建 Conda 环境中安装 CPU 对应版本，运行算法、checkpoint、续训、精度和分布式验证回归；另在 x86_64、ARM64 runner 安装 Host 锁并检查串口库、图像及进程内通信。CPU 锁定文件仅作为 CI 产物，不替换 CUDA 部署锁。
-- `Dependency update candidates`：每季度首日（1、4、7、10 月 1 日）03:17 UTC，也可手动选择分组；只运行所选组，生成草稿 PR 并触发候选提交的 CPU、Host 检查。候选生成成功不代表兼容检查通过，检查入口见运行摘要，测试摘要列出失败用例。PR 记录版本差异，运行产物保留 30 天。
-- Dependabot：每季度检查 GitHub Actions 版本，同组更新合并为一个 PR。
-- `Dependency GPU validation`：手动选择候选分支，填写空闲 GPU 编号和 checkpoint 用例文件。需要标签为 `alohamini-gpu` 的 Linux x86_64 自托管 runner，提供 Conda、兼容驱动及至少两张空闲 GPU。用例路径上的 checkpoint、基座资源和数据集必须可读。
+- `Dependency validation`: runs on relevant PRs, main commits, and manual triggers. It validates manifests, installs CPU equivalents in a new Conda environment, and runs algorithm, checkpoint, resume, precision, and distributed-validation regressions. Separate x86_64/ARM64 runners install the Host lock and check serial libraries, images, and in-process communication. CPU lockfiles are CI artifacts only and do not replace CUDA deployment locks.
+- `Dependency update candidates`: runs at 03:17 UTC on the first day of each quarter (January, April, July, October), or manually for a selected group. It updates only that group, creates a draft PR, and triggers CPU/Host checks for the candidate commit. Successful generation does not imply compatibility; check links are in the run summary, and test summaries list failures. PRs record version differences; artifacts are retained for 30 days.
+- Dependabot: checks GitHub Actions versions quarterly, combining updates in the same group into one PR.
+- `Dependency GPU validation`: manually select a candidate branch, idle GPU IDs, and a checkpoint case file. Requires a Linux x86_64 self-hosted runner labeled `alohamini-gpu`, Conda, a compatible driver, and at least two idle GPUs. Checkpoints, base assets, and datasets in the case file must be readable.
 
-大模型权重超过单卡显存时，将 `checkpoint_backend` 设为 `fsdp2`，使用所选显卡中的前两张比较推理结果，保留 checkpoint 原有权重精度。
+For models exceeding one GPU's memory, set `checkpoint_backend` to `fsdp2` and compare inference on the first two selected GPUs, preserving checkpoint weight precision.
 
-仓库 Actions 设置须允许创建 PR；组织设置也须允许此权限。版本候选保持草稿，不自动合并。模型/计算更新接受前，需 CPU 与 GPU 检查均通过。GPU 工作流使用独立的临时环境，不更新现有运行环境；若指定显卡有计算进程则退出。
+Repository and organization Actions settings must permit PR creation. Candidates remain drafts without automatic merging. Model/compute updates require both CPU and GPU checks before acceptance. GPU workflows use separate temporary environments without updating existing runtime environments; they exit if selected GPUs have compute processes.
 
-## 旧 checkpoint 对比
+## Compare existing checkpoints
 
-复制 `checkpoint-cases.example.json` 到运行产物目录，填写真实 checkpoint、数据集和代表性样本。`indices` 是所选回合组成的数据集中的样本索引；使用 checkpoint 自带动作单位，按任务设定 `atol`、`rtol`。视觉目标策略需另外填写 `goal_images`。
+Copy `checkpoint-cases.example.json` into an output directory and fill in real checkpoints, datasets, and representative samples. `indices` are sample indices in the dataset formed by selected episodes. Use checkpoint action units and task-appropriate `atol`/`rtol`. Visual-goal policies also require `goal_images`.
 
-分别在原环境与候选环境捕获，再比较：
+Capture separately in original and candidate environments, then compare:
 
 ```bash
 python env/checkpoint_probe.py capture --cases /path/to/cases.json --device cuda:0 --output /tmp/baseline.json
@@ -37,6 +37,6 @@ python env/checkpoint_probe.py capture --cases /path/to/cases.json --device cuda
 python env/checkpoint_probe.py compare --reference /tmp/baseline.json --candidate /tmp/candidate.json --output /tmp/comparison.json
 ```
 
-对比要求 checkpoint、配置、输入与随机种子相同；记录动作差异、推理耗时、显存及依赖版本。输出不在容差内时返回失败。性能记录用于审查，短样本耗时不作为自动接受阈值。
+Comparison requires identical checkpoints, configurations, inputs, and random seeds. It records action differences, inference time, GPU memory, and dependency versions. Outputs outside tolerance fail. Performance records support review; short-sample timing is not an automatic acceptance threshold.
 
-计算库升级允许数值变化时，可在用例中设置 `"acceptance": {"metric": "mae", "rtol": 0.02, "atol": [...]}`。`atol` 必须按动作维度顺序填写各自单位下的绝对误差预算；每维新版 MAE 须不超过 `旧版 MAE × (1 + rtol) + atol`。使用预先选定的验证样本与阈值，排除尾部补位及历史动作，仍保留输出差异。该检查衡量离线动作误差，不替代闭环任务评估。
+When numeric changes are acceptable after compute-library updates, set `"acceptance": {"metric": "mae", "rtol": 0.02, "atol": [...]}` per case. Specify `atol` in action-dimension order, with absolute error budgets in each dimension's units. Each new MAE must not exceed `old MAE × (1 + rtol) + atol`. Use preselected validation samples and thresholds, exclude trailing padding and historical actions, and retain output differences. This measures offline action error and does not replace closed-loop task evaluation.

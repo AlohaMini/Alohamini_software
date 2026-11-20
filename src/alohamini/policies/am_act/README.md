@@ -1,10 +1,10 @@
 # AM-ACT
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例保留 episode 1 用于验证；单回合数据省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Examples reserve episode 1 for validation; for single-episode data, omit `--dataset.eval_episodes` and `--eval_steps`.
 
-共有相机身份编码和旧模型迁移设置见 [ACT：相机身份编码](../act/README.md#相机身份编码)。
+See [ACT: Camera identity embeddings](../act/README.md#camera-identity-embeddings) for shared settings and existing-model migration.
 
 ```bash
 python -m alohamini.learning.train \
@@ -16,35 +16,35 @@ python -m alohamini.learning.train \
   --eval_steps=1000 --background
 ```
 
-也支持含 state 的数据。速度/电流实验改用保留反馈的数据目录，并加 `--state=joint_velocity,joint_current`。
-新 AM-ACT 训练默认把 `action.names` 中的 `x.vel`、`y.vel`、`theta.vel` 分别设为三分类：
+State-containing data is also supported. For velocity/current experiments, use data retaining feedback and add `--state=joint_velocity,joint_current`.
+New AM-ACT training defaults to three-class classification for each of `x.vel`, `y.vel`, and `theta.vel` in `action.names`:
 
-| 字段 | 类别顺序：负向、停止、正向 | 单位 |
+| Field | Class order: negative, stop, positive | Unit |
 | --- | --- | --- |
 | `x.vel` | `[-0.15, 0, 0.15]` | m/s |
 | `y.vel` | `[-0.15, 0, 0.15]` | m/s |
 | `theta.vel` | `[-45, 0, 45]` | deg/s |
 
-可通过 `--policy.discrete_action_weighting=none|inverse_frequency|sqrt_inverse_frequency`
-选择权重策略，`--policy.discrete_action_max_weight_ratio` 调整上限。
+Select weighting with `--policy.discrete_action_weighting=none|inverse_frequency|sqrt_inverse_frequency`
+and adjust its cap with `--policy.discrete_action_max_weight_ratio`.
 
-常用选项：
+Common options:
 
-| 参数 | 用途 |
+| Option | Purpose |
 | --- | --- |
-| `--policy.base_classification=false` | 新训练关闭默认底盘分类，改为连续回归 |
-| `--policy.discrete_action_mask_absent_classes=true` | 屏蔽训练集中完全没有出现的类别；默认关闭 |
-| `--policy.discrete_action_values='[[-0.15,0,0.15]]'` | 自定义分类值，须配合 `discrete_action_dims` 设置 |
+| `--policy.base_classification=false` | Disable default base classification for new training and use continuous regression |
+| `--policy.discrete_action_mask_absent_classes=true` | Mask classes absent from training data; disabled by default |
+| `--policy.discrete_action_values='[[-0.15,0,0.15]]'` | Custom class values; also requires `discrete_action_dims` |
 
-自定义维度须按数据的 `action.names` 核对。屏蔽缺类后仍保留三输出头，
-两类有数据时等效二分类；把缺类权重设为零不会禁止模型输出该类别。
-补录新方向后，用 `--policy.path=<旧 checkpoint>` 微调，重新统计并启用新增类别。
-数据变化不能使用 `--resume=true`。启用 `action_loss_groups` 时须覆盖全部需要回归的连续维度。
+Check custom dimensions against `action.names`. Masking absent classes retains three output heads;
+with only two observed classes it effectively becomes binary classification. Zero class weight does not prohibit predicting that class.
+After recording a new direction, fine-tune with `--policy.path=<OLD_CHECKPOINT>` to recompute statistics and enable new classes.
+Changed data cannot use `--resume=true`. With `action_loss_groups`, include every continuous dimension requiring regression.
 
-## 条件 CVAE
+## Conditional CVAE
 
-默认 AM-ACT 使用动作及可选 state 后验、标准高斯先验，推理时 `z=0`。
-启用图像条件后验和先验可使用通用示例：
+Default AM-ACT uses an action/optional-state posterior, standard Gaussian prior, and `z=0` at inference.
+Use the common example to enable image-conditioned posterior and prior:
 
 ```bash
 python -m alohamini.learning.train \
@@ -53,12 +53,12 @@ python -m alohamini.learning.train \
   --dataset.eval_episodes='[1]' --eval_steps=1000 --background
 ```
 
-该示例是机器人适配配置：ResNet-18、30 步 Chunk、执行 10 步、纯视觉、
-4 Query Attention Pooling、Image+Action 后验、图像条件高斯先验、KL 权重 1、
-5000 个优化步 warmup。动作主干 decoder 为 7 层，主干 encoder 和后验 encoder 各 4 层。
-图像使用 RGB/ImageNet 归一化，动作使用训练统计和原始目标单位，不使用语言。
+This example is a robot-adaptation configuration: ResNet-18, a 30-step chunk, 10 executed steps, vision only,
+4-query attention pooling, Image+Action posterior, image-conditioned Gaussian prior, KL weight 1,
+and 5000 optimizer-step warmup. The action-backbone decoder has 7 layers; backbone and posterior encoders have 4 each.
+Images use RGB/ImageNet normalization; actions use training statistics and original target units. No language input is used.
 
-| 配置项 | 可选值 |
+| Configuration | Values |
 | --- | --- |
 | `posterior_condition` | `image_action` / `action` |
 | `prior_type` | `conditional_gaussian` / `standard_normal` |
@@ -66,6 +66,6 @@ python -m alohamini.learning.train \
 | `latent_inference_mode` | `sample` / `mean` / `zero` |
 | `latent_refresh_mode` | `phase` / `chunk` |
 
-示例按阶段缓存 z：首次根据图像采样，后续预测使用新图像并复用 z。
-任务执行器调用 `policy.refresh_latent()` 切换阶段；新 episode 的 `reset()` 也会清空缓存。
-模型不会自动识别阶段。刷新 z 同时清空动作队列和时序融合，避免混合不同潜变量的预测。
+The example caches z by phase: first sample from images, then reuse z with fresh images for later predictions.
+The task executor calls `policy.refresh_latent()` to switch phases; `reset()` at a new episode also clears the cache.
+The model does not detect phases automatically. Refreshing z also clears action queues and temporal ensembling to avoid mixing predictions from different latents.

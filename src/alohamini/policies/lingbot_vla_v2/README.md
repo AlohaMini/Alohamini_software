@@ -1,12 +1,12 @@
 # LingBot-VLA 2.0
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例中的 episode 1 用于验证；数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Example episode 1 is reserved for validation; for a single episode, omit `--dataset.eval_episodes` and `--eval_steps`.
 
-使用 `lingbot_vla_v2`，本地基座包含官方 LeRobot 格式 `config.json`、`model.safetensors`，
-以及 Qwen 配置、tokenizer、图像处理资源。教师目录包含 `moge/model.pt`、`depth/model.pt`、
-`dino_video/teacher_step_10000.pth` 和 `dino_video/config.yaml`。
+Use `lingbot_vla_v2` with a local base containing official LeRobot-format `config.json` and `model.safetensors`,
+plus Qwen configuration, tokenizer, and image-processing assets. The teacher directory contains `moge/model.pt`, `depth/model.pt`,
+`dino_video/teacher_step_10000.pth`, and `dino_video/config.yaml`.
 
 ```bash
 alohamini train --policy.type=lingbot_vla_v2 \
@@ -18,10 +18,10 @@ alohamini train --policy.type=lingbot_vla_v2 \
   --output_dir="$HOME/Alohamini_workspace/runs/lingbot_01" --background
 ```
 
-默认读取 `forward,wrist_left,wrist_right` 三路 RGB、完整 18 维状态与任务文本，映射到 55 维语义槽。
-双前视加右腕不属于该默认视角协议；不要按“三路图像”的数量直接替换。使用其他视角须显式核对输入顺序与教师输入，并将适配配置随 checkpoint 保存。
-关节动作相对当前观测，夹爪和底盘速度保留绝对值；动作转换后计算训练集 mean/std。
-升降轴默认保持当前高度；显式设置 `--policy.lift_mode=reserved` 时使用平台扩展槽训练升降动作。
-训练使用未来帧计算教师损失，推理只读取当前帧，部署无需教师权重。
-优化器采用平台 AdamW 并保留 MoE 专家学习率倍率；尚不支持 Muon 和 RTC 执行。
-显卡数和 batch 按模型显存需求调整。
+Defaults read `forward,wrist_left,wrist_right` RGB, the full 18-dimensional state, and task text, mapped to 55 semantic slots.
+Dual-front plus right-wrist cameras do not match this default view protocol; do not substitute them based only on having three images. Other views require explicit input-order/teacher-input checks, with adaptation settings saved in checkpoints.
+Joint actions are relative to the current observation; grippers and base velocities remain absolute. Training mean/std is computed after action conversion.
+The lift holds current height by default; explicit `--policy.lift_mode=reserved` uses platform extension slots for lift-action training.
+Training uses future frames for teacher losses; inference reads only current frames and needs no teacher weights.
+The optimizer uses platform AdamW with MoE expert learning-rate multipliers. Muon and RTC execution are not yet supported.
+Adjust GPU count and batch size for model memory requirements.

@@ -1,12 +1,14 @@
-# Notebook 入口
+# Notebooks
 
-Notebook 用于数据与图像检查、时间曲线、速度/电流分析、state/action 组装、单批次损失和预测轨迹对比。
-正式的数据整理、训练、离线评估与真机部署见 [训练与部署](training.md)，无需先运行 Notebook。
+**English** | [简体中文](zh-CN/notebook.md)
 
-完成 [PC 安装与内核注册](install.md#3-可选扩展)。
+Use notebooks to inspect data and images, plot time series, analyze velocity/current, assemble state/action vectors, inspect single-batch loss, and compare predicted trajectories.
+See [Training and deployment](training.md) for production data preparation, training, offline evaluation, and hardware deployment; notebooks are optional.
 
-使用 VS Code 的 Jupyter 扩展或已有 JupyterLab 打开
-`examples/learning/local_act.ipynb`，选择 **AlohaMini** 内核。
-PC 环境包含内核依赖，不包含 JupyterLab 服务。
+Complete [PC installation and kernel registration](install.md#3-optional-extensions).
 
-打开后设置数据路径与回合划分。`RUN_TRAINING` 启动训练，`ENABLE_ROBOT` 启用真机评估；仅分析数据时保持关闭。
+Open the notebook with the VS Code Jupyter extension or an existing JupyterLab installation:
+`examples/learning/local_act.ipynb`. Select the **AlohaMini** kernel.
+The PC environment includes kernel dependencies, but not the JupyterLab server.
+
+Set the dataset path and episode splits after opening. `RUN_TRAINING` starts training; `ENABLE_ROBOT` enables hardware evaluation. Leave both disabled for data analysis only.

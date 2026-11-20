@@ -1,8 +1,8 @@
 # OpenWAM-α
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例中的 episode 1 用于验证；数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Example episode 1 is reserved for validation; for a single episode, omit `--dataset.eval_episodes` and `--eval_steps`.
 
 ```bash
 hf download OpenWAM/OpenWAM-Alpha-Pretrain-Foundation-Model \
@@ -16,21 +16,21 @@ alohamini train --policy.type=openwam \
   --keep_last_checkpoints=1 --background
 ```
 
-基座须含 `checkpoint_step_*.safetensors` 和 `tokenizer/google/umt5-xxl/`，无需另下载 Wan 基座。
-最多三路相机，按顺序组成 384×320 画布：上方主视角、左下与右下，缺失位置填黑；
-`--policy.camera_layout='["observation.images.head","observation.images.left",null]'` 可显式指定，须覆盖全部所选相机。
+The base needs `checkpoint_step_*.safetensors` and `tokenizer/google/umt5-xxl/`; no separate Wan download is needed.
+Up to three cameras form a 384×320 canvas in order: main view above, lower-left and lower-right views, with missing positions black;
+explicitly set `--policy.camera_layout='["observation.images.head","observation.images.left",null]'`, covering all selected cameras.
 
-默认动作块 32 行、视频取 0、4、…、32 行；`chunk_size` 须为 `4 × video_stride` 的整数倍。
-默认 `--policy.action_representation=recorded`，保留记录 state/action 字段和单位，使用训练集 min/max；
-从官方基座导入时重新初始化动作输入、动作输出和状态投影。
-视频与动作联合流匹配，VAE、umT5 冻结；未来图像仅作训练监督，推理使用当前图像，默认同步去噪 10 步、shift 5。
-默认 BF16、重计算开启；显存不足时使用通用 FSDP2。支持训练器 EMA 和普通远程动作块，未接入 RTC。
+Default action chunks have 32 rows; video samples rows 0, 4, …, 32. `chunk_size` must be an integer multiple of `4 × video_stride`.
+The default `--policy.action_representation=recorded` preserves recorded state/action fields and units, using training-set min/max;
+importing official base weights reinitializes action input, action output, and state projections.
+Video/action uses joint flow matching with frozen VAE/umT5. Future images supervise training only; inference uses current images with 10 synchronous denoising steps and shift 5 by default.
+Defaults: BF16 and activation checkpointing. Use common FSDP2 when GPU memory is insufficient. Supports trainer EMA and ordinary remote action chunks, without RTC.
 
-运行时只读本地资源，checkpoint 含冻结编码器及 tokenizer，可独立迁移。
-保存时须预留两份完整 checkpoint 的空间；新文件写入成功后才清理旧文件。
-来源与预设见 [SOURCE.json](SOURCE.json)。
+Runtime reads local assets only; checkpoints include frozen encoders/tokenizer and migrate independently.
+Reserve space for two full checkpoints when saving; old files are removed only after new files are written successfully.
+See [SOURCE.json](SOURCE.json) for provenance and presets.
 
-要保留官方 80 维末端语义，使用可选的 `alpha80` 模式：
+To retain official 80-dimensional end-effector semantics, use optional `alpha80` mode:
 
 ```bash
 alohamini train --policy.type=openwam \
@@ -42,28 +42,28 @@ alohamini train --policy.type=openwam \
   --keep_last_checkpoints=1 --background
 ```
 
-该模式自动设置 TCP state、绝对 TCP action 和 `rotation_6d_columns`，保留官方三个 80 维投影层。
-FK 使用数据集的运动学描述；标准 AlohaMini 数据可由记录的标定信息和机型参考姿态解析。
-非标准标定须用 `--data.kinematics.spec=/path/to/coordinates.json` 声明，
-参见[关节、TCP 与相对目标](../../../../docs/training.md#关节tcp-与相对目标)。缺少标定或字段不匹配时拒绝训练。
-双臂必须明确命名为 `left`、`right`，且所选 state 包含每臂完整关节位置与夹爪。
+This mode automatically sets TCP state, absolute TCP action, and `rotation_6d_columns`, preserving the three official 80-dimensional projection layers.
+FK uses dataset kinematics. Standard AlohaMini data resolves these from recorded calibration and the model reference pose.
+For nonstandard calibration, declare `--data.kinematics.spec=/path/to/coordinates.json`;
+see [Joint, TCP, and relative targets](../../../../docs/training.md#joint-tcp-and-relative-targets). Missing calibration or mismatched fields prevent training.
+Arms must be explicitly named `left` and `right`; selected state must include every arm joint position and gripper.
 
-| 内容 | 80 维槽位（从 0 开始，含两端） | 编码／单位 |
+| Contents | 80-dimensional slots (zero-based, inclusive) | Encoding / unit |
 | --- | --- | --- |
-| 左臂位置、旋转、夹爪 | 0–2、3–8、9 | m、旋转矩阵前两列、闭合 −1／张开 +1 |
-| 右臂位置、旋转、夹爪 | 34–36、37–42、43 | 同上 |
-| 底盘 x、y、yaw 速度 | 68、69、70 | m/s、m/s、deg/s；平台预留槽扩展 |
-| 升降高度 | 71 | mm；平台预留槽扩展 |
-| 未使用的手部及预留通道 | 10–33、44–67、72–79 | 不计入动作损失 |
+| Left arm position, rotation, gripper | 0–2, 3–8, 9 | m, first two rotation-matrix columns, closed −1 / open +1 |
+| Right arm position, rotation, gripper | 34–36, 37–42, 43 | Same as above |
+| Base x, y, yaw velocities | 68, 69, 70 | m/s, m/s, deg/s; platform reserved-slot extension |
+| Lift height | 71 | mm; platform reserved-slot extension |
+| Unused hand and reserved channels | 10–33, 44–67, 72–79 | Excluded from action loss |
 
-每臂末端仍为 6 自由度，但数值表示为位置 3＋旋转 6，共 9 个通道；加夹爪后每臂 10 个。
-18 维关节记录经 FK 得到 **24 个有效通道**，进入网络前按名称填入 **80 维接口**。
-夹爪保留官方专用槽，底盘和升降占用的 68–71 是本平台约定，官方未规定这些预留槽的含义。
-位姿遵循标定描述保存的参考系，例如 `left_Base`、`right_Base`，不会自动改成世界坐标。
+Each end effector still has 6 DOF, represented by 3 position + 6 rotation channels, or 9 total; adding a gripper gives 10 per arm.
+The 18-dimensional joint record becomes **24 active channels** through FK, placed by name into the **80-dimensional interface** before network input.
+Grippers keep official dedicated slots. Base/lift slots 68–71 are platform conventions; their meanings are unspecified by the official model.
+Poses follow frames saved in calibration, such as `left_Base` and `right_Base`, without automatic world-frame conversion.
 
-旋转 6D 保持原值；夹爪按标定的闭合／张开端点映射；其余通道使用训练集 min/max，输入截断到 [−1,1]。
-使用训练集 min/max 的动作通道若上下界相同，解码时还原为训练常数；
-例如底盘标签全零时，去噪残差不会转换成底盘速度。
-checkpoint 保存槽位、统计量、标定和 FK/IK 几何；部署时自动反归一化，并以当前关节反馈为起点连续求解 IK，
-恢复原 Host 动作顺序和单位，底盘／升降直接还原。退化旋转、不可达位姿或超出关节限位时拒绝该动作块。
-原 18 维 `recorded` checkpoint 不能通过改开关变成 `alpha80`，须从官方基座重新微调。
+Rotation 6D values remain unchanged. Grippers map through calibrated closed/open endpoints; other channels use training-set min/max, with inputs clipped to [−1,1].
+For min/max-normalized action channels with identical bounds, decoding restores the training constant;
+for example, all-zero base labels prevent denoising residuals from becoming base velocity.
+Checkpoints save slots, statistics, calibration, and FK/IK geometry. Deployment denormalizes automatically and solves IK continuously from current joint feedback,
+restoring Host action order/units, with base/lift restored directly. Degenerate rotations, unreachable poses, or joint-limit violations reject the chunk.
+An 18-dimensional `recorded` checkpoint cannot become `alpha80` by toggling a flag; fine-tune again from the official base.

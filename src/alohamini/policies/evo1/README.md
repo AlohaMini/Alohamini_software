@@ -1,9 +1,9 @@
 # EVO1
 
-[策略索引](../../../../docs/training.md#策略选择)
+[Policy index](../../../../docs/training.md#policy-selection)
 
-基座目录需包含转换后的 `config.json`、`model.safetensors`（或分片与索引），
-以及 `assets/` 下的 InternVL3 配置和 tokenizer。
+The base directory needs converted `config.json`, `model.safetensors` (or shards and index),
+and InternVL3 configuration/tokenizer under `assets/`.
 
 ```bash
 alohamini train --policy.type=evo1 \
@@ -14,9 +14,9 @@ alohamini train --policy.type=evo1 \
   --output_dir="$HOME/Alohamini_workspace/runs/evo1_01" --background
 ```
 
-`stage1` 冻结 VLM，训练动作网络；`stage2` 默认同时训练 VLM 和动作网络。
-以 stage1 checkpoint 开始 stage2 时，改用 `--policy.path=/path/to/checkpoint --policy.training_stage=stage2`；
-继续相同阶段使用公共 `--resume` 流程。显式指定的冻结开关优先于阶段默认值。
-默认 14 层语言网络、8 层动作 Transformer，预测 50 步、积分 32 步。
-state/action 使用训练集 MIN_MAX，补齐至 24 维；不自动转换夹爪符号或二值化。
-使用平台混合精度和 SDPA；暂不支持 RTC。
+`stage1` freezes the VLM and trains the action network; `stage2` defaults to training both.
+To start stage2 from a stage1 checkpoint, use `--policy.path=/path/to/checkpoint --policy.training_stage=stage2`;
+resume the same stage with the common `--resume` workflow. Explicit freezing flags override stage defaults.
+Defaults: 14 language layers, 8 action-Transformer layers, 50 predicted steps, and 32 integration steps.
+State/action uses training-set MIN_MAX and pads to 24 dimensions; gripper signs and binarization are not converted automatically.
+Uses platform mixed precision and SDPA; RTC is currently unsupported.

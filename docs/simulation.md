@@ -1,70 +1,72 @@
-# 仿真
+# Simulation
 
-先完成[仿真环境安装](install.md#4-仿真)。以下命令在仓库根目录、对应环境中执行。
+**English** | [简体中文](zh-CN/simulation.md)
+
+Complete [simulation environment installation](install.md#4-simulation) first. Run these commands from the repository root in the corresponding environment.
 
 ## MuJoCo
 
-打开整机并使用 EGL 设备 0 渲染：
+Open the full robot with EGL device 0 for rendering:
 
 ```bash
 conda activate alohamini
 alohamini-mujoco view --window-egl-device 0
 ```
 
-省略 `--window-egl-device 0` 使用桌面默认 OpenGL 设备。机器人资产随平台安装，默认固定底盘。
+Omit `--window-egl-device 0` to use the desktop's default OpenGL device. Robot assets are installed with the platform; the base is fixed by default.
 
-指定升降初值并暂停启动：
+Set the initial lift position and start paused:
 
 ```bash
 alohamini-mujoco view --window-egl-device 0 \
   --initial-positions '{"vertical_move":0.2}' --paused
 ```
 
-`--initial-positions` 使用 URDF 关节名；旋转关节单位 rad，升降单位 m，范围为 `[-0.3, 0.3]`。
+`--initial-positions` takes URDF joint names. Revolute joints use rad; the lift uses m in `[-0.3, 0.3]`.
 
-打开黑色桌面与方块场景；修改 JSON 可调整物体和机器人初态：
+Open the black-table-and-cube scene; edit the JSON to adjust object and robot initial states:
 
 ```bash
 alohamini-mujoco view --window-egl-device 0 \
   --scene-config examples/simulation/research.json --paused
 ```
 
-## 窗口操作
+## Window controls
 
-展开右侧 `Control`，拖动滑块设置关节目标。暂停时保存目标，按空格播放后模型开始跟随。`Joint` 显示当前关节位置；拖动它也会设置对应目标。运动受关节限位、速度和电机力限制。
+Expand `Control` on the right and drag sliders to set joint targets. Targets are stored while paused; press Space to play and let the model follow. `Joint` shows current joint positions; dragging it also sets the corresponding target. Motion respects joint, velocity, and motor-force limits.
 
-| 操作 | 效果 |
+| Input | Effect |
 | --- | --- |
-| 空格 | 开始或暂停仿真 |
-| 右方向键 | 暂停时推进一个物理步 |
-| F9 | 复位并暂停 |
-| F8 | 切换视觉模型与碰撞几何 |
-| T | 切换半透明显示 |
-| F6 | 切换坐标系显示 |
-| Tab／Shift + Tab | 显示或隐藏左／右面板 |
-| 左键拖动 | 旋转视角 |
-| 右键拖动／Shift + 右键拖动 | 在竖直面／水平面平移视角 |
-| 滚轮 | 缩放视角 |
-| 右键双击 | 将观察中心移到点击位置 |
+| Space | Start or pause simulation |
+| Right arrow | Advance one physics step while paused |
+| F9 | Reset and pause |
+| F8 | Toggle visual models and collision geometry |
+| T | Toggle transparency |
+| F6 | Toggle frame display |
+| Tab / Shift + Tab | Show or hide the left/right panel |
+| Left drag | Rotate the view |
+| Right drag / Shift + right drag | Pan in the vertical/horizontal plane |
+| Scroll wheel | Zoom |
+| Right double-click | Move the view center to the clicked point |
 
-普通 `view` 中，左键双击选中连杆，Ctrl + 右键拖动施加平移外力，Ctrl + 左键拖动施加转矩；Ctrl + Shift + 右键拖动在水平面施力。
+In standard `view`, left double-click selects a link; Ctrl + right drag applies translational force, Ctrl + left drag applies torque, and Ctrl + Shift + right drag applies force in the horizontal plane.
 
-`alohamini-mujoco` 窗口的 `Print data`、模型导出和截图默认保存到 `~/Alohamini_workspace/simulation/viewer/`；自定义工作区使用 `ALOHAMINI_WORKSPACE`。命令中的相对路径按启动目录解析。
+The `alohamini-mujoco` window saves `Print data`, model exports, and screenshots under `~/Alohamini_workspace/simulation/viewer/` by default, respecting `ALOHAMINI_WORKSPACE`. Relative command paths resolve from the launch directory.
 
-## ManiSkill 与 RoboTwin
+## ManiSkill and RoboTwin
 
-在 ManiSkill 环境查看同一场景：
+View the same scene in the ManiSkill environment:
 
 ```bash
 conda activate alohamini
 alohamini-maniskill view --scene-config examples/simulation/research.json
 ```
 
-窗口目标刷新率为 60 FPS，使用 `--render-fps 30` 可调整。控制频率由场景的 `control_frequency_hz` 设置，物理步长由 `timestep_s` 设置。
+The window targets 60 FPS; adjust with `--render-fps 30`. Scene `control_frequency_hz` sets control frequency, and `timestep_s` sets the physics step.
 
-Linux X11 混合显卡默认使用隔离窗口，保留原生查看器。`--window-mode native` 使用直接窗口，`--window-mode isolated` 强制隔离窗口。
+Linux X11 systems with hybrid graphics default to an isolated window, preserving the native viewer. Use `--window-mode native` for a direct window or `--window-mode isolated` to force isolation.
 
-在 RoboTwin 环境查看，`--source` 指向其源码目录：
+View in the RoboTwin environment, with `--source` pointing to its source directory:
 
 ```bash
 conda activate alohamini_robotwin
@@ -72,11 +74,11 @@ alohamini-robotwin view --source /path/to/RoboTwin \
   --scene-config examples/simulation/research.json
 ```
 
-添加 `--headless --steps 1000` 可关闭渲染并推进 1000 个物理步；默认步长为 1 ms。两者当前支持单个 CPU 物理环境。
+Add `--headless --steps 1000` to disable rendering and advance 1000 physics steps; the default step is 1 ms. Both currently support one CPU physics environment.
 
-## LIBERO 场景与回放
+## LIBERO scenes and replay
 
-按[安装文档](install.md#libero-场景与参考数据)解压配套资产包后，在当前终端设置路径：
+After extracting the asset archive according to [Installation](install.md#libero-scenes-and-reference-data), set its path in the current terminal:
 
 ```bash
 export SIM_ASSETS="$HOME/Alohamini_workspace/simulation/alohamini-mujoco-assets-v1"
@@ -86,7 +88,7 @@ export COLLISION_BUNDLE="$SIM_ASSETS/robot/collision"
 export INERTIAL_BUNDLE="$SIM_ASSETS/robot/inertia.json"
 ```
 
-打开 LIBERO Spatial 任务，`--task-index` 为 0–9，`--reset-index` 为 0–49：
+Open a LIBERO Spatial task with `--task-index` 0–9 and `--reset-index` 0–49:
 
 ```bash
 alohamini-mujoco view --window-egl-device 0 \
@@ -95,18 +97,18 @@ alohamini-mujoco view --window-egl-device 0 \
   --task-index 8 --reset-index 0 --paused
 ```
 
-回放参考回合，或将路径替换为自己的回合目录：
+Replay a reference episode, or replace the path with your own episode directory:
 
 ```bash
 alohamini-mujoco replay "$REFERENCE_DATASET" \
   --view --window-egl-device 0 --paused
 ```
 
-回放使用该回合保存的模型与初态，动作结束自动暂停；省略 `--view` 只验证回放。
+Replay uses the episode's saved model and initial state and pauses automatically when actions end. Omit `--view` to validate replay only.
 
-## 采集数据
+## Collect data
 
-使用参考轨迹与配套机器人资产采集一个回合：
+Collect one episode using a reference trajectory and matching robot assets:
 
 ```bash
 DATASET="$HOME/Alohamini_workspace/simulation/collections/task8_demo_01"
@@ -117,9 +119,9 @@ MUJOCO_GL=egl alohamini-mujoco collect "$REFERENCE_DATASET/trajectory.json" \
   --task-index 8 --reset-index 0 --output "$DATASET"
 ```
 
-输出目录须为新目录。`--cameras` 选择相机，`--image-size 480 640` 设置图像高和宽；默认使用三路 128×128 图像、20 Hz 控制。更换布局或初态后需生成匹配轨迹。
+The output directory must be new. `--cameras` selects cameras; `--image-size 480 640` specifies image height and width. Defaults are three 128×128 streams and 20 Hz control. Changed layouts or initial states require matching trajectories.
 
-从参考回合批量采集：
+Collect a batch from reference episodes:
 
 ```bash
 DATASET="$HOME/Alohamini_workspace/simulation/collections/task8_batch_01"
@@ -133,4 +135,4 @@ MUJOCO_GL=egl alohamini-mujoco collect \
   --output "$DATASET"
 ```
 
-中断后用原命令加 `--resume`。初态 0–39 用于训练，40–49 用于评估；更换参考回合须使用匹配配方。批次结果写入 `index.json`，训练只读取已收录的训练组回合。训练参数见[训练手册](training.md)。
+After interruption, rerun the same command with `--resume`. Initial states 0–39 are for training and 40–49 for evaluation; changing reference episodes requires a matching recipe. Batch results go to `index.json`; training reads only indexed training-group episodes. See the [training guide](training.md) for parameters.

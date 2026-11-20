@@ -1,15 +1,15 @@
 # RPLIDAR C1
 
-C1 的独立 USB 驱动，默认 `/dev/lidar_c1`、460800、`laser_frame`，发布 `/scan`。
+Standalone C1 USB driver, defaulting to `/dev/lidar_c1`, 460800, and `laser_frame`, publishing `/scan`.
 
 ```bash
 ros2 launch alohamini_rplidar_c1 rplidar_c1.launch.py serial_port:=/dev/lidar_c1
 ```
 
-整机传感器与建图使用 `alohamini_sensors`、`alohamini_navigation`；配置与部署见平台 `docs/ros2-navigation.md`。本包不打开电机控制串口，也不发布底盘运动命令。
+Use `alohamini_sensors` and `alohamini_navigation` for full-robot sensors and mapping; see platform `docs/ros2-navigation.md` for setup/deployment. This package opens no motor-control serial ports and publishes no base motion commands.
 
-`~/stop_motor`、`~/start_motor` 为 `std_srvs/srv/Empty` 服务。停止扫描后保持停止；默认连续 3 次采集失败后清理连接并重连，断连重试间隔 2 秒。首次连接失败返回非零退出码，由传感器启动文件按 2 秒间隔重启。
+`~/stop_motor` and `~/start_motor` are `std_srvs/srv/Empty` services. A stopped scan remains stopped. By default, three consecutive acquisition failures clean up and reconnect, with 2 s between retries. Initial connection failure exits nonzero; sensor launch restarts it at 2 s intervals.
 
-`udev/` 中的设备名模板须填写实际 USB 序列号。`inverted`、`scan_mode`、`scan_frequency` 等参数以实际安装为准。消息时间戳来自驱动主机，未提供设备硬件时钟同步。
+Fill in the actual USB serial number in the `udev/` device-name template. Set `inverted`, `scan_mode`, `scan_frequency`, and other parameters for the actual installation. Message timestamps come from the driver host; hardware clock synchronization is not provided.
 
-来源见 `SOURCE.json`；Slamtec SDK 保留在 `sdk/`，许可证见 `SLAMTEC_SDK_LICENSE`。
+See `SOURCE.json` for provenance. The Slamtec SDK is retained in `sdk/`; see `SLAMTEC_SDK_LICENSE` for its license.

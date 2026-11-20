@@ -1,17 +1,19 @@
-# 数据整理、训练与部署
+# Data Preparation, Training, and Deployment
 
-## 1. 准备
+**English** | [简体中文](zh-CN/training.md)
 
-完成 [PC 安装](install.md)，按需安装[策略与功能扩展](install.md#3-可选扩展)，在仓库根目录执行：
+## 1. Preparation
+
+Complete [PC installation](install.md), install [policy and feature extensions](install.md#3-optional-extensions) as needed, and run from the repository root:
 
 ```bash
 cd ~/Alohamini
 conda activate alohamini
 ```
 
-默认工作目录为 `~/Alohamini_workspace/`：`datasets/` 保存数据，`runs/` 保存模型，`logs/training/` 保存日志与 PID。
+The default workspace is `~/Alohamini_workspace/`: `datasets/` stores data, `runs/` stores models, and `logs/training/` stores logs and PID files.
 
-## 2. 检查与编辑数据
+## 2. Inspect and edit data
 
 ```bash
 alohamini dataset edit --dataset task_demo \
@@ -25,58 +27,58 @@ alohamini dataset edit --dataset task_demo \
   --operation.type delete_episodes --operation.episode_indices '[3, 8]'
 ```
 
-episode 从 0 编号。`--dataset` 指工作区中的名称，也可换成 `--root /完整路径`。
-输出目录须不存在；保留回合按原顺序重新编号，图像、state/action 和时间记录保持配对。
+Episodes are indexed from 0. `--dataset` selects a workspace dataset name; alternatively, use `--root /absolute/path`.
+The output directory must not exist. Retained episodes are renumbered in their original order, preserving image, state/action, and timing alignment.
 
-其他编辑操作共用 `--root`、`--output`：
+Other editing operations share `--root` and `--output`:
 
-| `--operation.type` | 参数示例 |
+| `--operation.type` | Example arguments |
 | --- | --- |
-| `split` | `--operation.splits '{"train": 0.8, "val": 0.2}'` 或 `'{"train": [0, 2], "val": [1]}'` |
-| `merge` | `--operation.roots '["/数据集A", "/数据集B"]'`，无需 `--root` |
+| `split` | `--operation.splits '{"train": 0.8, "val": 0.2}'` or `'{"train": [0, 2], "val": [1]}'` |
+| `merge` | `--operation.roots '["/dataset_A", "/dataset_B"]'`; no `--root` needed |
 | `remove_feature` | `--operation.feature_names '["observation.images.wrist_right"]'` |
-| `modify_tasks` | `--operation.new_task "拿起积木"`；可加 `--operation.episode_tasks '{"2": "放下积木"}'` |
-| `recompute_stats` | 默认统计数值；`--operation.skip_image_video false` 同时统计图像 |
-| `convert_image_to_video` | JPEG/PNG 转 MP4；`--operation.episode_indices '[0, 2]'` 可选回合 |
-| `reencode_videos` | MP4 重编码，如 `--operation.rgb_encoder.crf 23` |
-| `info` | `--operation.show_features true`；无需 `--output` |
+| `modify_tasks` | `--operation.new_task "pick up the block"`; optionally `--operation.episode_tasks '{"2": "put down the block"}'` |
+| `recompute_stats` | Numeric statistics by default; `--operation.skip_image_video false` includes images |
+| `convert_image_to_video` | JPEG/PNG to MP4; `--operation.episode_indices '[0, 2]'` selects episodes |
+| `reencode_videos` | Reencode MP4, e.g. `--operation.rgb_encoder.crf 23` |
+| `info` | `--operation.show_features true`; no `--output` needed |
 
-拆分结果位于 `<output>/train` 等子目录。合并要求 FPS、字段、相机、标定和动作坐标一致。
-训练与验证按完整回合隔离，同一示教的不同处理副本不得分置两边。
+Split results go into subdirectories such as `<output>/train`. Merging requires matching FPS, fields, cameras, calibration, and action coordinates.
+Separate training and validation by complete episodes. Never place differently processed copies of the same demonstration in both splits.
 
-视频默认 H.264、CRF 18、GOP 2、`yuv420p`，每回合每相机一个 MP4。
-可用 `--operation.rgb_encoder.vcodec`、`.crf`、`.g`、`.preset`、`.pix_fmt` 调整。
-转换保持帧数和时间；`yuv420p` 要求偶数图像尺寸。
+Videos default to H.264, CRF 18, GOP 2, `yuv420p`, with one MP4 per episode per camera.
+Adjust with `--operation.rgb_encoder.vcodec`, `.crf`, `.g`, `.preset`, and `.pix_fmt`.
+Conversion preserves frame counts and timing; `yuv420p` requires even image dimensions.
 
-`recompute_stats` 排除无效反馈，统计诊断保存在 `meta/stats_info.json`。
-`--operation.relative_action true --operation.chunk_size 50` 统计动作块的关节增量分布，不改写 action。
+`recompute_stats` excludes invalid feedback and writes statistical diagnostics to `meta/stats_info.json`.
+`--operation.relative_action true --operation.chunk_size 50` computes joint-delta distributions for action chunks without rewriting action data.
 
-### 修复
+### Repair
 
 ```bash
 alohamini dataset repair /path/to/dataset --output /path/to/dataset_repaired
 alohamini dataset check /path/to/dataset_repaired --decode-images --decode-videos
 ```
 
-支持 AlohaMini 和 LeRobot 数据的可确定索引、媒体引用问题；缺失图像或配对不明时拒绝修复。
-`*.pending-*` 是未完成输出。修复不会消除实际漏采或时间偏差。
+Repair supports unambiguous index and media-reference problems in AlohaMini and LeRobot data. It refuses repairs when images are missing or pairing is ambiguous.
+`*.pending-*` indicates incomplete output. Repair cannot eliminate actual missing samples or timing errors.
 
-## 3. 选择数据与输入
+## 3. Select data and inputs
 
-数据集采用 LeRobot v3 格式：
+Datasets use the LeRobot v3 format:
 
-| 目录 | 内容 |
+| Directory | Contents |
 | --- | --- |
-| `data/` | Parquet：state、action、索引、舵机反馈及有效掩码 |
-| `videos/` | 各相机的 MP4；读取器按 episode 元数据和时间索引取帧 |
-| `meta/` | 字段定义、任务、统计、episode 索引，以及标定和实际采样时间等平台扩展信息 |
+| `data/` | Parquet: state, action, indices, servo feedback, and validity masks |
+| `videos/` | MP4 files per camera; readers locate frames using episode metadata and time indices |
+| `meta/` | Field definitions, tasks, statistics, episode indices, and platform extensions such as calibration and actual sample times |
 
-缺少平台标定和安全记录的外部 v3 数据，训练时加 `--dataset.allow_unannotated=true`。
-有 state 时可用 `--state=recorded` 读取原向量，保留字段顺序和数值；纯视觉任务使用 `--state=none`。
+For external v3 data lacking platform calibration and safety records, train with `--dataset.allow_unannotated=true`.
+Use `--state=recorded` to read the original state vector with field order and values preserved, or `--state=none` for vision-only tasks.
 
-### 导出与纯视觉副本
+### Export and vision-only copies
 
-需要另存或移除数值观测时：
+To save a separate copy or remove numeric observations:
 
 ```bash
 alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
@@ -84,41 +86,41 @@ alohamini dataset export ~/Alohamini_workspace/datasets/task_demo_ready \
   --format lerobot-v3 --vision-only
 ```
 
-以 `alohamini2pro` 为例，默认 state 为双臂位置 14 维、底盘速度 3 维、升降高度 1 维。
-纯视觉副本保留视频和 action，去掉数值观测输入；视频直接复制，不改变配对、帧数或时间戳。早期导出的图片内嵌 Parquet 数据仍可读取，但不是当前采集格式。
+For example, `alohamini2pro` defaults to 14 arm-position dimensions, 3 base-velocity dimensions, and 1 lift-height dimension.
+Vision-only copies retain videos and actions while removing numeric observation inputs. Videos are copied directly without changing pairing, frame counts, or timestamps. Earlier exports with images embedded in Parquet remain readable but are not the current collection format.
 
-### 输入参数
+### Input arguments
 
-| 参数 | 含义 |
+| Argument | Meaning |
 | --- | --- |
-| 省略 `--state` | 按算法预设选择；自动模式在外部 v3 中读取原 state，无 state 时使用纯视觉 |
-| `--state=none` | 纯视觉，无需另存数据副本 |
-| `--state=recorded` | 外部 v3 的原始 state 向量，不做单位换算 |
-| `--state=joint_position,base_velocity,lift_height` | 18 维位置、底盘速度与高度 |
-| `--state=joint_velocity,joint_current` | 双臂 28 维速度/电流，含夹爪 |
-| `--cameras='["forward","wrist_right"]'` | 按给定顺序选择相机；省略时按算法预设选择，无预设则使用全部记录相机 |
+| Omit `--state` | Follow the algorithm preset; automatic mode reads original state from external v3 data, or uses vision only if no state exists |
+| `--state=none` | Vision only, without creating a separate dataset copy |
+| `--state=recorded` | Original external v3 state vector without unit conversion |
+| `--state=joint_position,base_velocity,lift_height` | 18 dimensions of positions, base velocity, and height |
+| `--state=joint_velocity,joint_current` | 28 arm velocity/current dimensions, including grippers |
+| `--cameras='["forward","wrist_right"]'` | Select cameras in the specified order; when omitted, follow the algorithm preset or use all recorded cameras if none is defined |
 
-平台字段按参数顺序组装。关节位置使用标定坐标，关节速度为对应坐标单位/秒，电流为 A；
-底盘速度为 m/s、deg/s，升降高度为 mm。action 为双臂绝对位置目标、底盘速度及升降高度目标。
+Platform fields are assembled in argument order. Joint positions use calibrated coordinates, joint velocities use the corresponding coordinate units per second, and current uses A;
+base velocities use m/s and deg/s, and lift height uses mm. Actions contain absolute arm-position targets, base velocities, and lift-height targets.
 
-### 关节、TCP 与相对目标
+### Joint, TCP, and relative targets
 
-`--state` 选择输入字段，以下参数选择输入和动作的表示；原数据不变。
+`--state` selects input fields; the following arguments select input and action representations without changing source data.
 
-| 参数 | 选项与用途 |
+| Argument | Options and purpose |
 | --- | --- |
-| `--data.state_representation` | `recorded`：原始输入；`tcp`：将臂关节位置改为末端位姿 |
-| `--data.action_representation` | `recorded`：原始控制目标；`joint_delta`：相对关节目标；`tcp_absolute`：绝对末端目标；`tcp_delta`：相对末端目标 |
-| `--data.joint_delta_fields` | 外部数据的动作字段到观测字段 JSON 映射；平台关节自动匹配，双方坐标与单位须一致 |
-| `--data.rotation_representation` | `rotvec`（默认，3 维）或 `rotation_6d`（6 维） |
-| `--data.tcp_delta_frame` | TCP 增量坐标系：`base`（默认，各臂基座）或 `tool`（当前末端） |
-| `--data.kinematics.reference_pose` | 型号标定预设，如 `upright_forward` |
-| `--data.kinematics.spec` / `--data.kinematics.path` | 自定义映射 JSON / 映射文件路径，见[示例](../examples/datasets/kinematics-radians.json) |
+| `--data.state_representation` | `recorded`: original input; `tcp`: replace arm joint positions with end-effector poses |
+| `--data.action_representation` | `recorded`: original control targets; `joint_delta`: relative joint targets; `tcp_absolute`: absolute end-effector targets; `tcp_delta`: relative end-effector targets |
+| `--data.joint_delta_fields` | JSON mapping from action fields to observation fields for external data; platform joints match automatically; coordinates and units must agree |
+| `--data.rotation_representation` | `rotvec` (default, 3 dimensions) or `rotation_6d` (6 dimensions) |
+| `--data.tcp_delta_frame` | TCP delta frame: `base` (default, each arm's base) or `tool` (current end effector) |
+| `--data.kinematics.reference_pose` | Model calibration preset, such as `upright_forward` |
+| `--data.kinematics.spec` / `--data.kinematics.path` | Custom mapping JSON / mapping file path; see the [example](../examples/datasets/kinematics-radians.json) |
 
-输入和动作可独立选择；未指定时沿用[策略预设](#策略选择)。相对动作均以当前观测为基准，整段共用同一基准；夹爪等其他字段仍为绝对目标。
-TCP 位置单位为 m，旋转向量单位为 rad；左右臂分别使用 `left_Base`、`right_Base`。
+Inputs and actions can be selected independently; unspecified settings follow the [policy preset](#policy-selection). Relative actions use the current observation as a shared reference for the entire chunk. Other fields, such as grippers, remain absolute targets.
+TCP positions use m and rotation vectors use rad. Left and right arms use `left_Base` and `right_Base`, respectively.
 
-TCP 训练示例：
+TCP training example:
 
 ```bash
 alohamini train --policy.type=act \
@@ -129,8 +131,8 @@ alohamini train --policy.type=act \
   --run_name=act_tcp_01 --background
 ```
 
-标定默认读取数据集 `meta/kinematics.json`，缺省使用型号预设。主从臂标定见 [使用手册](alohamini.md#2-主从臂标定)；非标准标定或外部数据须指定实际映射。
-映射随 checkpoint 保存，部署时须与机器人标定一致。需要导出映射时：
+Calibration defaults to dataset `meta/kinematics.json`, falling back to the model preset. See [the user guide](alohamini.md#2-leader-and-follower-calibration) for leader/follower calibration; nonstandard calibration or external data requires the actual mapping.
+Mappings are saved with checkpoints and must match robot calibration at deployment. To export a mapping:
 
 ```bash
 mkdir -p "$HOME/Alohamini_workspace/configs"
@@ -139,24 +141,24 @@ python -m alohamini.datasets.kinematic_fields \
   --output "$HOME/Alohamini_workspace/configs/task_demo_kinematics.json"
 ```
 
-导出文件须尚不存在；自定义映射加 `--spec`，使用 Host 标定文件加 `--left-map /path/left.yaml --right-map /path/right.yaml`。
-训练时通过 `--data.kinematics.path` 加载；`reference_pose`、`spec`、`path` 三选一。
-TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理设置见[推理模式](#推理模式)。
+The export file must not exist. Add `--spec` for custom mappings, or `--left-map /path/left.yaml --right-map /path/right.yaml` for Host calibration files.
+Load it during training with `--data.kinematics.path`. Choose only one of `reference_pose`, `spec`, or `path`.
+TCP data must retain joint observations even with `--state=none`. See [Inference modes](#inference-modes) for TCP inference settings.
 
-## 4. 训练
+## 4. Training
 
-### 策略选择
+### Policy selection
 
-各策略的训练命令、权重准备和专用参数见对应目录：
+See each policy directory for training commands, weight preparation, and policy-specific arguments:
 
-| 策略 | `policy.type` |
+| Policy | `policy.type` |
 | --- | --- |
 | <a id="act"></a>[ACT](../src/alohamini/policies/act/README.md) | `act` |
-| <a id="am-act"></a><a id="条件-cvae"></a>[AM-ACT](../src/alohamini/policies/am_act/README.md)（[条件 CVAE](../src/alohamini/policies/am_act/README.md#条件-cvae)） | `am_act` |
+| <a id="am-act"></a><a id="conditional-cvae"></a>[AM-ACT](../src/alohamini/policies/am_act/README.md) ([Conditional CVAE](../src/alohamini/policies/am_act/README.md#conditional-cvae)) | `am_act` |
 | <a id="diffusion-policy"></a>[Diffusion Policy](../src/alohamini/policies/diffusion/README.md) | `diffusion` |
 | <a id="b-spline-policy"></a>[B-spline Policy](../src/alohamini/policies/bspline/README.md) | `bspline` |
 | <a id="cdp"></a>[CDP](../src/alohamini/policies/cdp/README.md) | `cdp` |
-| <a id="dit-policydit-block"></a>[dit-policy（DiT-Block）](../src/alohamini/policies/dit_policy/README.md) | `dit_policy` |
+| <a id="dit-policydit-block"></a>[dit-policy (DiT-Block)](../src/alohamini/policies/dit_policy/README.md) | `dit_policy` |
 | <a id="multi-task-dit"></a>[Multi-Task DiT](../src/alohamini/policies/multi_task_dit/README.md) | `multi_task_dit` |
 | <a id="fastwam"></a>[FastWAM](../src/alohamini/policies/fastwam/README.md) | `fastwam` |
 | [Long-WAM](../src/alohamini/policies/longwam/README.md) | `longwam` |
@@ -185,18 +187,18 @@ TCP 数据须保留关节观测，即使模型使用 `--state=none`。TCP 推理
 | <a id="lingbot-vla-20"></a>[LingBot-VLA 2.0](../src/alohamini/policies/lingbot_vla_v2/README.md) | `lingbot_vla_v2` |
 | <a id="spirit-v15"></a>[Spirit v1.5](../src/alohamini/policies/spirit/README.md) | `spirit` |
 
-各策略示例保留 episode 1 做验证，其余回合训练。数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Policy examples reserve episode 1 for validation and train on the rest. For a single-episode dataset, omit `--dataset.eval_episodes` and `--eval_steps`.
 
-### 统计准备（可选）
+### Prepare statistics (optional)
 
-查看 AlohaMini 数据集全部数值字段的统计，不改写数据：
+Inspect statistics for all numeric AlohaMini dataset fields without modifying data:
 
 ```bash
 alohamini dataset stats ~/Alohamini_workspace/datasets/task_demo_ready \
   --output ~/Alohamini_workspace/logs/task_demo_stats.json
 ```
 
-按训练 JSON 中的策略、输入字段、时间窗口和训练回合生成归一化统计（支持 AlohaMini 和 LeRobot v3）：
+Generate normalization statistics for the policy, input fields, time windows, and training episodes in a training JSON (AlohaMini and LeRobot v3 supported):
 
 ```bash
 alohamini dataset stats ~/Alohamini_workspace/datasets/task_demo_ready \
@@ -208,55 +210,55 @@ python -m alohamini.learning.train --config /path/to/train.json \
   --stats "$HOME/Alohamini_workspace/logs/task_demo_training_stats.json" --background
 ```
 
-`--stats` 只接受带 `--config` 生成的统计；数据或样本配置不匹配时须重新生成。
-省略 `--stats` 时训练自动计算。新训练均保存 `runs/<名称>/statistics.json`，checkpoint 保留实际使用的统计；恢复训练沿用 checkpoint。
+`--stats` accepts only statistics generated with `--config`; regenerate them if the data or sample configuration changes.
+Without `--stats`, training computes statistics automatically. New runs save `runs/<NAME>/statistics.json`; checkpoints retain the statistics actually used, and resumed training reuses checkpoint statistics.
 
-### 日志与配置
+### Logs and configuration
 
 ```bash
 tail -f ~/Alohamini_workspace/logs/training/act_01.log
 cat ~/Alohamini_workspace/logs/training/act_01.pid
 ```
 
-命令行训练默认在后台运行，输出独立的日志、PID、配置路径和可复制的 `tail -f` 命令；输出目录须未使用。
-需要直接在当前终端运行时使用 `--foreground`。
-关闭终端或按 Ctrl+C 退出 `tail -f` 只停止日志查看，不会停止后台训练。
-直接由 `torchrun` 启动时，每个 rank 在当前进程运行，不再启动新的后台任务。
-可完全使用命令行参数，也可把 `examples/learning/act.json` 复制到工作区的 `configs/`，
-修改数据路径、运行名称和回合编号后用 `--config /路径/train.json` 加载。
-命令行参数优先，例如 `--steps=150000` 覆盖配置中的总步数。
-个人实验配置留在工作区，不放入仓库的 `examples/`。
+CLI training runs in the background by default, printing separate log, PID, and configuration paths plus a copyable `tail -f` command. The output directory must be unused.
+Use `--foreground` to run directly in the current terminal.
+Closing the terminal or pressing Ctrl+C to leave `tail -f` stops log viewing only; background training continues.
+When launched directly by `torchrun`, each rank runs in the current process without starting another background task.
+Use CLI arguments alone, or copy `examples/learning/act.json` into the workspace's `configs/`,
+edit the data path, run name, and episode indices, and load it with `--config /path/to/train.json`.
+CLI arguments take precedence; for example, `--steps=150000` overrides total steps in the configuration.
+Keep personal experiment configurations in the workspace, outside the repository's `examples/`.
 
-每一步的原始指标仍写入运行目录的 `metrics.jsonl`，续训写入 `metrics-from-*.jsonl`：
+Raw per-step metrics remain in the run directory's `metrics.jsonl`; resumed runs use `metrics-from-*.jsonl`:
 
 ```bash
 tail -f ~/Alohamini_workspace/runs/act_01/metrics.jsonl
 ```
 
-### 验证与视频加载
+### Validation and video loading
 
-本地数据的数值与诊断记录使用磁盘缓存，默认每个数据集、每个进程缓存 64 MiB。
-`--dataset.cache_size_mb=64` 设置缓存预算；`--dataset.cache_dir=/路径/cache` 指定源数据目录之外的缓存位置，默认位于工作区 `cache/datasets/`。总内存还包括图像解码、DataLoader 预取和 batch 张量。
+Local numeric data and diagnostic records use a disk cache, with a default 64 MiB budget per dataset per process.
+`--dataset.cache_size_mb=64` sets the cache budget; `--dataset.cache_dir=/path/to/cache` selects a cache location outside the source dataset, defaulting to the workspace's `cache/datasets/`. Total memory also includes image decoding, DataLoader prefetching, and batch tensors.
 
-`--dataset.streaming=true` 启用有限回合池混合采样，适合长回合数据；`--dataset.streaming_episode_pool_size=8` 设置回合池大小。此方式改变样本混合顺序，验证集仍按序读取；续训沿用原采样方式与回合池大小。
+`--dataset.streaming=true` enables mixed sampling from a bounded episode pool for long episodes; `--dataset.streaming_episode_pool_size=8` sets pool size. This changes sample mixing order; validation remains sequential. Resumed training preserves the original sampling mode and pool size.
 
-`--eval_steps` 设置验证间隔，`--eval_batch_size` 设置验证 batch；
-`--eval_num_workers`、`--eval_prefetch_factor` 可独立配置验证加载。
-未指定时沿用对应训练设置，worker 为 0 时关闭多进程预取。
-ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比较。
+`--eval_steps` sets the validation interval; `--eval_batch_size` sets its batch size;
+`--eval_num_workers` and `--eval_prefetch_factor` configure validation loading independently.
+Unspecified values inherit training settings; zero workers disables multiprocessing prefetch.
+ACT/AM-ACT validation action loss excludes KL and cannot be directly compared with total training loss.
 
-未指定视频后端时，训练器检测到已安装 TorchCodec 就使用它，否则使用 PyAV。
-命令行或配置中显式指定的后端（包括 checkpoint 保存的设置）优先于自动选择；
-可通过 `--video_backend=pyav` 切换到 PyAV。后端加载或解码失败时直接报错，不自动切换。
-视频解码器使用每个 worker 独立的有界 LRU 缓存，淘汰时关闭解码器及文件；
-`--video_cache_size=0` 表示逐次打开、读取和关闭。缓存上限不保证底层库内存始终有界。
-需要调整读取性能时，可设置 `--video_backend=pyav|torchcodec`、`--camera_workers`、
-`--video_cache_size`；增大 worker、预取与缓存会增加主机内存占用。
-图像按各策略的尺寸、裁剪和归一化规则处理，配置随 checkpoint 保存。
+When no video backend is specified, the trainer uses TorchCodec if installed, otherwise PyAV.
+An explicit backend in CLI arguments or configuration (including checkpoint settings) takes precedence over automatic selection;
+switch to PyAV with `--video_backend=pyav`. Backend load or decode errors are reported without automatic fallback.
+Each worker has its own bounded LRU video-decoder cache; eviction closes decoders and files.
+`--video_cache_size=0` opens, reads, and closes on each access. The cache limit does not guarantee bounded memory in underlying libraries.
+To tune loading performance, set `--video_backend=pyav|torchcodec`, `--camera_workers`,
+and `--video_cache_size`. More workers, prefetching, and caching increase host memory use.
+Images follow each policy's size, cropping, and normalization rules, saved with the checkpoint.
 
-### 优化器与调度
+### Optimizers and schedules
 
-在训练命令后追加所需参数：
+Append the required arguments to the training command:
 
 ```text
 --optimizer.type=adamw --optimizer.lr=0.0001
@@ -264,105 +266,105 @@ ACT／AM-ACT 的验证动作损失不含 KL，不能直接与训练总损失比�
 --optimizer.eps=1e-8 --optimizer.grad_clip_norm=10
 ```
 
-优化器支持 `adamw`、`adam`、`sgd`，默认沿用策略配置。
-ACT／AM-ACT 默认无调度，SmolVLA 使用 `cosine`，π0.5／Spirit 使用 `warmup_cosine`，
-Diffusion／FastWAM 使用 `diffusers_cosine`；
-`--scheduler.type=none` 禁用调度。可覆盖 `warmup_steps`、`decay_steps`、`decay_lr`。
-`warmup_linear` 在预热后线性衰减；它与 `staged_cosine`、`constant_with_warmup`
-均支持 `--scheduler.start_step`；
-`--scheduler.before_start` 接收“参数组名到学习率倍率”的 JSON 对象，设置阶段开始前各组的倍率。
-组名由策略声明；不在对象中的组默认倍率为 1，未知组名会报错。阶段按成功优化器更新计数。
+Supported optimizers are `adamw`, `adam`, and `sgd`; defaults follow the policy configuration.
+ACT/AM-ACT defaults to no scheduler; SmolVLA uses `cosine`; π0.5/Spirit uses `warmup_cosine`;
+Diffusion/FastWAM uses `diffusers_cosine`.
+`--scheduler.type=none` disables scheduling. Override `warmup_steps`, `decay_steps`, and `decay_lr` as needed.
+`warmup_linear` decays linearly after warmup; it, `staged_cosine`, and `constant_with_warmup`
+all support `--scheduler.start_step`.
+`--scheduler.before_start` accepts a JSON object mapping parameter-group names to learning-rate multipliers before the stage starts.
+Policies declare group names. Unlisted groups default to multiplier 1; unknown names cause an error. Stages count successful optimizer updates.
 
-### 数值精度
+### Numeric precision
 
-不指定时沿用策略预设；三项设置分别控制计算、参数存储和 FP32 加速：
+Defaults follow policy presets. Three independent settings control computation, parameter storage, and FP32 acceleration:
 
-| 设置 | 参数 | 默认 |
+| Setting | Argument | Default |
 | --- | --- | --- |
-| 自动混合精度计算 | `--mixed_precision=none\|bfloat16\|float16` | 策略预设，未配置时为 `none` |
-| 可训练参数的存储与更新 | `--trainable_dtype=preserve\|float32` | 策略预设，未配置时为 `preserve` |
-| 允许 FP32 矩阵乘法、卷积使用 TF32 | `--tf32=true\|false` | `true` |
+| Automatic mixed-precision computation | `--mixed_precision=none\|bfloat16\|float16` | Policy preset, or `none` if unspecified |
+| Trainable parameter storage and updates | `--trainable_dtype=preserve\|float32` | Policy preset, or `preserve` if unspecified |
+| Allow TF32 for FP32 matrix multiplication and convolution | `--tf32=true\|false` | `true` |
 
-常用组合，追加到训练命令：
+Common combinations to append to training commands:
 
 ```text
-# FP32 可训练参数，BF16 混合精度计算
+# FP32 trainable parameters with BF16 mixed-precision computation
 --trainable_dtype=float32 --mixed_precision=bfloat16
 
-# 关闭自动混合精度和 TF32
+# Disable automatic mixed precision and TF32
 --mixed_precision=none --tf32=false
 ```
 
-`none` 关闭自动混合精度，不会把模型已有的 BF16 权重改成 FP32。
-`trainable_dtype=float32` 只转换可训练参数，冻结参数和 buffer 保持原类型；显存占用会增加。
-TF32 不改变参数存储类型，只影响 FP32 运算，可与 BF16/FP16 混合精度并用。
-`--cudnn_deterministic=true` 时 TF32 默认关闭；显式 `--tf32` 优先。
+`none` disables automatic mixed precision without converting existing BF16 model weights to FP32.
+`trainable_dtype=float32` converts only trainable parameters; frozen parameters and buffers keep their original types. GPU memory use increases.
+TF32 changes only FP32 computation, not parameter storage, and can be used alongside BF16/FP16 mixed precision.
+With `--cudnn_deterministic=true`, TF32 defaults to disabled; explicit `--tf32` takes precedence.
 
-设置随 checkpoint 保存，推理沿用已保存的设置。
-`--policy.path` 开始新微调时，只默认继承 `trainable_dtype`；混合精度、TF32 使用本次配置或策略默认值。
-显式参数优先；`--resume=true` 续训须保持原设置。模型内部必须使用 FP32 的算子保留其数值保护。
+Settings are saved with checkpoints and reused for inference.
+Starting new fine-tuning with `--policy.path` inherits only `trainable_dtype` by default; mixed precision and TF32 follow the new configuration or policy defaults.
+Explicit arguments take precedence; `--resume=true` requires the original settings. Operators requiring FP32 internally retain their numeric safeguards.
 
-### 多卡与梯度累积
+### Multiple GPUs and gradient accumulation
 
-| 配置 | 追加参数 |
+| Configuration | Additional arguments |
 | --- | --- |
-| 单卡 | 默认 |
-| DDP，每卡完整模型 | `--num_processes=2 --background` |
-| FSDP2 分片 | `--distributed_backend=fsdp2 --num_processes=2 --background` |
+| Single GPU | Default |
+| DDP, full model per GPU | `--num_processes=2 --background` |
+| FSDP2 sharding | `--distributed_backend=fsdp2 --num_processes=2 --background` |
 
-指定显卡：`CUDA_VISIBLE_DEVICES=2,5 alohamini train --config train.json --policy.device=cuda --num_processes=2 --background`。
-所选显卡在进程内重新编号为 `cuda:0`、`cuda:1`。
+Select GPUs: `CUDA_VISIBLE_DEVICES=2,5 alohamini train --config train.json --policy.device=cuda --num_processes=2 --background`.
+Selected GPUs are renumbered within the process as `cuda:0` and `cuda:1`.
 
-有效 batch 通常为 `batch_size × 进程数 × 累积次数`；`steps` 按成功的优化器更新计数。
-多进程尾批默认重复样本补齐，`--drop_last=true` 改为丢弃。
-`num_workers`、`prefetch_factor` 和视频缓存按进程生效，多卡时需合计 CPU 内存与解码负载。
-DataLoader 默认使用 `spawn`；可用 `--dataloader_multiprocessing_context=forkserver` 切换。
-多卡启动时，rank 0 检查数据并计算或加载归一化统计，其他 rank 校验后复用；文件变化时重新检查。
-`--stats` 可跨训练复用统计；启动结果同步默认最多等待 3600 秒，可用 `--dataset_preparation_timeout_s` 调整。
-多节点使用 `torchrun ... -m alohamini.learning.train --config train.json`，各节点须共享输出目录并使用相同数据和资产路径。
+Effective batch size is generally `batch_size × process count × accumulation steps`; `steps` counts successful optimizer updates.
+Multiprocess final batches repeat samples for padding by default; `--drop_last=true` drops them instead.
+`num_workers`, `prefetch_factor`, and video caches apply per process. Account for combined CPU memory and decoding load across GPUs.
+DataLoader uses `spawn` by default; switch with `--dataloader_multiprocessing_context=forkserver`.
+At distributed startup, rank 0 checks data and computes or loads normalization statistics; other ranks validate and reuse them. Changed files trigger rechecking.
+`--stats` reuses statistics across runs. Startup synchronization waits up to 3600 seconds by default; adjust with `--dataset_preparation_timeout_s`.
+For multiple nodes, use `torchrun ... -m alohamini.learning.train --config train.json`. Nodes must share the output directory and use identical data and asset paths.
 
-FSDP2 由通用训练器管理参数、梯度和优化器分片，保留所选参数存储精度与冻结设置。
-每个进程需要足够 CPU 内存构建模型；保存时同时导出分片训练状态和完整推理权重，主进程需留出完整权重的 CPU 内存。
-FSDP2 不分摊输入激活；单卡仍需容纳当前计算模块及其激活。不支持 ZeRO 或张量并行。
-FastWAM 的外置冻结 VAE／文本编码器仍在每张卡保留一份。
+The common trainer manages FSDP2 parameter, gradient, and optimizer sharding, preserving selected parameter-storage precision and freezing settings.
+Each process needs enough CPU memory to construct the model. Saving exports both sharded training state and full inference weights; the main process needs CPU memory for the full weights.
+FSDP2 does not shard input activations; each GPU must still fit the current compute module and its activations. ZeRO and tensor parallelism are unsupported.
+FastWAM's external frozen VAE/text encoder still has one copy on each GPU.
 
-### 训练器 EMA
+### Trainer EMA
 
-EMA 使用策略预设，未配置时关闭；使用 `--ema.enable=true` 开启。
-默认衰减参数为 `inv_gamma=1.0`、`power=0.75`、`min_decay=0`、`max_decay=0.9999`、`update_after_step=0`。
-固定衰减可设 `--ema.decay=0.99`，与自定义 `min_decay/max_decay` 互斥。
-`--ema.schedule=power_law` 使用 `(1-1/n)^power`，`n` 为预热后的成功更新次数；
-默认 `inverse_power` 使用 `1-(1+(n-1)/inv_gamma)^(-power)`。策略可提供各自的指数与上限。
+EMA follows policy presets and is disabled if unspecified; enable with `--ema.enable=true`.
+Default decay settings are `inv_gamma=1.0`, `power=0.75`, `min_decay=0`, `max_decay=0.9999`, and `update_after_step=0`.
+For fixed decay, use `--ema.decay=0.99`; this is mutually exclusive with custom `min_decay/max_decay`.
+`--ema.schedule=power_law` uses `(1-1/n)^power`, where `n` counts successful post-warmup updates;
+the default `inverse_power` uses `1-(1+(n-1)/inv_gamma)^(-power)`. Policies can supply their own exponent and upper bound.
 
-EMA 以 FP32 追踪可训练参数，每次成功的优化器更新后推进；冻结参数不复制，BatchNorm buffer 直接复制。
-验证默认使用 EMA 权重，`--ema.use_for_eval=false` 改用在线权重。
-支持单设备、DDP 和 FSDP2；FSDP2 的 EMA 参数按相同布局分片。评估／导出需要临时内存。
+EMA tracks trainable parameters in FP32 after every successful optimizer update. Frozen parameters are not copied; BatchNorm buffers are copied directly.
+Validation uses EMA weights by default; `--ema.use_for_eval=false` selects online weights.
+Single-device, DDP, and FSDP2 are supported; FSDP2 EMA parameters use matching shards. Evaluation/export needs temporary memory.
 
-## 5. 保存与续训
+## 5. Saving and resuming
 
-### 保存模型
+### Save models
 
-`--save_freq=5000` 表示每完成 5000 个训练步保存一次，训练结束时也会保存。
-最近保存的模型位于 `runs/<运行名称>/checkpoint`，可用于微调或推理。
-若需要中断续训，保留整个运行目录；仅复制模型权重不足以恢复训练。
+`--save_freq=5000` saves every 5000 completed training steps and again at training completion.
+The latest model is at `runs/<RUN_NAME>/checkpoint`, ready for fine-tuning or inference.
+Keep the entire run directory to resume interrupted training; copying only model weights is insufficient.
 
-启用训练器 EMA 后，每个完整 checkpoint 同时保存：
+With trainer EMA enabled, every complete checkpoint also saves:
 
-| 路径 | 用途 |
+| Path | Purpose |
 | --- | --- |
-| `pretrained_model/` | 在线模型，与优化器状态对应，用于恢复训练 |
-| `ema_pretrained_model/` | 可直接部署的 EMA 模型，包含同一套预处理信息 |
-| `training_state/state.pt` 中的 `ema` | 单设备／DDP 的完整 EMA 状态；FSDP2 的更新计数 |
-| `distributed/` | FSDP2 模型、优化器及完整 EMA 分片状态 |
+| `pretrained_model/` | Online model matching optimizer state, used for resuming training |
+| `ema_pretrained_model/` | Deployable EMA model with the same preprocessing metadata |
+| `ema` in `training_state/state.pt` | Full EMA state for single-device/DDP; update counter for FSDP2 |
+| `distributed/` | FSDP2 model, optimizer, and complete EMA shard state |
 
-运行目录中的 `checkpoint` 指向最新在线模型，`checkpoint-ema` 指向最新 EMA 模型。
-评估或部署 EMA 时指定 `--policy.path=<运行目录>/checkpoint-ema`。
-续训仍使用 `checkpoint/train_config.json`，并保持 EMA 配置不变。
-缺失或不匹配的 EMA 状态会拒绝续训。
+In the run directory, `checkpoint` points to the latest online model and `checkpoint-ema` to the latest EMA model.
+Use `--policy.path=<RUN_DIR>/checkpoint-ema` to evaluate or deploy EMA.
+Resume using `checkpoint/train_config.json` with the EMA configuration unchanged.
+Missing or mismatched EMA state prevents resuming.
 
-### 中断后恢复原训练
+### Resume interrupted training
 
-数据和训练设置不变，只是进程中断时，使用保存的训练配置恢复：
+If only the process was interrupted and data/settings are unchanged, resume from the saved training configuration:
 
 ```bash
 python -m alohamini.learning.train \
@@ -370,22 +372,22 @@ python -m alohamini.learning.train \
   --resume=true --background
 ```
 
-| 选项 | 作用 |
+| Option | Effect |
 | --- | --- |
-| `--config_path` | 读取该次训练保存的配置，无需重新填写数据路径和训练参数 |
-| `--resume=true` | 从最近保存的训练步继续，恢复权重、优化器和学习率进度 |
-| `--background` | 在后台运行；启动后打印日志与 PID 路径 |
+| `--config_path` | Read the saved run configuration without reentering data paths or training settings |
+| `--resume=true` | Continue from the latest saved step, restoring weights, optimizer, and learning-rate progress |
+| `--background` | Run in the background and print log/PID paths after startup |
 
-恢复时保持训练/验证数据、模型、学习率、调度器、batch、精度及多卡设置一致。
-若原训练使用 `--scheduler.type=none`，可追加 `--steps=150000` 延长训练。
-这里的步数是累计总目标：已训练 100000 步时，设为 150000 表示再训练 50000 步。
-启用学习率调度的原运行须保持原定总步数。
+Keep training/validation data, model, learning rate, scheduler, batch size, precision, and distributed settings unchanged when resuming.
+If the original run used `--scheduler.type=none`, append `--steps=150000` to extend training.
+This is the cumulative target: after 100000 completed steps, 150000 requests another 50000 steps.
+Runs with learning-rate scheduling must retain the original total step count.
 
-### 补充数据或调整学习率后微调
+### Fine-tune with more data or a new learning rate
 
-新增示范、改用合并数据集、更换验证回合，或希望调整学习率时，使用 `--policy.path`
-加载已有模型，并指定一个新的输出目录。此时不加 `--resume=true`。
-各原生策略均支持从平台 checkpoint 微调；下面以 ACT／AM-ACT 为例：
+When adding demonstrations, using merged data, changing validation episodes, or adjusting the learning rate, use `--policy.path`
+to load an existing model and select a new output directory. Do not add `--resume=true`.
+All native policies support fine-tuning from platform checkpoints; ACT/AM-ACT is used below:
 
 ```bash
 python -m alohamini.learning.train \
@@ -402,42 +404,42 @@ python -m alohamini.learning.train \
   --background
 ```
 
-替换数据集路径和验证回合编号；合并数据后按合并后的编号选择验证回合。
-验证示范不要与训练示范重复。模型结构、相机、图像尺寸和 state 选择默认沿用旧模型，
-新数据的动作字段、单位和输入含义须与它匹配。
+Replace the dataset path and validation episode indices. After merging, select validation episodes by their new indices.
+Validation demonstrations must not duplicate training demonstrations. Model architecture, cameras, image size, and state selection default to the existing model;
+new data must match its action fields, units, and input semantics.
 
-| 选项 | 作用 |
+| Option | Effect |
 | --- | --- |
-| `--policy.path` | 要继续学习的已有模型，策略类型自动读取 |
-| `--dataset.root` | 本次微调使用的数据集目录 |
-| `--dataset.eval_episodes='[1]'` | 留出回合 1 做验证；未指定训练回合时，其余回合用于训练 |
-| `--output_dir` | 新模型的保存目录，须尚不存在；原模型保留 |
-| `--policy.device=cuda` | 使用 GPU 训练；`cpu` 使用 CPU |
-| `--steps=50000` | 本次微调训练 50000 步，不包含旧模型已经训练的步数 |
-| `--batch_size=2` | 每个进程每批读取 2 个样本；增大会增加显存需求 |
-| `--save_freq=5000` | 每 5000 步保存模型 |
-| `--eval_steps=1000` | 每 1000 步在留出的回合上验证；须同时指定验证回合 |
-| `--log_freq=100` | 每 100 步打印一次训练指标 |
+| `--policy.path` | Existing model to continue learning from; policy type is detected automatically |
+| `--dataset.root` | Dataset directory for this fine-tuning run |
+| `--dataset.eval_episodes='[1]'` | Reserve episode 1 for validation; use the rest for training if training episodes are unspecified |
+| `--output_dir` | New model directory; must not exist; the original model is retained |
+| `--policy.device=cuda` | Train on GPU; `cpu` selects CPU |
+| `--steps=50000` | Train 50000 steps in this fine-tuning run, excluding earlier model training |
+| `--batch_size=2` | Read 2 samples per process per batch; larger values require more GPU memory |
+| `--save_freq=5000` | Save a model every 5000 steps |
+| `--eval_steps=1000` | Validate on held-out episodes every 1000 steps; requires validation episodes |
+| `--log_freq=100` | Print training metrics every 100 steps |
 
-微调保留已有权重，但重新开始优化器和学习率计划。上例中的步数、batch 和学习率均可按任务调整。
+Fine-tuning retains weights but restarts the optimizer and learning-rate schedule. Adjust steps, batch size, and learning rates for the task.
 
-### 调整学习率
+### Adjust learning rates
 
-学习率控制每次训练更新参数的幅度。较小的值通常使已有模型改变得更缓慢，
-但不保证更高成功率，应结合验证指标选择。`5e-6` 就是 `0.000005`。
+The learning rate controls the size of each parameter update. Smaller values generally change an existing model more slowly,
+but do not guarantee higher success; select them using validation metrics. `5e-6` means `0.000005`.
 
-| 选项 | 作用 |
+| Option | Effect |
 | --- | --- |
-| `--optimizer.lr=5e-6` | 设置主学习率；在 ACT／AM-ACT 中用于视觉骨干以外的网络 |
-| `--policy.optimizer_lr_backbone=5e-6` | 单独设置 ACT／AM-ACT 的视觉骨干学习率，控制图像特征提取网络的更新幅度 |
-| `--scheduler.type=none` | 不随训练步数改变学习率，各部分始终使用设定值；不是停止学习 |
+| `--optimizer.lr=5e-6` | Set the main learning rate; for ACT/AM-ACT, this applies outside the visual backbone |
+| `--policy.optimizer_lr_backbone=5e-6` | Set the ACT/AM-ACT visual-backbone learning rate independently, controlling image-feature extractor updates |
+| `--scheduler.type=none` | Keep learning rates constant at their configured values throughout training; learning continues |
 
-**只改 `--optimizer.lr` 不会覆盖 ACT／AM-ACT 的视觉骨干学习率。**
-想让两部分使用同一学习率，就像上例一样同时设置；想让视觉特征变化更小，
-可分别设为 `--optimizer.lr=5e-6 --policy.optimizer_lr_backbone=1e-6`。
-其他算法使用各自的参数分组，不要直接套用 ACT 的骨干选项。
+**Changing only `--optimizer.lr` does not override the ACT/AM-ACT visual-backbone learning rate.**
+Set both as above to use the same rate, or update visual features more slowly
+with `--optimizer.lr=5e-6 --policy.optimizer_lr_backbone=1e-6`.
+Other algorithms use their own parameter groups; do not reuse ACT backbone options indiscriminately.
 
-若希望先逐渐提高学习率、再逐渐降低，可将微调命令中的 `--scheduler.type=none` 替换为：
+To increase the learning rate gradually and then reduce it, replace `--scheduler.type=none` in the fine-tuning command with:
 
 ```text
 --scheduler.type=warmup_cosine \
@@ -446,33 +448,33 @@ python -m alohamini.learning.train \
 --scheduler.decay_lr=5e-7
 ```
 
-| 选项 | 作用 |
+| Option | Effect |
 | --- | --- |
-| `--scheduler.type=warmup_cosine` | 先预热，再按余弦曲线降低学习率 |
-| `--scheduler.warmup_steps=1000` | 前 1000 步从较小学习率逐渐提高到设定值 |
-| `--scheduler.decay_steps=50000` | 到本次训练第 50000 步时降到目标值，包含预热阶段 |
-| `--scheduler.decay_lr=5e-7` | 主学习率的最终目标；其他参数组按相同比例降低 |
+| `--scheduler.type=warmup_cosine` | Warm up, then decrease the learning rate along a cosine curve |
+| `--scheduler.warmup_steps=1000` | Increase from a small learning rate to the configured value over the first 1000 steps |
+| `--scheduler.decay_steps=50000` | Reach the target at step 50000 of this run, including warmup |
+| `--scheduler.decay_lr=5e-7` | Final main learning rate; other parameter groups decrease proportionally |
 
-调度器不为 `none` 时，`--optimizer.lr` 指设定的峰值，不代表每一步的实际学习率。
-使用 `none` 时不填写上述预热和衰减参数。
+With a scheduler other than `none`, `--optimizer.lr` is the configured peak, not the actual rate at every step.
+With `none`, omit these warmup and decay arguments.
 
-### 选择归一化统计与查看日志
+### Choose normalization statistics and view logs
 
-| 微调选项 | 作用 |
+| Fine-tuning option | Effect |
 | --- | --- |
-| 省略或 `--normalization=dataset` | 默认按本次训练数据重算统计，验证回合不参与 |
-| `--normalization=checkpoint` | 沿用旧模型的统计，不根据新增数据重算 |
-| `--stats=/路径/statistics.json` | 使用预先生成、与本次数据及训练配置匹配的统计文件，不能与上一项同时使用 |
+| Omitted or `--normalization=dataset` | Recompute statistics from this run's training data by default, excluding validation episodes |
+| `--normalization=checkpoint` | Reuse existing model statistics without recomputing from new data |
+| `--stats=/path/to/statistics.json` | Use pregenerated statistics matching this data and training configuration; mutually exclusive with the previous option |
 
-后台微调的日志和 PID 位于 `~/Alohamini_workspace/logs/training/`。查看上例日志：
+Background fine-tuning logs and PID files are in `~/Alohamini_workspace/logs/training/`. View the example log:
 
 ```bash
 tail -f ~/Alohamini_workspace/logs/training/act_finetune_01.log
 ```
 
-退出 `tail -f` 不会停止训练。恢复原运行时日志名带有续训标识，使用启动时打印的实际日志路径。
+Leaving `tail -f` does not stop training. Resumed runs add a resume identifier to log names; use the actual path printed at startup.
 
-## 6. 离线评估
+## 6. Offline evaluation
 
 ```bash
 python -m alohamini.learning.evaluate \
@@ -482,21 +484,21 @@ python -m alohamini.learning.evaluate \
   --output ~/Alohamini_workspace/runs/act_01/offline-review.json
 ```
 
-使用 checkpoint 的相机、字段、图像尺寸及归一化统计，输出各动作维度的原单位 MAE 和数据检查报告。
-数据须保持相同标定、动作含义和 FPS；验证回合不得与训练示教重复。离线误差不等于真机任务成功率。
+Evaluation uses checkpoint cameras, fields, image sizes, and normalization statistics, reporting per-action-dimension MAE in original units and a data-validation report.
+Data must retain matching calibration, action semantics, and FPS; validation episodes must not duplicate training demonstrations. Offline error is not hardware task success rate.
 
-## 7. 真机评估
+## 7. Hardware evaluation
 
-PC 加载模型，树莓派运行 Host。停止其他运动控制程序，确认标定、相机和机器人姿态，并清空运动区域。
+The PC loads the model and the Raspberry Pi runs the Host. Stop other motion controllers, verify calibration, cameras, and robot pose, and clear the motion area.
 
-树莓派：
+Raspberry Pi:
 
 ```bash
 conda activate alohamini_host
 alohamini host --robot_model alohamini2pro --cameras forward wrist_right
 ```
 
-PC（下列命令会驱动机器人）：
+PC (these commands move the robot):
 
 ```bash
 conda activate alohamini
@@ -506,32 +508,32 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
   --policy.n_action_steps 10 --policy.temporal_ensemble_coeff none
 ```
 
-`--fps` 与训练数据一致。每个动作块执行前 `n_action_steps` 步，再重新预测。
-ACT／AM-ACT 每步预测并融合时，使用 `--policy.n_action_steps 1 --policy.temporal_ensemble_coeff 0.01`；
-`none` 关闭融合，`0` 为等权融合。更换执行参数无需重新训练。
+Match `--fps` to training data. Each action chunk executes its first `n_action_steps` before predicting again.
+For ACT/AM-ACT prediction and temporal ensembling at every step, use `--policy.n_action_steps 1 --policy.temporal_ensemble_coeff 0.01`;
+`none` disables ensembling; `0` uses equal weights. Execution settings can change without retraining.
 
-SmolVLA／π0.5／FastWAM／Spirit 评估须增加 `--task "拿起物体"`。Diffusion／FastWAM／Spirit 不使用 ACT 时间融合。
-`--dataset eval_01 --task "拿起物体"` 保存评估回合。Ctrl+C 结束。持续反馈中断或关节保护时暂停，恢复后清空旧策略缓存并继续；Host 重启、标定变化或其他客户端接管时结束评估。
-推理耗时限制实际执行频率。
+SmolVLA/π0.5/FastWAM/Spirit evaluation also requires `--task "pick up the object"`. Diffusion/FastWAM/Spirit does not use ACT temporal ensembling.
+`--dataset eval_01 --task "pick up the object"` saves evaluation episodes. Ctrl+C ends evaluation. Prolonged feedback interruption or joint protection pauses execution; recovery clears old policy caches before resuming. Host restart, calibration changes, or control takeover by another client ends evaluation.
+Inference latency limits the actual execution rate.
 
-跨机器使用时复制完整 checkpoint 目录，勿只复制符号链接。
-自定义策略接口见 [客户端接口](host-protocol.md#python-策略评估)，示例为 `examples/learning/custom_policy.py`。
-Notebook 入口见 [Notebook](notebook.md)，LeRobot 权重使用见 [LeRobot](lerobot.md)。
+When moving between machines, copy the complete checkpoint directory, not only symbolic links.
+See [Client API](host-protocol.md#python-policy-evaluation) for custom policies and `examples/learning/custom_policy.py` for an example.
+See [Notebooks](notebook.md) for notebooks and [LeRobot](lerobot.md) for LeRobot weights.
 
-### DAgger 纠错与再训练
+### DAgger corrections and retraining
 
-在评估命令中追加 `--dagger --dataset task_corrections`，连接已标定主臂；键盘需要 X11。
-Space 暂停并保持从臂，Tab 开始手动对齐。主臂关节稳定到位后逐个使能保持；
-全部到位后扶稳主臂，再按 Tab 释放保持并开始纠错。再次 Tab 结束并保存，Space 交还策略，Esc 退出。
-交还时清除旧动作与插值缓存，从当前观测重新推理。
+Add `--dagger --dataset task_corrections` to evaluation and connect calibrated leader arms; keyboard input requires X11.
+Space pauses and holds the follower arms; Tab begins manual alignment. Enable hold on each leader joint after it settles into position;
+once all joints align, support the leader arms and press Tab again to release hold and start corrections. Tab ends and saves the segment; Space returns control to the policy; Esc exits.
+Handing control back clears old actions and interpolation caches, restarting inference from the current observation.
 
-只记录人工纠错，每段独立保存为一个 episode；暂停和对齐不进入训练序列。
-夹爪也须对齐开度；纠错期间底盘停止、升降保持。主臂默认保持输出上限为 `0.2`，
-可用 `--dagger.hold_output_limit` 调整；关节对齐容差默认 3 度（`--dagger.alignment_tolerance_deg`）。
-保持依赖实际供电与人工支撑；故障、反馈中断或对齐超时会释放主臂保持。
-慢速同步推理在当前计算返回后响应暂停，建议使用下述异步模式；不支持固定手臂维度。
+Only human corrections are recorded, each as a separate episode; pauses and alignment are excluded from training sequences.
+Align gripper openings too. During correction, the base stops and lift holds. The default leader hold output limit is `0.2`,
+adjustable with `--dagger.hold_output_limit`; joint alignment tolerance defaults to 3 degrees (`--dagger.alignment_tolerance_deg`).
+Holding depends on actual power and manual support. Faults, feedback interruption, or alignment timeout release leader hold.
+Slow synchronous inference responds to pause after the current computation returns; the asynchronous mode below is recommended. Fixed arm dimensions are unsupported.
 
-合并示范与纠错，开始新一轮微调：
+Merge demonstrations and corrections, then begin a new fine-tuning run:
 
 ```bash
 alohamini dataset edit --operation.type merge \
@@ -545,43 +547,43 @@ python -m alohamini.learning.train \
   --policy.device cuda --steps 10000 --batch_size 8 --background
 ```
 
-两份数据须有相同字段、相机、标定和 FPS；按合并后的回合编号指定独立验证集。
-新微调不加 `--resume=true`。日志见 `~/Alohamini_workspace/logs/training/act_dagger_01.log`；
-训练完成后将评估命令的 `--policy.path` 换为新 checkpoint，继续采集。
+Both datasets must share fields, cameras, calibration, and FPS. Select an independent validation set using merged episode indices.
+Do not add `--resume=true` for new fine-tuning. Logs are at `~/Alohamini_workspace/logs/training/act_dagger_01.log`;
+after training, point evaluation's `--policy.path` to the new checkpoint and continue collecting.
 
-### 推理模式
+### Inference modes
 
-在本地评估命令中增加：
+Add to the local evaluation command:
 
 ```bash
 --inference.type=rtc
 ```
 
-| `--inference.type` | 行为 |
+| `--inference.type` | Behavior |
 |---|---|
-| `sync`（本地默认） | 执行当前动作块后再预测；TCP 块间制动保持 |
-| `async` | 后台预测；ACT／DP 默认按时间切换，BSP 默认相位对齐 |
-| `rtc` | 后台预测并进行去噪前缀引导；目前支持 π0.5／SmolVLA |
+| `sync` (local default) | Predict after executing the current action chunk; brake and hold between TCP chunks |
+| `async` | Background prediction; ACT/DP defaults to time-based switching, BSP to phase alignment |
+| `rtc` | Background prediction with denoising-prefix guidance; currently supports π0.5/SmolVLA |
 
-`async` 可用 `--inference.continuity=none` 关闭策略默认衔接；
-`--inference.continuity=phase` 仅适用于 BSP。`rtc` 无需另选连续性方法。
-ACT 异步执行时须关闭时间融合：`--policy.temporal_ensemble_coeff none`。
+For `async`, `--inference.continuity=none` disables the policy's default transition method;
+`--inference.continuity=phase` is BSP-only. `rtc` needs no separate continuity selection.
+Disable temporal ensembling for asynchronous ACT: `--policy.temporal_ensemble_coeff none`.
 
-支持语言规划的策略可在本地 `evaluate` 或云端 `inference serve` 中追加
-`--language-replan-interval-s=2 --task='任务指令'`。默认关闭；按观测时间更新子任务，切换时清空旧动作队列，每个回合重置。
+Policies supporting language planning accept the following in local `evaluate` or cloud `inference serve`:
+`--language-replan-interval-s=2 --task='task instruction'`. Disabled by default; subtasks update by observation time, clearing the old action queue on changes and resetting each episode.
 
-异步模式默认根据剩余轨迹时间与预测耗时自动重规划。必要时可调整：
+Asynchronous mode replans automatically using remaining trajectory time and prediction latency. Adjust if needed:
 
-| 参数 | 默认值 | 用途 |
+| Argument | Default | Purpose |
 |---|---|---|
-| `--inference.replan_interval_s` | 自动（TCP 为 `0.25`） | 重规划时间预算，单位秒 |
-| `--inference.prediction_lead_s` | `0.1` | 提前预测预算下限，单位秒 |
-| `--inference.max_prediction_age_s` | `5` | 源观测最大年龄，单位秒 |
-| `--inference.startup_timeout_s` | `15` | 首次及 TCP 同步块间预测等待上限，单位秒 |
+| `--inference.replan_interval_s` | Automatic (`0.25` for TCP) | Replanning time budget in seconds |
+| `--inference.prediction_lead_s` | `0.1` | Minimum advance-prediction budget in seconds |
+| `--inference.max_prediction_age_s` | `5` | Maximum source-observation age in seconds |
+| `--inference.startup_timeout_s` | `15` | Maximum wait for first prediction and between synchronous TCP chunks, in seconds |
 
-TCP 执行及异步执行的 `--fps` 是命令查询频率，可与 checkpoint 数据 FPS 不同。
+For TCP and asynchronous execution, `--fps` is the command-query rate and may differ from checkpoint data FPS.
 
-TCP 动作 checkpoint 加载后自动启用 TCP 跟踪，`sync`／`async` 共用限速和恢复；执行机须安装 `kinematics` 扩展。跟踪滞后时自动放慢，预测过期后制动保持。可选参考限制如下（默认值；速度、加速度分别为 m/s、m/s² 或 rad/s、rad/s²）：
+Loading a TCP-action checkpoint automatically enables TCP tracking. `sync` and `async` share rate limits and recovery; install the `kinematics` extension on the execution machine. Tracking slows automatically when lagging and brakes to hold when predictions expire. Optional reference limits follow (defaults; velocity/acceleration use m/s, m/s² or rad/s, rad/s²):
 
 ```bash
 --inference.tcp_tracking='{
@@ -590,17 +592,17 @@ TCP 动作 checkpoint 加载后自动启用 TCP 跟踪，`sync`／`async` 共用
 }'
 ```
 
-关节位置、速度及加速度限制仍有效。IK 失败时制动保持并重新预测，超过 1 s 或连续 3 次新预测失败时停止；正常同步块间等待使用 `startup_timeout_s`。
-TCP 暂不支持 `rtc`、ACT 时间融合、单个手臂关节固定覆盖及 Host 关节动作缩放。参考跟踪允许路径偏差，不含碰撞避障或 jerk 约束，尚未完成实机验证。
+Joint position, velocity, and acceleration limits still apply. IK failure brakes to hold and requests a new prediction; execution stops after 1 s or three consecutive failed new predictions. Normal synchronous inter-chunk waits use `startup_timeout_s`.
+TCP currently does not support `rtc`, ACT temporal ensembling, individual arm-joint fixed overrides, or Host joint-action scaling. Reference tracking permits path deviation, includes no collision avoidance or jerk constraints, and has not completed hardware validation.
 
-预测过期、有效轨迹耗尽或 Host 状态变化时停止使用旧计划；TCP 异步执行只在上述恢复预算内保持等待。
-评估记录保存执行参数及源观测时间。云端服务默认 `async`，支持 `rtc`，TCP 动作 checkpoint 也可选择 `sync`；
-使用相同 `--inference.*` 参数，Pi 从服务端握手读取配置。
-两端必须使用相同平台版本，旧动作块协议不兼容。
+Old plans are discarded when predictions expire, valid trajectories run out, or Host state changes. Asynchronous TCP waits only within the recovery budget above.
+Evaluation records execution parameters and source-observation times. Cloud serving defaults to `async`, supports `rtc`, and also allows `sync` for TCP-action checkpoints;
+it uses the same `--inference.*` arguments, with the Pi reading configuration from the server handshake.
+Both machines must use the same platform version; the old action-chunk protocol is incompatible.
 
-### 固定维度的训练与推理
+### Fixed dimensions in training and inference
 
-数据没有声明固定维度时，可在评估命令中显式补选，例如：
+If data declares no fixed dimensions, explicitly add them to evaluation, for example:
 
 ```bash
 alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
@@ -610,71 +612,71 @@ alohamini evaluate --host <PI_IP> --robot_model alohamini2pro \
   --fixed-dataset ~/Alohamini_workspace/datasets/task_demo_ready
 ```
 
-支持左右臂、升降、底盘组和具名关节，字段与采集选项相同。已有固定配置继续继承，补选只增加固定维度。
-新增位置目标使用训练 **action 的物理坐标均值**；旧模型相应 state 输入采用 checkpoint 的
-**state 均值**，避免微小测量差异被归一化放大。真实反馈仍用于安全检查和记录。
-固定底盘仍为零速度。把训练中活动的维度改为固定，会改变部署条件，不等同于恢复原任务效果。
-保持遥操摆好的当前位置，`--fixed-current` 不需要 `--fixed-dataset`，也不读取训练数据来决定位置。支持 `arm_left`、`arm_right`、
-`lift_axis`、`base` 和单个具名动作字段。模型加载后，Host 握手的首次新鲜、可控制反馈决定目标，
-随后确认稳定再开始推理；本次运行的后续回合沿用同一目标，不重新采样。底盘仍固定为零速度。
-选中字段会覆盖 checkpoint 中继承的固定目标，其余继承目标保持不变。
+Left/right arm, lift, base groups, and named joints are supported, using the same fields as collection options. Existing fixed configuration is inherited; additional selection only adds fixed dimensions.
+New position targets use the training **action mean in physical coordinates**. Corresponding state inputs for older models use the checkpoint's
+**state mean** to avoid normalization amplifying small measurement differences. Real feedback remains available for safety checks and recording.
+A fixed base still receives zero velocity. Fixing dimensions active during training changes deployment conditions and does not reproduce original task performance.
+To hold positions arranged through teleoperation, `--fixed-current` requires no `--fixed-dataset` and reads no training data to select positions. It supports `arm_left`, `arm_right`,
+`lift_axis`, `base`, and individual named action fields. After model loading, the first fresh, controllable feedback in the Host handshake determines targets;
+execution waits for stability before inference. Later episodes in the same run reuse these targets without resampling. The base remains fixed at zero velocity.
+Selected fields override inherited checkpoint fixed targets; all other inherited targets remain unchanged.
 
-两种来源可以分开指定，例如 `--fixed-dimensions arm_right --fixed-current lift_axis`，
-表示右臂用原有固定目标或训练动作均值、升降保持启动时高度。同一字段不能同时出现在两组选项中。
-仅省略 `--fixed-dataset` 不会改变 `--fixed-dimensions` 原有的均值语义。
+Specify the two sources separately, for example `--fixed-dimensions arm_right --fixed-current lift_axis`,
+to use the right arm's existing fixed target or training action mean while holding the lift at startup height. A field cannot appear in both selections.
+Omitting `--fixed-dataset` alone does not change the original mean-based meaning of `--fixed-dimensions`.
 
-### 云端推理
+### Cloud inference
 
-树莓派发送图像和 state 到云端 GPU，接收轨迹计划并在本地执行；PC 用于登录管理。
-支持声明远程轨迹能力的原生策略，包括 ACT、Diffusion、BSP、PI05、SmolVLA 和 Spirit。
-云端与树莓派使用相同版本的 Alohamini；树莓派先启动本地 Host，完成标定和升降归零，退出其他控制客户端。
-Host 地址保持 `127.0.0.1`。ZeroMQ 推理端口 `5560` 通过 SSH 隧道或 WireGuard 连接，不直接开放到公网。
+The Raspberry Pi sends images/state to a cloud GPU, receives trajectory plans, and executes them locally. The PC handles remote administration.
+Supported native policies declare remote-trajectory capability, including ACT, Diffusion, BSP, PI05, SmolVLA, and Spirit.
+Use the same Alohamini version on the cloud and Raspberry Pi. Start a local Host on the Pi, complete calibration and lift homing, and stop other control clients.
+Keep the Host address at `127.0.0.1`. Connect ZeroMQ inference port `5560` through an SSH tunnel or WireGuard; do not expose it directly to the public internet.
 
-云端安装[策略与通信扩展](install.md#3-可选扩展)，树莓派复用运行 Host 的环境。
+Install [policy and communication extensions](install.md#3-optional-extensions) on the cloud; the Pi reuses its Host environment.
 
-以下服务端命令以 `pi05_01/checkpoint` 为例，替换为实际模型目录和任务文本；
-SSH 命令中的 `PORT`、`USER`、`CLOUD` 分别替换为云端 SSH 端口、用户名和地址。
-更换租用实例时更新 SSH 地址和端口；WireGuard 还需更新云端公钥及树莓派的 `Endpoint`。
+Server examples below use `pi05_01/checkpoint`; substitute your model directory and task text.
+In SSH commands, replace `PORT`, `USER`, and `CLOUD` with the cloud SSH port, username, and address.
+After changing rented instances, update the SSH address/port. For WireGuard, also update the cloud public key and the Pi's `Endpoint`.
 
-#### SSH 隧道
+#### SSH tunnel
 
-云端启动推理服务：
+Start the inference service on the cloud:
 
 ```bash
 alohamini inference serve --bind tcp://127.0.0.1:5560 \
   --policy.path "$HOME/Alohamini_workspace/runs/pi05_01/checkpoint" \
-  --device cuda --task "拿起物体"
+  --device cuda --task "pick up the object"
 ```
 
-等待显示 `Remote policy server listening on tcp://127.0.0.1:5560` 后，树莓派建立隧道并保持终端运行：
+Wait for `Remote policy server listening on tcp://127.0.0.1:5560`, then establish the tunnel on the Pi and leave the terminal running:
 
 ```bash
 ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
   -L 127.0.0.1:5560:127.0.0.1:5560 -p PORT USER@CLOUD
 ```
 
-首次连接核对云端 SSH 主机指纹。SSH 服务须允许本地端口转发，且它所在的网络环境能访问
-云端 `127.0.0.1:5560` 上的推理服务。[OpenSSH 转发说明](https://man.openbsd.org/ssh.1)
+Verify the cloud SSH host fingerprint on first connection. SSH must permit local forwarding, and its network environment must reach
+the inference service at cloud `127.0.0.1:5560`. [OpenSSH forwarding documentation](https://man.openbsd.org/ssh.1)
 
-树莓派另开终端执行：
+Run in another Raspberry Pi terminal:
 
 ```bash
 alohamini inference run --server tcp://127.0.0.1:5560 \
   --host 127.0.0.1 --robot_model alohamini2pro --fps 30
 ```
 
-`ExitOnForwardFailure` 只检查转发监听，SSH 保活不替代动作有效期和控制 watchdog。
-[OpenSSH 配置说明](https://man.openbsd.org/ssh_config.5)
-停止时先按 Ctrl+C 退出树莓派推理客户端，再关闭隧道和云端服务。
-若树莓派本地 `5560` 已占用，同时修改 `-L` 的第一个端口和 `--server` 端口，云端目标端口保持不变。
+`ExitOnForwardFailure` checks only the forwarding listener; SSH keepalive does not replace action expiration or the control watchdog.
+[OpenSSH configuration documentation](https://man.openbsd.org/ssh_config.5)
+To stop, first press Ctrl+C in the Pi inference client, then close the tunnel and cloud service.
+If local Pi port `5560` is occupied, change both the first port in `-L` and the `--server` port, keeping the cloud target port unchanged.
 
 #### WireGuard
 
-两端需能创建 WireGuard 接口，云端需提供可达 UDP 端口。租用容器可能缺少网络管理权限、
-WireGuard 内核支持或用户态实现所需的 `/dev/net/tun`；环境不满足时使用 SSH 隧道。
-按系统安装 [WireGuard 工具](https://www.wireguard.com/install/)。
+Both machines must be able to create WireGuard interfaces, and the cloud needs a reachable UDP port. Rented containers may lack network-administration permissions,
+WireGuard kernel support, or `/dev/net/tun` for a userspace implementation. Use an SSH tunnel if these requirements are unmet.
+Install [WireGuard tools](https://www.wireguard.com/install/) for your system.
 
-两端各生成一次密钥，以下命令拒绝覆盖已有文件：
+Generate keys once on each machine; these commands refuse to overwrite existing files:
 
 ```bash
 (
@@ -687,114 +689,114 @@ WireGuard 内核支持或用户态实现所需的 `/dev/net/tun`；环境不满�
 )
 ```
 
-只交换公钥。私钥和填好私钥的配置存放在各自机器的仓库之外，权限为 `600`。
-[密钥生成说明](https://www.wireguard.com/quickstart/)
-树莓派密钥可在更换云端实例后继续使用，新云端配置填入该树莓派公钥。
+Exchange public keys only. Keep private keys and completed configurations outside the repository on their respective machines, with mode `600`.
+[Key generation documentation](https://www.wireguard.com/quickstart/)
+The Pi key can be reused after changing cloud instances; put its public key in the new cloud configuration.
 
-云端复制[云端模板](../deploy/remote-inference/wireguard-cloud.conf.example)：
+On the cloud, copy the [cloud template](../deploy/remote-inference/wireguard-cloud.conf.example):
 
 ```bash
 cp -n deploy/remote-inference/wireguard-cloud.conf.example "$HOME/.config/alohamini/wireguard/wg-infer.conf"
 chmod 600 "$HOME/.config/alohamini/wireguard/wg-infer.conf"
 ```
 
-树莓派复制[树莓派模板](../deploy/remote-inference/wireguard-pi.conf.example)：
+On the Pi, copy the [Raspberry Pi template](../deploy/remote-inference/wireguard-pi.conf.example):
 
 ```bash
 cp -n deploy/remote-inference/wireguard-pi.conf.example "$HOME/.config/alohamini/wireguard/wg-infer.conf"
 chmod 600 "$HOME/.config/alohamini/wireguard/wg-infer.conf"
 ```
 
-在各自本机编辑 `wg-infer.conf`，填入本机私钥及对端公钥；树莓派将 `CLOUD_PUBLIC_HOST` 改为云端公网地址。
-模板使用云端 `10.88.0.1/32`、树莓派 `10.88.0.2/32`，仅路由对端 `/32`，不设置 NAT、转发或互联网默认路由。
-若地址冲突，先更换两端地址并同步修改配置及命令。
-[路由说明](https://git.zx2c4.com/wireguard-tools/about/src/man/wg-quick.8)
+Edit `wg-infer.conf` locally on each machine, entering its private key and its peer's public key. On the Pi, replace `CLOUD_PUBLIC_HOST` with the cloud public address.
+Templates use cloud `10.88.0.1/32` and Pi `10.88.0.2/32`, routing only the peer `/32`, without NAT, forwarding, or an internet default route.
+For address conflicts, choose new addresses on both ends and update configuration and commands consistently.
+[Routing documentation](https://git.zx2c4.com/wireguard-tools/about/src/man/wg-quick.8)
 
-云端安全组和防火墙允许 UDP `51820`，推理 TCP `5560` 仅允许 WireGuard 接口上的树莓派访问。
-若平台映射了其他外部 UDP 端口，修改树莓派 `Endpoint`，云端 `ListenPort` 保持内部端口。
-`PersistentKeepalive = 25` 用于维持 NAT 映射。
-[WireGuard 配置说明](https://git.zx2c4.com/wireguard-tools/about/src/man/wg.8)
+Allow UDP `51820` through the cloud security group and firewall. Allow inference TCP `5560` only from the Pi on the WireGuard interface.
+If the provider maps another external UDP port, change the Pi's `Endpoint`; keep the cloud `ListenPort` at its internal port.
+`PersistentKeepalive = 25` maintains NAT mappings.
+[WireGuard configuration documentation](https://git.zx2c4.com/wireguard-tools/about/src/man/wg.8)
 
-两端分别启动：
+Start on both machines:
 
 ```bash
 sudo wg-quick up "$HOME/.config/alohamini/wireguard/wg-infer.conf"
 sudo wg show wg-infer
 ```
 
-树莓派可用 `ping -c 3 10.88.0.1` 检查目标连通性。ICMP 被禁用时仍需检查握手、路由和服务监听。
-云端启动：
+On the Pi, test target connectivity with `ping -c 3 10.88.0.1`. If ICMP is blocked, still check the handshake, routes, and service listener.
+Start on the cloud:
 
 ```bash
 alohamini inference serve --bind tcp://10.88.0.1:5560 \
   --policy.path "$HOME/Alohamini_workspace/runs/pi05_01/checkpoint" \
-  --device cuda --task "拿起物体"
+  --device cuda --task "pick up the object"
 ```
 
-等待服务就绪后，树莓派执行：
+After the service is ready, run on the Pi:
 
 ```bash
 alohamini inference run --server tcp://10.88.0.1:5560 \
   --host 127.0.0.1 --robot_model alohamini2pro --fps 30
 ```
 
-停止推理客户端和服务后，两端按需关闭隧道：
+After stopping the inference client and server, close the tunnel on both machines as needed:
 
 ```bash
 sudo wg-quick down "$HOME/.config/alohamini/wireguard/wg-infer.conf"
 ```
 
-#### 连接与执行参数
+#### Connection and execution settings
 
-SSH 隧道连接失败时，检查云端推理进程及 SSH 转发目标是否处于同一网络环境。
-WireGuard 没有握手时检查公钥、UDP 入口和 `Endpoint`；已有握手时检查 `/32` 路由、绑定地址和接口防火墙。
-云端查看推理监听地址：
+If the SSH tunnel fails, check that the cloud inference process and SSH forwarding target share the same network environment.
+Without a WireGuard handshake, check public keys, UDP ingress, and `Endpoint`. With a handshake, check `/32` routes, binding address, and interface firewall.
+Inspect the inference listener on the cloud:
 
 ```bash
 ss -ltn '( sport = :5560 )'
 ```
 
-`--fps` 设置 Pi 的命令查询频率，checkpoint 数据频率用于解释轨迹时间。
-密集动作可用服务端 `--chunk-size 32` 缩短可执行窗口，不能超过模型窗口；BSP 不接受该参数。
-TCP 同样支持 `--chunk-size`，执行端须安装 `kinematics` 扩展。
-这些参数不保证云端持续按执行频率返回结果。迟到结果跳过过期前缀，动作耗尽或 Host 会话、控制参考变化时停止，需显式重新运行。
+`--fps` sets the Pi's command-query rate; checkpoint data frequency determines trajectory timing.
+For dense actions, server `--chunk-size 32` shortens the executable window without exceeding the model window; BSP does not accept it.
+TCP also supports `--chunk-size`; the execution machine needs the `kinematics` extension.
+These settings do not guarantee cloud results at the execution rate. Late results skip expired prefixes. Exhausted actions or changes to the Host session/control reference stop execution and require an explicit restart.
 
-| 树莓派 `run` 参数 | 默认值 | 用途 |
+| Raspberry Pi `run` argument | Default | Purpose |
 | --- | --- | --- |
-| `--episode_time` | 90 秒 | 每回合运行时长 |
-| `--rpc-timeout-s` | 10 秒 | 云端请求超时 |
-| `--max-prediction-age-s` | 1 秒 | 预测源观测的最大年龄 |
-| `--ack-timeout-s` | 0.5 秒 | Host 确认超时 |
+| `--episode_time` | 90 s | Episode duration |
+| `--rpc-timeout-s` | 10 s | Cloud request timeout |
+| `--max-prediction-age-s` | 1 s | Maximum prediction-source observation age |
+| `--ack-timeout-s` | 0.5 s | Host acknowledgement timeout |
 
-固定当前关节时，在云端 `serve` 和树莓派 `run` 两端传入相同的 `--fixed-current FIELD ...`。
-支持 `base`、`lift_axis`、`arm_left`、`arm_right` 或具名 Host 字段；树莓派从新鲜反馈捕获固定目标。
-PI05／SmolVLA 可在服务端开启[RTC 引导](#推理模式)，仅提供推理期引导，不包含 RTC 训练。
-Spirit 使用普通动作块推理。实际链路时延与真机成功率须分别评估，不通过放宽控制 watchdog 补偿网络延迟。
+To fix current joints, pass identical `--fixed-current FIELD ...` selections to cloud `serve` and Pi `run`.
+Supported fields are `base`, `lift_axis`, `arm_left`, `arm_right`, and named Host fields. The Pi captures fixed targets from fresh feedback.
+PI05/SmolVLA can enable server-side [RTC guidance](#inference-modes); this provides inference-time guidance only, without RTC training.
+Spirit uses ordinary action-chunk inference. Evaluate actual network latency and hardware success separately; do not compensate for latency by relaxing the control watchdog.
 
-## 8. 对比评估与训练示范
+## 8. Compare evaluation runs and training demonstrations
 
-`alohamini dataset analyze` 在本地查看已保存的评估记录，并与评估所用 checkpoint 的训练或验证示范对比。无需连接机器人。
+`alohamini dataset analyze` locally inspects saved evaluation records and compares them with training or validation demonstrations from the checkpoint used for evaluation. No robot connection is needed.
 
-| 功能 | 支持算法 |
+| Feature | Supported algorithms |
 | --- | --- |
-| Rerun 画面与动作曲线、示范对比、报告导出 | 平台各算法，包括 ACT、AM-ACT、Diffusion Policy、FastWAM、SmolVLA、π0.5 |
-| 加 `--probe-samples`，重新预测示范动作并计算误差 | 平台策略，按各自声明的推理输入和动作窗口检查 |
+| Rerun images/action curves, demonstration comparisons, report export | Platform algorithms, including ACT, AM-ACT, Diffusion Policy, FastWAM, SmolVLA, and π0.5 |
+| Add `--probe-samples` to predict demonstration actions again and compute errors | Platform policies, checked against their declared inference inputs and action windows |
 
-以下以评估数据集 `eval_01` 为例。请替换数据集路径、episode 编号和时间点；episode 编号从 0 开始。
+The examples use evaluation dataset `eval_01`. Replace paths, episode indices, and time points; episode indices start at 0.
 
-### 打开评估记录
+### Open evaluation records
 
 ```bash
 alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
   --episode 0
 ```
 
-默认打开 Rerun，显示评估第 0 条回合的相机画面和动作曲线。
-有模型关联记录时，自动找到对应 checkpoint 和原训练数据集，并显示保存的训练划分中的首条示范。
-普通查看不运行模型，也不需要 GPU。命令、Host 反馈、电流和耗时默认隐藏。
+By default, Rerun opens camera images and action curves for evaluation episode 0.
+With model-association metadata, it automatically locates the checkpoint and original training dataset, showing the first demonstration from the saved training split.
+Ordinary inspection runs no model and requires no GPU. Commands, Host feedback, current, and timings are hidden by default.
 
-如果评估记录没有保存模型关联，使用 `--checkpoint` 指定**当时评估使用的模型**。
-模型或原训练数据搬到其他目录时，可分别补充这两个路径：
+If evaluation records lack model-association metadata, use `--checkpoint` to specify **the model used for that evaluation**.
+If the model or original training dataset has moved, provide the corresponding paths:
 
 ```bash
 alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
@@ -803,11 +805,11 @@ alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
   --training-root ~/Alohamini_workspace/datasets/pickup_train
 ```
 
-`--training-root` 应指向原训练数据集的本地副本；它不用于替换成另一份训练数据。
+`--training-root` must point to a local copy of the original training dataset; it does not substitute another dataset.
 
-### 选择示范并对齐抓取阶段
+### Select demonstrations and align grasp phases
 
-假设评估回合 0 在第 20 秒开始抓取，训练示范 12 在第 8 秒开始抓取，可以对比各自接下来的 15 秒：
+If evaluation episode 0 begins grasping at 20 s and training demonstration 12 at 8 s, compare the next 15 s from each:
 
 ```bash
 alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
@@ -816,21 +818,21 @@ alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
   --align 20 8
 ```
 
-| 选项 | 本例含义 |
+| Option | Meaning in this example |
 | --- | --- |
-| `--episode 0` | 查看评估数据集中的回合 0 |
-| `--reference-split train` | 从 checkpoint 保存的训练划分中选择示范；`val` 选择验证划分 |
-| `--reference-episode 12` | 对照原训练数据集中的回合 12，须属于所选划分 |
-| `--time-range 20 35` | 截取评估第 20～35 秒 |
-| `--reference-time-range 8 23` | 截取示范第 8～23 秒 |
-| `--align 20 8` | 将评估第 20 秒与示范第 8 秒对齐到公共时间轴的 0 秒 |
+| `--episode 0` | Inspect episode 0 in the evaluation dataset |
+| `--reference-split train` | Select from the checkpoint's saved training split; `val` selects validation |
+| `--reference-episode 12` | Compare original training-dataset episode 12, which must belong to the selected split |
+| `--time-range 20 35` | Select evaluation seconds 20–35 |
+| `--reference-time-range 8 23` | Select demonstration seconds 8–23 |
+| `--align 20 8` | Align evaluation second 20 and demonstration second 8 at second 0 on a shared timeline |
 
-省略 `--reference-episode` 时选择该划分的首条示范。省略 `--align` 时只按回合起点并排，抓取阶段可能并不同步。
-对齐不会改变播放速度。画面和曲线用于观察动作顺序、选臂及轨迹差异；两次运行不计算逐帧动作误差。
+Omitting `--reference-episode` selects the split's first demonstration. Without `--align`, episodes are placed side by side from their starts; grasp phases may not align.
+Alignment does not change playback speed. Images and curves reveal action order, arm selection, and trajectory differences; no framewise action error is computed between the runs.
 
-### 导出图表与画面报告
+### Export charts and image reports
 
-沿用上面的片段，导出评估第 21、25、30 秒的画面及对齐后的示范画面：
+Using the same segments, export evaluation images at seconds 21, 25, and 30 with aligned demonstration images:
 
 ```bash
 alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
@@ -840,14 +842,14 @@ alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
   --output ~/Alohamini_workspace/reports/eval_01_compare
 ```
 
-`--viewer none` 不打开 Rerun；用浏览器打开输出目录中的 `report.html` 查看图表和画面。
-`--output` 须为数据集目录之外的新目录。省略时，结果保存在
-`~/Alohamini_workspace/reports/<数据集>/episode_<编号>/<时间编号>/`。
-每次分析都会保存 `summary.json` 和 `events.csv`，HTML 报告的图表另存于 `plots/`。
+`--viewer none` skips Rerun; open `report.html` in the output directory with a browser to view charts and images.
+`--output` must be a new directory outside the dataset. When omitted, results go to
+`~/Alohamini_workspace/reports/<DATASET>/episode_<INDEX>/<TIMESTAMP>/`.
+Each analysis saves `summary.json` and `events.csv`; HTML report charts are also saved under `plots/`.
 
-### 检查模型在示范上的预测
+### Check model predictions on demonstrations
 
-以下命令加载评估对应的 checkpoint，从其验证划分的首条示范中均匀抽取最多 8 个观测，重新预测动作：
+This command loads the checkpoint associated with evaluation, uniformly samples up to 8 observations from its first validation demonstration, and predicts actions again:
 
 ```bash
 alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
@@ -856,31 +858,31 @@ alohamini dataset analyze ~/Alohamini_workspace/datasets/eval_01 \
   --viewer none --export-html
 ```
 
-需要 checkpoint 保存过非空的验证划分；可加 `--reference-episode` 选择其中某条示范。
-如果训练时全部示范都用于训练、没有留出验证回合，改用 `--reference-split train` 检查训练拟合。
-`--training-root` 只指定数据位置，不会创建验证划分。
-`--probe-device cuda` 使用 GPU，改为 `cpu` 可在 CPU 上运行。
+The checkpoint must contain a nonempty validation split. Add `--reference-episode` to choose a particular demonstration.
+If all demonstrations were used for training with no validation holdout, use `--reference-split train` to inspect training fit.
+`--training-root` only selects the data location; it creates no validation split.
+`--probe-device cuda` uses GPU; change to `cpu` for CPU execution.
 
-报告逐个动作维度显示首步预测和有效动作段的平均绝对误差（MAE），单位与示范动作一致。
-首步对应当前动作（行偏移 0）；动作段只统计当前及未来标签，排除历史前缀和回合末尾 padding。
-预测使用示范中的观测，对照的是**同一条示范的后续真实动作**，不是评估回合的动作。
-输入包含策略所需的任务文本和历史观测；CDP 还使用示范中严格过去的动作，不读取当前或未来动作标签。
-每个查询独立重置模型，不复现在线动作队列、时序融合或 RTC。FastWAM 只读取当前图像，不输入训练用未来图像。
-保持基线重复当前同名、同单位的观测值；无法确认坐标单位时该维基线不可用。模型与基线分别报告有效步数。
-`demonstration_probe.json` 保存指标、模型指纹和采样配置；`demonstration_predictions.npz`
-保存预测、标签、字段单位、行偏移和有效掩码。这项误差用于检查模型预测，不代表真机成功率。
-改用 `--reference-split train` 可检查训练拟合；检查泛化优先使用验证示范。
-不加 `--probe-samples` 就不会加载模型。
+The report shows first-step and valid-action-segment mean absolute error (MAE) per action dimension, in demonstration action units.
+The first step is the current action (row offset 0); segment statistics include only current/future labels, excluding historical prefixes and episode-end padding.
+Predictions use demonstration observations and compare with **subsequent ground-truth actions from that same demonstration**, not actions from the evaluation episode.
+Inputs include required task text and observation history. CDP also uses strictly past demonstration actions, never current/future action labels.
+The model resets independently for each query, without reproducing online action queues, temporal ensembling, or RTC. FastWAM reads only current images, excluding future images used in training.
+The hold baseline repeats current observations with matching names and units; dimensions with unverifiable coordinate units have no baseline. Valid step counts are reported separately for model and baseline.
+`demonstration_probe.json` stores metrics, model fingerprints, and sampling configuration; `demonstration_predictions.npz`
+stores predictions, labels, field units, row offsets, and validity masks. This error checks predictions and does not represent hardware success.
+Use `--reference-split train` to inspect training fit; prefer validation demonstrations for generalization checks.
+Without `--probe-samples`, the model is not loaded.
 
-### 其他查看选项
+### Other viewing options
 
-| 选项 | 作用 |
+| Option | Effect |
 | --- | --- |
-| `--cameras wrist_left wrist_right` | 只显示或导出指定相机，并按给定顺序排列 |
-| `--save-rrd` | 保存 `recording.rrd`，随后用终端打印的 `rerun` 命令打开 |
-| `--control-diagnostics` | 额外显示命令、Host 反馈、电流和耗时 |
-| `--probe-seed 0` | 设置重新预测时的随机种子，便于重复比较 |
-| `--segment 0` / `--reference-segment 0` | 数据有时钟重置时，选择评估／示范的时间段 |
+| `--cameras wrist_left wrist_right` | Show/export only these cameras in the given order |
+| `--save-rrd` | Save `recording.rrd`, then open it with the printed `rerun` command |
+| `--control-diagnostics` | Also show commands, Host feedback, current, and timings |
+| `--probe-seed 0` | Set the prediction random seed for repeatable comparisons |
+| `--segment 0` / `--reference-segment 0` | Select evaluation/demonstration time segments after clock resets |
 
-已有 PC 环境包含查看依赖；独立分析环境安装 [`analysis` 扩展](install.md#3-可选扩展)。
-重新预测还需要对应策略的运行依赖。
+The PC environment includes viewing dependencies. For standalone analysis, install the [`analysis` extension](install.md#3-optional-extensions).
+Prediction probes also require the relevant policy's runtime dependencies.

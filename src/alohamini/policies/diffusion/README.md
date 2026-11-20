@@ -1,8 +1,8 @@
 # Diffusion Policy
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例保留 episode 1 用于验证；单回合数据省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Examples reserve episode 1 for validation; for single-episode data, omit `--dataset.eval_episodes` and `--eval_steps`.
 
 ```bash
 python -m alohamini.learning.train \
@@ -14,11 +14,11 @@ python -m alohamini.learning.train \
   --batch_size=2 --save_freq=10000 --log_freq=100 --background
 ```
 
-默认 2 帧观测、64 步预测、执行 32 步，DDPM 100 步；视觉配置参考
-[LeRobot PR #3202](https://github.com/huggingface/lerobot/pull/3202)。
-RGB 使用 ImageNet `MEAN_STD`，state/action 使用训练集 `MIN_MAX`。
-`--policy.n_action_steps` 调整执行步数，`--policy.num_inference_steps` 调整去噪步数。
+Defaults: 2 observation frames, 64 predicted steps, 32 executed steps, and 100 DDPM steps. The vision configuration follows
+[LeRobot PR #3202](https://github.com/huggingface/lerobot/pull/3202).
+RGB uses ImageNet `MEAN_STD`; state/action uses training-set `MIN_MAX`.
+`--policy.n_action_steps` changes executed steps; `--policy.num_inference_steps` changes denoising steps.
 
-尾部排除数默认按 `horizon - n_action_steps - n_obs_steps + 1` 计算，为 **31**；
-`--policy.drop_n_last_frames` 可显式覆盖，设为 `0` 保留所有采样起点。
-EMA 默认关闭，使用 `--ema.enable=true` 开启。
+Trailing-start exclusion defaults to `horizon - n_action_steps - n_obs_steps + 1`, or **31**;
+override with `--policy.drop_n_last_frames`, setting `0` to retain all sampling starts.
+EMA is disabled by default; enable with `--ema.enable=true`.

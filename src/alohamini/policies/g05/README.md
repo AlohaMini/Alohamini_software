@@ -1,8 +1,8 @@
 # G0.5
 
-[策略索引](../../../../docs/training.md#策略选择)
+[Policy index](../../../../docs/training.md#policy-selection)
 
-准备本地转换版基座，需包含 `config.json`、`model.safetensors` 和 `hf_processor/`：
+Prepare a locally converted base containing `config.json`, `model.safetensors`, and `hf_processor/`:
 
 ```bash
 BASE="$HOME/Alohamini_workspace/pretrained/g05"
@@ -15,28 +15,28 @@ alohamini train --policy.type=g05 --policy.path="$BASE" \
   --output_dir="$HOME/Alohamini_workspace/runs/g05_01" --background
 ```
 
-默认使用 flow 微调：FP32 参数、BF16 混合精度，batch 8、100k 步、学习率 `1e-5`、
-预热 1000 步，每个样本抽取 8 个 flow 时刻。默认允许动作损失更新 VLM。
-`--policy.gradient_checkpointing=true` 开启重计算；多卡使用[公共配置](../../../../docs/training.md#多卡与梯度累积)。
-结构、观测历史和动作块长度读取本地基座，保留完整 Transformer 层数。
+Default flow fine-tuning uses FP32 parameters, BF16 mixed precision, batch 8, 100k steps, learning rate `1e-5`,
+1000 warmup steps, and 8 sampled flow times per sample. Action loss updates the VLM by default.
+`--policy.gradient_checkpointing=true` enables activation checkpointing; use [common settings](../../../../docs/training.md#multiple-gpus-and-gradient-accumulation) for distributed training.
+Architecture, observation history, and action-chunk length load from the local base, retaining all Transformer layers.
 
-所有选定相机均参与模型；默认各路 256×256、RGB `[-1,1]`，顺序随 checkpoint 保存。
-多帧基座需要对应的时序视觉结构，同步与远程推理使用公共观测历史缓存。
-state/action 使用记录或显式变换后的字段和单位，映射到基座槽位；默认重置机器人输入、输出头。
-保留原头须设置 `--policy.reinitialize_robot_heads=false` 并提供完整的 `state_slots`、`action_slots` 名称映射。
+All selected cameras participate. Defaults are 256×256 per view and RGB `[-1,1]`; order is saved with checkpoints.
+Multiframe bases require matching temporal vision architecture. Synchronous and remote inference use common observation-history caching.
+State/action uses recorded or explicitly transformed fields/units mapped to base slots; robot input/output heads reset by default.
+To preserve heads, set `--policy.reinitialize_robot_heads=false` and provide complete named `state_slots` and `action_slots` mappings.
 
-默认使用训练集 q01/q99，动作逐未来步统计，保留边界外动作；推理先还原整块动作再逐步执行。
-`--policy.data_protocol=g05` 开启原实现的归一化后 `[-5,5]` 裁剪。
-平台机器人适配不自动转换相对位姿、夹爪方向或关节坐标系；不是原 benchmark 数据协议的直接复现。
+Defaults use training-set q01/q99, computing actions separately per future step and retaining out-of-range actions. Inference restores the complete action chunk before stepwise execution.
+`--policy.data_protocol=g05` enables the original implementation's post-normalization `[-5,5]` clipping.
+Platform robot adaptation does not automatically convert relative poses, gripper direction, or joint frames; it is not a direct reproduction of the original benchmark data protocol.
 
-ActionCodec 训练另需 `action_tokenizer.safetensors`、兼容的原始坐标槽位及归一化：
-`train_discrete_actions=true text_loss_weight=1 reinitialize_robot_heads=false`。
-`action_head=flow|actioncodec` 选择推理头，默认 flow；flow 推理不运行动作 token 生成。
-CoT 文本训练需 `predict_cot=true text_loss_weight=1 use_language_recipe=true` 和真实语言标注，
-recipe 中用 `Subtask: ${subtask}` 声明目标；`runtime_system=system2` 开启推理时 CoT。
-LoRA、RTC、编译和新增策略的分布式执行尚未验证。
+ActionCodec training also needs `action_tokenizer.safetensors`, compatible original-coordinate slots, and normalization:
+`train_discrete_actions=true text_loss_weight=1 reinitialize_robot_heads=false`.
+`action_head=flow|actioncodec` selects the inference head, defaulting to flow. Flow inference does not generate action tokens.
+CoT text training requires `predict_cot=true text_loss_weight=1 use_language_recipe=true` and actual language annotations,
+with `Subtask: ${subtask}` declaring the target in the recipe; `runtime_system=system2` enables inference CoT.
+LoRA, RTC, compilation, and distributed execution of this new policy remain unvalidated.
 
-线性注意力缺少 `flash-linear-attention` / `causal-conv1d` 时会使用较慢的 PyTorch 路径；
-当前验证覆盖该路径，加速内核尚未验证。
-代码和权重受 [G0.5 Community License](LICENSE-G0.5) 的非商业及其他使用条件约束。
-本项目不代表 Galaxea 背书。
+Without `flash-linear-attention` / `causal-conv1d`, linear attention uses a slower PyTorch path;
+current validation covers that path, while accelerated kernels remain unvalidated.
+Code and weights are subject to noncommercial and other conditions in the [G0.5 Community License](LICENSE-G0.5).
+This project does not imply endorsement by Galaxea.

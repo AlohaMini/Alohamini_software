@@ -1,9 +1,9 @@
 # EO-1
 
-[策略索引](../../../../docs/training.md#策略选择)
+[Policy index](../../../../docs/training.md#policy-selection)
 
-基座目录需包含转换后的 `config.json`、`model.safetensors`（或分片与索引），
-以及 `assets/` 下的 Qwen2.5-VL processor/tokenizer。配置须保存 `vlm_config`。
+The base directory needs converted `config.json`, `model.safetensors` (or shards and index),
+and Qwen2.5-VL processor/tokenizer under `assets/`. Configuration must retain `vlm_config`.
 
 ```bash
 alohamini train --policy.type=eo1 \
@@ -14,7 +14,7 @@ alohamini train --policy.type=eo1 \
   --output_dir="$HOME/Alohamini_workspace/runs/eo1_01" --background
 ```
 
-默认使用机器人数值监督的 flow 微调，不包含 CoT 或文本答案训练。
-相机按所选顺序送入 Qwen2.5-VL 图像处理器；像素预算和 backbone 层数随配置保存。
-state/action 使用训练集均值标准差，补齐至 32 维；默认预测 16 步动作。
-可训练参数默认 FP32 存储、BF16 混合精度计算。暂不支持 RTC。
+Defaults use flow fine-tuning with robot numeric supervision, excluding CoT/text-answer training.
+Selected cameras feed the Qwen2.5-VL image processor in order; pixel budget and backbone layer count are saved in configuration.
+State/action uses training-set mean/std and pads to 32 dimensions; 16 action steps are predicted by default.
+Trainable parameters default to FP32 storage with BF16 mixed-precision computation. RTC is currently unsupported.

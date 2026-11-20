@@ -1,27 +1,29 @@
 # ROS2
 
-树莓派按使用手册启动 Host。PC 的 ROS2、MoveIt、Gazebo 和 ROS 节点使用 `alohamini_ros` Conda 环境；Pink IK 和 Joy-Con 读取器由启动入口调用现有的 `alohamini` 环境。
+**English** | [简体中文](zh-CN/ros2.md)
 
-| PC 系统 | ROS2 | Gazebo |
+Start the Raspberry Pi Host according to the user guide. PC ROS2, MoveIt, Gazebo, and ROS nodes use the `alohamini_ros` Conda environment; launch entry points invoke Pink IK and the Joy-Con reader from the existing `alohamini` environment.
+
+| PC system | ROS2 | Gazebo |
 |---|---|---|
 | Ubuntu 22.04 | Humble | Fortress |
 | Ubuntu 24.04 | Jazzy | Harmonic |
 
-源码、模型和配置共用；构建及安装目录按 ROS 发行版隔离，不能复用另一发行版的编译产物。
+Source, models, and configuration are shared; build and install directories are separated by ROS distribution. Do not reuse compiled artifacts from another distribution.
 
-## 加载环境
+## Load the environment
 
-完成 [ROS2 环境安装](install.md#5-ros2-环境)，在每个 ROS 终端加载：
+Complete [ROS2 environment installation](install.md#5-ros2-environment), then load it in each ROS terminal:
 
 ```bash
 source ~/Alohamini/ros2/env.bash
 ```
 
-脚本激活 `alohamini_ros` 并加载当前发行版的工作区，默认使用 Cyclone DDS。可通过 `RMW_IMPLEMENTATION` 和 `CYCLONEDDS_URI` 使用自定义通信配置。不要同时加载系统 `/opt/ros` 或 Python venv。Python 与 ROS 依赖的检查命令见[安装](install.md#5-ros2-环境)。
+The script activates `alohamini_ros`, loads the current distribution's workspace, and uses Cyclone DDS by default. Use `RMW_IMPLEMENTATION` and `CYCLONEDDS_URI` for custom communication settings. Do not also source system `/opt/ros` or a Python venv. See [Installation](install.md#5-ros2-environment) for Python and ROS dependency checks.
 
-## 构建
+## Build
 
-以下路径对应默认克隆目录，已有其他目录时使用实际路径：
+These paths assume the default clone directory; substitute your actual location if different:
 
 ```bash
 cd ~/Alohamini
@@ -29,7 +31,7 @@ bash ros2/build.bash
 source ros2/env.bash
 ```
 
-安装依赖、构建和节点启动是独立的检查。在已构建并加载环境的终端中运行仓库测试：
+Dependency installation, building, and node startup are separate checks. Run repository tests in a terminal with the workspace built and loaded:
 
 ```bash
 cd ~/Alohamini/ros2
@@ -41,141 +43,141 @@ if [[ "$ROS_DISTRO" == humble ]]; then test_paths+=(vendor/humble); fi
 "$ALOHAMINI_ROS_PYTHON" -m colcon test-result --test-result-base "build/$ROS_DISTRO" --verbose
 ```
 
-Bridge、轨迹及 MoveIt 集成测试使用本机模拟 Host；这些测试不替代真实机器人、相机或 Joy-Con 的验收。
+Bridge, trajectory, and MoveIt integration tests use a local simulated Host; they do not replace validation with real robots, cameras, or Joy-Cons.
 
-## 整机状态与 TF
+## Full-robot state and TF
 
-适用 `alohamini2`、`alohamini2pro`、`alohamini2edu`。先按[主从臂标定](alohamini.md#2-主从臂标定)完成从臂 Home 标定，再启动 Host。ROS 自动读取 Host 的标定，无需复制映射文件；更换同型号机器人时使用新机器的 Host 地址。
-
-```bash
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号>
-```
-
-默认同时订阅 Host 已开启的相机；只查看状态时追加 `enable_cameras:=false`。启动时命令通道关闭，不发送运动命令。
-
-- `/joint_states`、`/tf`、`/tf_static`：模型关节与坐标树，关节位置使用 rad 或 m。
-- `/alohamini_lerobot_bridge/measured_joint_states`：双臂位置与升降编码器推算位置。没有高度传感器，不提供关节力矩。
-- `/alohamini_lerobot_bridge/derived_wheel_states`：速度积分的车轮角度，不代表定位或实测里程计。
-- `/alohamini/base_velocity`：底盘速度，m/s 和 rad/s；`/diagnostics`：连接与状态有效性。
-
-失联或反馈无效时停止刷新状态。默认使用 PC 接收时间；`state_timestamp_mode:=host_wall` 使用 Host 时间，须先同步两端时钟。
-
-单独启动 Bridge 并指定参数文件：
+Supported models: `alohamini2`, `alohamini2pro`, `alohamini2edu`. Complete follower Home calibration using [Leader and follower calibration](alohamini.md#2-leader-and-follower-calibration) before starting the Host. ROS reads Host calibration automatically, with no mapping-file copying required. When changing robots of the same model, use the new robot's Host address.
 
 ```bash
-ros2 launch alohamini_bridge bridge.launch.py host:=<PI_IP> params_file:=/绝对路径/bridge.yaml
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<MODEL>
 ```
 
-参数模板见 `ros2/src/alohamini_bridge/config/bridge.yaml`，可配置请求窗口、超时、轨迹容差和底盘坐标变换；启动参数覆盖参数文件中的同名项。`alohamini_bridge runtime.launch.py` 同时启动模型、Bridge 和相机，不启动 MoveIt 或 Joy-Con。
+Cameras enabled on the Host are subscribed by default; add `enable_cameras:=false` for state-only inspection. The command channel starts disabled and sends no motion commands.
 
-## 命令启停与底盘控制
+- `/joint_states`, `/tf`, `/tf_static`: model joints and frame tree; joint positions use rad or m.
+- `/alohamini_lerobot_bridge/measured_joint_states`: dual-arm positions and lift position derived from its encoder. No height sensor or joint torque is provided.
+- `/alohamini_lerobot_bridge/derived_wheel_states`: wheel angles integrated from velocity; these are not localization or measured odometry.
+- `/alohamini/base_velocity`: base velocity in m/s and rad/s; `/diagnostics`: connection and state validity.
 
-确认机器人周围安全、Host 就绪且未被遥操或其他客户端占用后启用：
+State updates stop when disconnected or feedback is invalid. PC receive time is used by default; `state_timestamp_mode:=host_wall` uses Host time and requires synchronized clocks.
+
+Start the Bridge alone with a parameter file:
+
+```bash
+ros2 launch alohamini_bridge bridge.launch.py host:=<PI_IP> params_file:=/absolute/path/bridge.yaml
+```
+
+See `ros2/src/alohamini_bridge/config/bridge.yaml` for request-window, timeout, trajectory-tolerance, and base-frame-transform settings. Launch arguments override matching parameter-file entries. `alohamini_bridge runtime.launch.py` starts the model, Bridge, and cameras, without MoveIt or Joy-Con.
+
+## Enable/disable commands and control the base
+
+Ensure the robot's surroundings are safe, the Host is ready, and no teleoperation or other client owns control, then enable:
 
 ```bash
 ros2 service call /alohamini_lerobot_bridge/command_enable std_srvs/srv/SetBool '{data: true}'
 ```
 
-然后向 `/cmd_vel` 发布 `geometry_msgs/msg/Twist`：`linear.x/y` 为底盘坐标系的 m/s，`angular.z` 为 rad/s。默认上限分别为 0.25、0.25、1.0。启用前的输入不执行；收到新输入才开始发送。按回调接收时间计，0.5 秒没有新输入即停止底盘，不中断双臂或升降；新的速度输入可继续控制底盘。
+Then publish `geometry_msgs/msg/Twist` to `/cmd_vel`: `linear.x/y` use m/s in the base frame; `angular.z` uses rad/s. Default limits are 0.25, 0.25, and 1.0, respectively. Inputs received before enabling are not executed; sending begins only on fresh input. Without new input for 0.5 s, measured from callback reception, the base stops without interrupting arms or lift. Fresh velocity input can resume base control.
 
-停止控制：
+Stop control:
 
 ```bash
 ros2 service call /alohamini_lerobot_bridge/command_enable std_srvs/srv/SetBool '{data: false}'
 ```
 
-停止请求状态见 `/diagnostics` 的 `stop_pending`、`command_status`，仍须确认实物停止。保护或失联后检查机器人并重新启用；更换客户端前等待 Host 释放控制权。
+Inspect `stop_pending` and `command_status` in `/diagnostics` for stop-request status, and still confirm the physical robot has stopped. After protection or disconnection, inspect the robot and re-enable. Before switching clients, wait for the Host to release ownership.
 
-## 轨迹与 Jog
+## Trajectories and jog
 
-启用同一命令通道后，双臂、夹爪、升降与底盘共用一个 Host 控制权：
+Once the shared command channel is enabled, both arms, grippers, lift, and base share a single Host control ownership:
 
-| 接口 | 消息类型 | 位置单位 |
+| Interface | Message type | Position units |
 | --- | --- | --- |
-| `/left_arm_controller/follow_joint_trajectory`、`/right_arm_controller/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | rad |
-| `/lift_controller/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | m（URDF `vertical_move`，不是离地高度） |
-| `/left_gripper_controller/gripper_cmd`、`/right_gripper_controller/gripper_cmd` | `control_msgs/action/GripperCommand` | rad |
+| `/left_arm_controller/follow_joint_trajectory`, `/right_arm_controller/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | rad |
+| `/lift_controller/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | m (URDF `vertical_move`, not height above the ground) |
+| `/left_gripper_controller/gripper_cmd`, `/right_gripper_controller/gripper_cmd` | `control_msgs/action/GripperCommand` | rad |
 
-轨迹使用带时间的位置点，点间线性插值；起始时间戳为零。支持位置误差容限与取消，同一控制组的新目标抢占旧目标。速度／加速度字段不作为前馈，非零速度／加速度容限和力前馈会被拒绝。夹爪 `max_effort` 须为零；电流保护由 Host 执行，返回的 `effort=NaN` 表示没有力估计。接触导致未达到目标时返回 `stalled=true`，不声称抓取成功。
+Trajectories use timed position points with linear interpolation and a zero start timestamp. Position-error tolerances and cancellation are supported; a new goal for the same control group preempts the old one. Velocity/acceleration fields are not feedforward inputs; nonzero velocity/acceleration tolerances and effort feedforward are rejected. Gripper `max_effort` must be zero. The Host enforces current protection; returned `effort=NaN` means no force estimate is available. Contact preventing target completion returns `stalled=true`, without claiming a successful grasp.
 
-`/left_arm_controller/joint_jog`、`/right_arm_controller/joint_jog` 接收 `control_msgs/msg/JointJog`，使用对应六关节的标准顺序和 rad 增量；`/lift_controller/joint_jog` 使用 `vertical_move` 的速度字段（m/s），非零值按方向生成默认 50 mm 前视目标，不保证按该数值匀速运动。须填写当前 ROS 时间戳并持续发送。过期输入被丢弃；手臂停止输入后保持最新反馈位置。升降停止由 Host 先归零速度，再锁定后续本机高度反馈；升降须已有有效高度参考。
+`/left_arm_controller/joint_jog` and `/right_arm_controller/joint_jog` accept `control_msgs/msg/JointJog`, using the standard six-joint order and rad increments. `/lift_controller/joint_jog` uses the velocity field of `vertical_move` (m/s); a nonzero value selects direction for a default 50 mm lookahead target, without guaranteeing constant motion at that speed. Supply a current ROS timestamp and send continuously. Expired inputs are discarded; arms hold the latest feedback position when input stops. For lift stopping, the Host first zeros velocity, then locks subsequent local height feedback. The lift needs a valid height reference.
 
 ## MoveIt
 
-连接 Host、发布真实状态并启动 MoveIt：
+Connect to the Host, publish real state, and start MoveIt:
 
 ```bash
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号> \
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<MODEL> \
   enable_moveit:=true use_rviz:=true
 ```
 
-检查模型姿态与实物一致，再通过 `command_enable` 服务启用执行。MoveIt 使用双臂、夹爪和升降的上述 action；启动 MoveIt 本身不会启用运动。
+Check that the model pose matches the hardware, then enable execution through `command_enable`. MoveIt uses the arm, gripper, and lift actions above; starting MoveIt alone does not enable motion.
 
-不连接机器人，仅离线规划：
+For offline planning without a robot connection:
 
 ```bash
 ros2 launch alohamini_moveit_config plan_only.launch.py
 ```
 
-离线状态、TF 和规划服务位于 `/alohamini_plan_only`，不允许硬件执行。无图形界面时追加 `use_rviz:=false`。
+Offline state, TF, and planning services use `/alohamini_plan_only` and cannot execute on hardware. Add `use_rviz:=false` without a graphical interface.
 
-模型与离线验收：
+Model and offline validation:
 
 ```bash
 ros2 run alohamini_validation validate_assets
-# 启动上述 plan_only 后，在另一终端执行：
+# After starting plan_only above, run in another terminal:
 ros2 run alohamini_validation validate_moveit
 ros2 run alohamini_validation validate_tf
 ```
 
-依次检查模型/FK/碰撞几何、MoveIt 和 TF。后两项默认访问 `/alohamini_plan_only`；检查真机 ROS 图时加 `--ros-args -r __ns:=/`。工具不发送动作，实机仍须检查运动区域。
+Check model/FK/collision geometry, MoveIt, and TF in sequence. The last two default to `/alohamini_plan_only`; add `--ros-args -r __ns:=/` to inspect a hardware ROS graph. The tools send no actions; inspect the hardware motion area separately.
 
-两种入口使用相同的参考姿态、折叠、闭爪及已知碰撞样例检查实际有效性；这些样例不替代实机间隙验证。
+Both entry points check validity using the same reference, folded, closed-gripper, and known-collision poses. These cases do not replace physical clearance checks.
 
-## Joy-Con 遥操
+## Joy-Con teleoperation
 
-适用 `alohamini2`、`alohamini2pro`、`alohamini2edu`。先将 Joy-Con 与 PC 配对，安装 [`joycon` 扩展](install.md#3-可选扩展)，再按本文开头构建 ROS 包：
+Supported models: `alohamini2`, `alohamini2pro`, `alohamini2edu`. Pair Joy-Cons with the PC, install the [`joycon` extension](install.md#3-optional-extensions), and build the ROS packages as described at the start of this guide:
 
 ```bash
 source ~/Alohamini/ros2/env.bash
 ros2 launch alohamini_joycon_teleop preview.launch.py
 ```
 
-启动后保持手柄静止约两秒完成 IMU 校准。读取器独立运行于 `alohamini` 环境；ROS 节点使用 `alohamini_ros` 环境。预览无需 Host，同时启动只规划的 MoveIt，状态、TF 和 FK/IK 服务位于 `/alohamini_plan_only`。不要再单独启动 `plan_only.launch.py`。不接手柄时可加 `start_native_reader:=false`，无桌面时加 `use_rviz:=false`。
+Keep controllers still for about two seconds after startup for IMU calibration. The reader runs separately in `alohamini`; ROS nodes use `alohamini_ros`. Preview needs no Host and also starts planning-only MoveIt; state, TF, and FK/IK services use `/alohamini_plan_only`. Do not start `plan_only.launch.py` separately. Add `start_native_reader:=false` without controllers or `use_rviz:=false` without a desktop.
 
-启动入口自动启动 Pink IK 工作进程，默认使用 `conda run -n alohamini python`；可通过 `ik_python:=/绝对路径/python` 指定已安装 `kinematics` 扩展的解释器。工作进程只计算关节目标；Host 命令仍由 ROS Bridge 发送。停止 launch 时一并退出，工作进程异常退出会结束该 launch。
+The launch entry point starts a Pink IK worker using `conda run -n alohamini python` by default. Select an interpreter with the `kinematics` extension installed using `ik_python:=/absolute/path/python`. The worker computes joint targets only; the ROS Bridge still sends Host commands. It exits with launch, and an unexpected worker exit terminates that launch.
 
-真机整机启动（不要重复启动 Bringup 或读取器）：
+Full hardware startup (do not start duplicate bringup or reader processes):
 
 ```bash
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号> \
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<MODEL> \
   enable_joycon:=true use_rviz:=true
 ```
 
-需要 MoveIt 服务时追加 `enable_moveit:=true`，仍只开启一个 Joy-Con RViz。
-读取器默认使用 `alohamini` 环境；可用 `native_python:=/绝对路径/python` 指定解释器，或用 `start_native_reader:=false` 接入已运行的读取器。
+Add `enable_moveit:=true` if MoveIt services are needed; only one Joy-Con RViz instance is started.
+The reader defaults to `alohamini`. Select an interpreter with `native_python:=/absolute/path/python`, or connect an existing reader with `start_native_reader:=false`.
 
-检查姿态后通过前述 `command_enable` 服务手动启用。松开所有按钮、摇杆回中，再开始操作；保护或失联恢复后同样需要重新检查、启用和回中。不要同时运行预览和真机读取器争用同一手柄。
+After checking the pose, manually enable through `command_enable` as above. Release all buttons and center the sticks before operating. After protection or disconnection recovery, repeat inspection, enabling, and centering. Do not run preview and hardware readers competing for the same controllers.
 
-- 左右手柄分别控制对应手臂；按住 `SL/SR` 后用摇杆平移 TCP、转动手柄改变相对姿态。臂基坐标为 `+X` 向机器人左侧、`-Y` 向前、`+Z` 向上。
-- 手臂控制时，肩键上移、摇杆按下下移；`ZL/ZR` 切换夹爪，`Capture/Home` 重新锁定当前姿态。
-- 未按 `SL/SR` 时，摇杆控制底盘；右肩键加横向摇杆转向，左肩键加纵向摇杆控制升降。
+- Each controller operates its corresponding arm. Hold `SL/SR` and use the stick to translate the TCP; rotate the controller to change relative orientation. Arm-base axes are `+X` toward the robot's left, `-Y` forward, and `+Z` up.
+- During arm control, the shoulder button moves up and pressing the stick moves down. `ZL/ZR` toggles the gripper; `Capture/Home` relocks the current pose.
+- Without `SL/SR`, sticks control the base. Right shoulder plus horizontal stick controls turning; left shoulder plus vertical stick controls the lift.
 
-默认差分 IK 不做碰撞规划，须留出安全空间。Host 电流保护与 ROS 关节限位仍有效，不能替代避障。
-差分跟踪使用 Pink／Pinocchio／DAQP，按实际控制周期限制关节位置、速度及加速度。`ik_max_joint_acceleration_rad_s2` 默认 8；`dls_*` 增益、速度、位移及限位余量参数继续有效。RPC 超时默认 0.05 s，失败时停止双臂的新动作并锁定故障。参数文件为 `ros2/src/alohamini_joycon_teleop/config/joycon.yaml`。
+Default differential IK does not plan around collisions; provide safe clearance. Host current protection and ROS joint limits remain active and do not replace obstacle avoidance.
+Differential tracking uses Pink/Pinocchio/DAQP, limiting joint position, velocity, and acceleration according to the actual control period. `ik_max_joint_acceleration_rad_s2` defaults to 8; `dls_*` gain, velocity, displacement, and limit-margin parameters remain effective. The RPC timeout defaults to 0.05 s; failure stops new arm motion and latches a fault. Parameters are in `ros2/src/alohamini_joycon_teleop/config/joycon.yaml`.
 
-记录原始手柄输入并离线回放（相对路径保存到工作区 `logs/`）：
+Record raw controller input and replay offline (relative output paths are placed in the workspace's `logs/`):
 
 ```bash
 ros2 run alohamini_joycon_teleop joycon_input_log record joycon.ndjson
 ros2 run alohamini_joycon_teleop joycon_input_log replay joycon.ndjson
 ```
 
-默认记录真机输入端口 `5567`；记录预览时追加 `--endpoint tcp://127.0.0.1:5568`。回放只供不启动读取器的预览使用，真机模式拒绝带回放标记的输入。读取器诊断日志为工作区 `logs/joycon_sticks.log`。
+Recording defaults to hardware input port `5567`; add `--endpoint tcp://127.0.0.1:5568` for preview input. Replay is only for preview without a running reader; hardware mode rejects replay-tagged inputs. Reader diagnostics are in the workspace's `logs/joycon_sticks.log`.
 
-## Gazebo 仿真
+## Gazebo simulation
 
-`simulation/gazebo/` 根据 ROS 发行版选择 Gazebo：Humble 使用 Fortress，Jazzy 使用 Harmonic。Gazebo 依赖随 `alohamini_ros` 安装。构建并启动，沿用按发行版隔离的目录：
+`simulation/gazebo/` selects Gazebo by ROS distribution: Fortress for Humble, Harmonic for Jazzy. Gazebo dependencies are installed with `alohamini_ros`. Build and launch using distribution-specific directories:
 
 ```bash
 cd ~/Alohamini
@@ -185,53 +187,53 @@ source ros2/env.bash
 ros2 launch alohamini_gazebo simulation.launch.py
 ```
 
-构建后可运行离线检查，自动验证仿真时钟、关节、控制器和升降轨迹，并在结束时关闭仿真：
+After building, run the offline check to validate the simulation clock, joints, controllers, and lift trajectory automatically, shutting down simulation on completion:
 
 ```bash
 python simulation/gazebo/test/stack_check.py
 ```
 
-无图形界面时追加 `headless:=true`。运行自动升降抓放演示时，改用 `lift_pick_place_demo.launch.py`；成功或失败后自动退出。
+Add `headless:=true` without a graphical interface. Use `lift_pick_place_demo.launch.py` for the automatic lift pick-and-place demo; it exits after success or failure.
 
-仿真命令、状态、TF 和时钟位于 `/alohamini_sim`，不启动真机桥。使用平台同一份模型几何；底盘采用平面运动控制、手臂采用理想位置执行、抓取采用固定连接，不用于验证真实轮地摩擦、夹持力或重力补偿。
+Simulation commands, state, TF, and clock use `/alohamini_sim`, without a hardware bridge. Geometry is shared with platform models. The base uses planar motion control, arms use ideal position actuation, and grasping uses fixed attachments. This does not validate real wheel-ground friction, gripping force, or gravity compensation.
 
-## 单独订阅相机
+## Subscribe to cameras independently
 
 ```bash
 ros2 launch alohamini_camera camera.launch.py host:=<PI_IP>
 ```
 
-默认跟随 Host 实际开启的相机；只订阅部分相机时追加 `cameras:="[forward, wrist_right]"`。该节点只接收图像，不发送运动命令，不打开本地相机。Host 重启后自动识别新会话。
+By default, subscriptions follow cameras actually enabled on the Host. Add `cameras:="[forward, wrist_right]"` to select a subset. The node only receives images, sends no motion commands, and opens no local cameras. It recognizes a new session after Host restart.
 
-每路相机的话题：
+Topics for each camera:
 
-- `/alohamini/cameras/<name>/image_raw/compressed`：标准 JPEG。
-- `/alohamini/cameras/<name>/image_raw`：RGB，仅在有订阅者时解码。
-- `/alohamini/cameras/<name>/camera_info`：有可用内参时发布。
+- `/alohamini/cameras/<name>/image_raw/compressed`: standard JPEG.
+- `/alohamini/cameras/<name>/image_raw`: RGB, decoded only when subscribers exist.
+- `/alohamini/cameras/<name>/camera_info`: published when usable intrinsics are available.
 
-默认使用 PC 接收时间。需要 Host 采集时间时追加 `timestamp_mode:=host_wall`，并先同步 PC 与树莓派系统时钟；移动相机标定不能把接收时间当作曝光时间。
+PC receive time is used by default. For Host capture time, add `timestamp_mode:=host_wall` and synchronize PC/Raspberry Pi clocks first. Moving-camera calibration must not treat receive time as exposure time.
 
-## 标定文件
+## Calibration files
 
-默认读取 `~/Alohamini_workspace/calibration/cameras/`，支持 `ALOHAMINI_WORKSPACE`；自定义目录用 `calibration_dir:=/绝对路径`。
+The default directory is `~/Alohamini_workspace/calibration/cameras/`, respecting `ALOHAMINI_WORKSPACE`. Override with `calibration_dir:=/absolute/path`.
 
-- `intrinsics/<相机名>.yaml`：ROS CameraInfo 格式，名称、尺寸和光学坐标系须匹配。带候选或未验收状态的文件不用于发布 CameraInfo；没有内参仍可接收图像。
-- `extrinsics/<文件名>.yaml`：`mount_link` → `optical_frame` 的外参，默认不发布 TF。
+- `intrinsics/<CAMERA_NAME>.yaml`: ROS CameraInfo format; name, dimensions, and optical frame must match. Candidate or unaccepted files are not used to publish CameraInfo. Images remain available without intrinsics.
+- `extrinsics/<FILE_NAME>.yaml`: extrinsics from `mount_link` to `optical_frame`; TF publication is disabled by default.
 
-显式发布已验收外参：
+Explicitly publish accepted extrinsics:
 
 ```bash
 ros2 launch alohamini_camera camera.launch.py host:=<PI_IP> \
   enable_extrinsics:=true extrinsics:=forward.yaml,wrist_right.yaml
 ```
 
-外参须有 `accepted_` 开头的状态、`T_mount_link_from_camera_optical.xyz_m`，以及明确的 `quaternion_xyzw` 或 `quaternion_wxyz`。默认拒绝候选结果，不覆盖标定文件中的坐标系。
+Extrinsics need a status starting with `accepted_`, `T_mount_link_from_camera_optical.xyz_m`, and explicit `quaternion_xyzw` or `quaternion_wxyz`. Candidates are rejected by default; frames in calibration files are not overridden.
 
-## 升降测量与资产导入
+## Lift measurement and asset import
 
-双臂使用 Host 的 Home 标定；升降使用 Host 的高度参考和毫米单位，自动转换为模型的米制关节坐标。重新标定后重启 Host 与 ROS Bringup。
+Arms use Host Home calibration. The lift uses the Host height reference in millimeters, automatically converted to metric model joint coordinates. Restart the Host and ROS bringup after recalibration.
 
-导入已有相机、升降等资产（不覆盖现有文件、不写舵机）：
+Import existing camera, lift, and other assets without overwriting files or writing servos:
 
 ```bash
 ros2 run alohamini_calibration import_calibration \
@@ -239,65 +241,65 @@ ros2 run alohamini_calibration import_calibration \
   --output ~/Alohamini_workspace/calibration/imports/previous_robot
 ```
 
-导入不自动应用；`import_manifest.json` 记录来源和校验结果。先核对当前设备，候选内外参须单独验证。
+Import does not apply results automatically. `import_manifest.json` records sources and checksums. Verify the current devices first; validate candidate intrinsics/extrinsics separately.
 
-检查升降机构的导程与方向时使用以下只读工具，适用 `alohamini2pro`，不使能、回零或写 EEPROM。
+Use this read-only tool to check lift lead and direction on `alohamini2pro`; it does not enable, home, or write EEPROM.
 
-升降：确认 Host 已建立有效高度参考、机构处于真实 Home，再启动：
+Lift: confirm the Host has a valid height reference and the mechanism is physically at Home, then start:
 
 ```bash
 ros2 run alohamini_calibration calibrate_lift_axis --host <PI_IP>
 ```
 
-按提示用已有控制方式移动升降，停止后实测相对 Home 的高度并输入毫米值；至少采集两个不同高度。空行结束，输出拟合报告和候选映射；同名 `.samples.yaml` 保存已完成采样。结果不自动应用，不更改 Host 导程、方向或软限位。
+Follow prompts to move the lift using existing controls. Once stopped, measure its height relative to Home and enter millimeters; collect at least two different heights. Submit an empty line to finish and generate a fit report and candidate mapping. The matching `.samples.yaml` stores completed samples. Results are not automatically applied and do not change Host lead, direction, or soft limits.
 
-## 相机标定
+## Camera calibration
 
-工具只采集图像与 TF、计算候选参数，不控制机器人。采集目录和结果默认保存在 `~/Alohamini_workspace/calibration/cameras/`，支持 `ALOHAMINI_WORKSPACE`；终端显示实际路径。`--output` 可指定新的采集目录或结果文件，不覆盖已有内容。采集中断时已写入清单的样本保留。
+Tools capture images/TF and compute candidate parameters without controlling the robot. Captures and results default to `~/Alohamini_workspace/calibration/cameras/`, respecting `ALOHAMINI_WORKSPACE`; the terminal shows actual paths. `--output` selects a new capture directory or result file without overwriting existing content. Samples already listed in the manifest survive capture interruption.
 
-准备 ChArUco 板：
+Prepare a ChArUco board:
 
 ```bash
 AM_BOARD="$(ros2 pkg prefix --share alohamini_calibration)/config/cameras/boards/charuco_9x7_26mm_18p7_ids300_330.yaml"
 ros2 run alohamini_calibration generate_charuco_board --board "$AM_BOARD"
 ```
 
-打印工作区 `calibration/cameras/boards/` 下的 PDF，选择 100% 实际尺寸，确认方格边长为 26 mm。
+Print the PDF under the workspace's `calibration/cameras/boards/` at 100% actual size, verifying a 26 mm square side.
 
-内参采集与求解（右腕相机）：
+Capture and solve intrinsics (right wrist camera):
 
 ```bash
 ros2 run alohamini_calibration capture_camera_calibration \
   --host <PI_IP> --camera wrist_right --count 40
 ros2 run alohamini_calibration calibrate_camera_intrinsics \
-  --capture-dir <内参采集目录> --board "$AM_BOARD" \
+  --capture-dir <INTRINSICS_CAPTURE_DIR> --board "$AM_BOARD" \
   --camera wrist_right --frame-id right_camera_optical
 ```
 
-Host 须开启对应相机；改变标定板距离、角度和画面位置。默认预览，无桌面时加 `--no-preview`。采集分辨率须与使用时一致。
+Enable the corresponding camera on the Host. Vary the board's distance, angle, and image position. Preview is enabled by default; add `--no-preview` without a desktop. Capture at the resolution used in operation.
 
-手眼标定前，确认双臂 URDF 映射正确，并同步 PC 与树莓派系统时钟。整机状态和相机均使用 Host 时间：
+Before hand-eye calibration, verify arm URDF mappings and synchronize PC/Raspberry Pi clocks. Use Host timestamps for both full-robot state and cameras:
 
 ```bash
-ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<型号> \
+ros2 launch alohamini_bringup hardware.launch.py host:=<PI_IP> robot_model:=<MODEL> \
   state_timestamp_mode:=host_wall camera_timestamp_mode:=host_wall
 ```
 
-右腕相机固定在手臂上，标定板固定在环境中：
+For a right wrist camera fixed to the arm and a board fixed in the environment:
 
 ```bash
 ros2 run alohamini_calibration capture_hand_eye_samples \
   --preset wrist_right
 ros2 run alohamini_calibration calibrate_hand_eye \
-  --capture-dir <手眼采集目录> --intrinsics <右腕内参文件>
+  --capture-dir <HAND_EYE_CAPTURE_DIR> --intrinsics <RIGHT_WRIST_INTRINSICS_FILE>
 ```
 
-`--preset` 支持 `forward`、`backward`、`chest`、`wrist_left`、`wrist_right` 或 YAML 路径。预设提供标定类型、话题、坐标系、板定义和采样阈值，显式参数优先；采集目录保存实际配置与板文件，求解自动读取。旧采集目录没有板信息时，仍须提供 `--board` 和 `--optical-frame`。
+`--preset` accepts `forward`, `backward`, `chest`, `wrist_left`, `wrist_right`, or a YAML path. Presets supply calibration type, topics, frames, board definition, and sampling thresholds; explicit arguments take precedence. Capture directories save the effective configuration and board file for automatic solver loading. Legacy capture directories without board metadata still require `--board` and `--optical-frame`.
 
-通过已有控制方式改变手臂姿态，每个姿态稳定后自动采样；须包含多个旋转轴。固定相机使用 `eye_to_hand`：标定板固定在手臂上，采集期间保持相机、底盘与升降不动，并填写对应话题及坐标系。工具按图像时间查询 TF，不自动确认时钟同步或时间戳配置。
+Change arm poses using existing controls; sampling occurs automatically after each pose settles. Include multiple rotation axes. For fixed cameras, use `eye_to_hand`: fix the board to the arm, keep the camera, base, and lift stationary during capture, and specify the corresponding topics and frames. The tool looks up TF at image timestamps; it does not automatically verify clock synchronization or timestamp configuration.
 
-候选结果保存在 `intrinsics/`、`extrinsics/`。检查重投影误差、独立姿态下的对齐和实际尺寸后，再将状态标记为 `accepted_` 开头并按上一节安装；内参命名为 `<相机名>.yaml`。不要仅凭求解成功就启用外参。
+Candidates are saved under `intrinsics/` and `extrinsics/`. Check reprojection error, alignment at independent poses, and physical dimensions before changing status to an `accepted_` prefix and installing as described above. Name intrinsics `<CAMERA_NAME>.yaml`. Do not enable extrinsics solely because the solver succeeded.
 
-## EDU 导航
+## EDU navigation
 
-雷达、IMU、建图、定位及自主导航的安装和使用见 [EDU 导航](ros2-navigation.md)。
+See [EDU navigation](ros2-navigation.md) for lidar, IMU, mapping, localization, and autonomous navigation setup and usage.

@@ -1,36 +1,41 @@
 # AlohaMini Platform
 
-AlohaMini 双臂移动机器人的控制、数据采集与算法开发平台。树莓派运行 Host 连接硬件，PC 进行遥操、训练、评估及 ROS2 开发。
+**English** | [简体中文](README.zh-CN.md)
 
-## 文档
+Control, data collection, and algorithm development for AlohaMini dual-arm mobile robots. A Raspberry Pi runs the Host to connect the hardware; the PC handles teleoperation, training, evaluation, and ROS 2 development.
 
-- [安装](docs/install.md)：PC、树莓派、策略扩展与仿真环境。
-- [AlohaMini 使用手册](docs/alohamini.md)：型号、接线、标定、Host、遥操与本地数采。
-- [客户端接口参考](docs/host-protocol.md)：供自定义客户端与策略开发使用的 Python API 和通信约定。
-- [ROS2](docs/ros2.md)：整机状态、相机、运动控制与 MoveIt。
-- [仿真](docs/simulation.md)：MuJoCo、ManiSkill、RoboTwin 的查看、场景与回放命令。
-- [LeRobot](docs/lerobot.md)：数据与模型兼容范围。
-- [训练与部署](docs/training.md)：数据选择与转换、策略训练、离线检查、云端推理与真机评估。
-- [Notebook](docs/notebook.md)：可选的数据分析与实验入口。
+## Documentation
 
-## 日常启动
+[Browse all guides](docs/README.md)
 
-完成安装、设备配置与标定后，在树莓派执行：
+- [Installation](docs/install.md): PC, Raspberry Pi, policy extensions, and simulation environments.
+- [AlohaMini user guide](docs/alohamini.md): models, wiring, calibration, Host startup, teleoperation, and local data collection.
+- [Client API reference](docs/host-protocol.md): Python APIs and communication contracts for custom clients and policies.
+- [ROS 2](docs/ros2.md): robot state, cameras, motion control, and MoveIt.
+- [EDU navigation](docs/ros2-navigation.md): Lidar, IMU, mapping, and autonomous navigation.
+- [Simulation](docs/simulation.md): viewing, scenes, and replay with MuJoCo, ManiSkill, and RoboTwin.
+- [LeRobot](docs/lerobot.md): dataset and model compatibility.
+- [Training and deployment](docs/training.md): dataset selection and conversion, policy training, offline checks, remote inference, and hardware evaluation.
+- [Notebooks](docs/notebook.md): optional data analysis and experiment tools.
 
-> 启动会使能舵机并执行升降触底回零。先支撑双臂，清空升降下降路径；停止或断电前也应支撑可能下落的部件。
+## Daily startup
+
+After installation, device configuration, and calibration, run on the Raspberry Pi:
+
+> Startup enables servo torque and homes the lift against its lower stop. Support both arms and clear the lift descent path first. Support any parts that may fall before stopping or disconnecting power.
 
 ```bash
 conda activate alohamini_host
 alohamini host --robot_model alohamini2pro
 ```
 
-默认开启前视和右腕相机；没有相机时，在命令末尾加 `--cameras`，不填名称。
+The forward and right wrist cameras are enabled by default. With no cameras connected, append `--cameras` without any names.
 
-在 PC 执行，将 `<HOST_PI>` 换成树莓派地址，型号与 Host 保持一致：
+On the PC, replace `<HOST_PI>` with the Raspberry Pi address and use the same model as the Host:
 
 ```bash
 conda activate alohamini
 alohamini inspect --host <HOST_PI> --model alohamini2pro
 ```
 
-`inspect` 只读状态，不发送运动命令。工作文件默认放在 `~/Alohamini_workspace/`；执行 `alohamini paths` 查看路径。
+`inspect` only reads state and sends no motion commands. Working files default to `~/Alohamini_workspace/`; run `alohamini paths` to inspect the paths.

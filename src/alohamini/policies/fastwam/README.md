@@ -1,10 +1,10 @@
 # FastWAM
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例保留 episode 1 用于验证；单回合数据省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Examples reserve episode 1 for validation; for single-episode data, omit `--dataset.eval_episodes` and `--eval_steps`.
 
-准备本地基座、Wan VAE／UMT5 和 tokenizer；下载只需执行一次：
+Prepare local base weights, Wan VAE/UMT5, and tokenizers; download once:
 
 ```bash
 hf download lerobot/fastwam_base \
@@ -28,13 +28,13 @@ python -m alohamini.learning.train \
   --save_freq=1000 --log_freq=100 --background
 ```
 
-训练使用任务文本、当前 state、32 步动作和间隔 4 行的 9 帧视频；两路图像按名称排序，
-各缩放至 224×224 后横向拼接。推理只用当前图像，不需要未来视频。
-state/action 使用训练集 min/max，动作仍是记录的关节目标、底盘速度和升降高度，
-不套用 LIBERO 的末端／夹爪变换。缺少未来帧时使用边界 padding 及对应损失掩码。
+Training uses task text, current state, 32 action steps, and 9 video frames spaced 4 rows apart. Two views are sorted by name,
+resized to 224×224 each, and concatenated horizontally. Inference uses only current images without future video.
+State/action uses training-set min/max. Actions remain recorded joint targets, base velocities, and lift heights,
+without LIBERO end-effector/gripper transforms. Missing future frames use boundary padding and corresponding loss masks.
 
-此入口读取转换后的 FastWAM `model.safetensors`，不直接读取作者的 `.pt`；
-采用该发布基座的 flow shift=5。基座中的机器人输入／输出层缺失或维度不匹配时重新初始化。
-checkpoint 不重复打包冻结的 Wan／UMT5 文件，迁移机器时须保留配置中的资产路径；
-微调时也可用上述三个资源参数指定新路径。从平台 checkpoint 微调会恢复全部机器人输入／输出层。
-完整基座需要较大显存，示例 batch 不保证适用于所有 GPU。
+This entry point reads converted FastWAM `model.safetensors`, not the author's `.pt` directly;
+it uses flow shift=5 from that release. Missing or dimension-mismatched robot input/output layers are reinitialized.
+Checkpoints do not duplicate frozen Wan/UMT5 files. Preserve asset paths in configuration when changing machines;
+the three resource arguments above can also override paths for fine-tuning. Fine-tuning from platform checkpoints restores all robot input/output layers.
+The full base requires substantial GPU memory; the example batch size may not fit every GPU.

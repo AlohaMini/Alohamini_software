@@ -1,115 +1,117 @@
-# AlohaMini 使用手册
+# AlohaMini User Guide
 
-先完成[安装](install.md)，将 PC 与树莓派连接到同一局域网。下文将 `<型号>` 替换为实际型号，`<树莓派_IP>` 替换为树莓派地址。
+**English** | [简体中文](zh-CN/alohamini.md)
 
-## 1. 型号与接线
+Complete [installation](install.md) first and connect the PC and Raspberry Pi to the same LAN. Replace `<MODEL>` with the actual model and `<PI_IP>` with the Raspberry Pi address below.
 
-| 型号 | 单侧从臂 | 主臂标定 ID |
+## 1. Models and wiring
+
+| Model | Each follower arm | Leader calibration ID |
 | --- | --- | --- |
-| `alohamini1` | SO-ARM，5 自由度 + 夹爪 | `so101_leader_bi` |
-| `alohamini2` | AM-ARM，6 自由度 + 夹爪 | `am_leader_bi` |
-| `alohamini2pro` | AM-ARM Pro，6 自由度 + 夹爪 | `am_leader_bi` |
-| `alohamini2edu` | AM-ARM Pro，6 自由度 + 夹爪 | `am_leader_bi` |
+| `alohamini1` | SO-ARM, 5 DOF + gripper | `so101_leader_bi` |
+| `alohamini2` | AM-ARM, 6 DOF + gripper | `am_leader_bi` |
+| `alohamini2pro` | AM-ARM Pro, 6 DOF + gripper | `am_leader_bi` |
+| `alohamini2edu` | AM-ARM Pro, 6 DOF + gripper | `am_leader_bi` |
 
-EDU 沿用 Pro 主从臂与电机，增加 C1 雷达和幻尔 USB IMU；双前视版本使用独立的左右前视相机。
+EDU uses the Pro leader arms, follower arms, and motors, adding a C1 lidar and Hiwonder USB IMU. The dual-front-camera version uses separate left and right forward cameras.
 
-AM-ARM 主臂使用 5 V、从臂使用 12 V。
+AM-ARM leaders use 5 V; followers use 12 V.
 
-| 设备 | 连接位置 | 默认设备名 |
+| Device | Connection | Default device name |
 | --- | --- | --- |
-| 左、右主臂 | PC USB | `/dev/am_arm_leader_left`、`/dev/am_arm_leader_right` |
-| 左从臂、底盘、升降 | 树莓派 USB | `/dev/am_arm_follower_left` |
-| 右从臂 | 树莓派 USB | `/dev/am_arm_follower_right` |
-| 前视、右腕相机 | 树莓派 USB | `/dev/am_camera_forward`、`/dev/am_camera_wrist_right` |
-| 双前视相机（EDU） | 树莓派 USB | `/dev/am_camera_forward_left`、`/dev/am_camera_forward_right` |
-| C1 雷达（EDU） | 树莓派 USB | `/dev/lidar_c1` |
-| USB IMU（EDU） | 树莓派 USB | `/dev/imu_usb` |
+| Left and right leaders | PC USB | `/dev/am_arm_leader_left`, `/dev/am_arm_leader_right` |
+| Left follower, base, and lift | Raspberry Pi USB | `/dev/am_arm_follower_left` |
+| Right follower | Raspberry Pi USB | `/dev/am_arm_follower_right` |
+| Forward and right wrist cameras | Raspberry Pi USB | `/dev/am_camera_forward`, `/dev/am_camera_wrist_right` |
+| Dual forward cameras (EDU) | Raspberry Pi USB | `/dev/am_camera_forward_left`, `/dev/am_camera_forward_right` |
+| C1 lidar (EDU) | Raspberry Pi USB | `/dev/lidar_c1` |
+| USB IMU (EDU) | Raspberry Pi USB | `/dev/imu_usb` |
 
-EDU 的传感器设备名配置、驱动启动和建图导航见 [EDU 传感器、建图与导航](ros2-navigation.md)。
+For EDU sensor naming, driver startup, mapping, and navigation, see [EDU sensors, mapping, and navigation](ros2-navigation.md).
 
-## 2. 主从臂标定
+## 2. Leader and follower calibration
 
-AM-ARM（`alohamini2`、`alohamini2pro`、`alohamini2edu`）按以下 Home 流程标定。先停止 Host、遥操和其他串口程序，确认双臂稳固、升降已支撑。
+Use the Home procedure below for AM-ARM models (`alohamini2`, `alohamini2pro`, and `alohamini2edu`). Stop the Host, teleoperation, and other serial programs first. Secure both arms and support the lift.
 
-已有标定时按 Enter 复用，输入 `c` 重做。标定掉电保留，正常开机无需重新置零。
+Press Enter to reuse an existing calibration, or enter `c` to redo it. Calibration survives power cycles; normal startup does not require resetting the zero position.
 
-首次使用设置设备访问组，并重新登录：
+On first use, configure device access groups and log in again:
 
 ```bash
 sudo usermod -aG dialout,video "$USER"
 ```
 
-当前终端仍提示串口权限不足时，执行 `newgrp dialout` 后重新激活 Conda 环境。
+If the current terminal still reports insufficient serial permissions, run `newgrp dialout` and reactivate the Conda environment.
 
-Home 摆位：
+Home pose:
 
-| 舵机 | 摆位 |
+| Servo | Pose |
 | --- | --- |
-| 1：肩部转向、5：腕部偏转、6：腕部旋转 | 对齐中位 |
-| 2：肩部抬升、3：肘部弯曲、4：腕部弯曲 | 蜷缩，轻靠对应的连杆或外壳接触面 |
-| 夹爪 | 合拢 |
+| 1: shoulder pan, 5: wrist yaw, 6: wrist roll | Align to the center position |
+| 2: shoulder lift, 3: elbow flex, 4: wrist flex | Fold inward until the corresponding links or housing surfaces just touch |
+| Gripper | Closed |
 
-轻靠接触面，不挤压打印件。标定期间不使能扭矩、不自动运动；任一侧失败时恢复原标定。
+Make gentle contact without pressing into printed parts. Calibration does not enable torque or move the robot automatically. If either side fails, the previous calibration is restored.
 
-左右腕部俯仰的 Home 参考角为 87°，模型范围为 −95°～91°；Home 不等于上限。模型控制保留 2° 内缩余量，常规指令上限为 89°，启动反馈容差另行判断。
+The Home reference for left and right wrist flex is 87°, with model limits of −95° to 91°. Home is not the upper limit. Model control keeps a 2° inward margin, giving a normal command upper limit of 89°; startup feedback tolerance is checked separately.
 
-从旧版 87° 上限升级时，PC 与树莓派均更新代码，停止 Host 和遥操后，分别运行下方主臂、从臂标定命令，按 Enter 复用。程序保留零位和 Home，只更新两侧腕部上限，写入并复核后保存，旧文件自动备份；无需重新摆 Home。两端完成后再启动遥操。已有数据与模型权重保留原标定语义，不能直接当作新范围使用。
+When upgrading from the old 87° upper limit, update code on both the PC and Raspberry Pi, stop the Host and teleoperation, then run the leader and follower calibration commands below and press Enter to reuse calibration. The procedure retains zero offsets and Home, updates only the upper limits of both wrists, writes and verifies them, and saves the result with automatic backups. No new Home pose is needed. Finish both sides before teleoperation. Existing datasets and model weights retain their original calibration semantics and must not be treated as using the new range.
 
-Host 启动时会在力矩关闭状态检查并自动清除残留圈数，复核通过后继续启动。若报 `Cannot clear retained encoder turn`，断开并重新接通电机电源后重试，保留已保存的标定；仅重插 USB 无效。Home 标定文件使用机型定义的端点容差（当前 2°）：轻微越界时只将保持目标限制在合法边界，不修改反馈或标定范围；超出容差才中止启动。
+At startup, the Host checks and clears retained encoder turns with torque disabled, then proceeds only after verification. If `Cannot clear retained encoder turn` occurs, cycle motor power and retry while retaining the saved calibration; reconnecting USB alone is insufficient. Home calibration uses the endpoint tolerance defined by the model (currently 2°): small excursions clamp only the hold target to the valid boundary, without changing feedback or calibration limits. Startup aborts only outside that tolerance.
 
-### 主臂标定与序列号记录（PC）
+### Leader calibration and serial-number registration (PC)
 
 ```bash
 conda activate alohamini
-alohamini calibrate leader --robot_model <型号> --teleop.id am_leader_bi
+alohamini calibrate leader --robot_model <MODEL> --teleop.id am_leader_bi
 ```
 
-首次按提示记录左右主臂 USB 控制板序列号并绑定设备名：拔下左右主臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码。
+On first use, follow the prompts to register both leader USB controller serial numbers and bind device names: unplug both leader USB connections and press Enter; connect the left arm first, leave it connected after identification, then connect the right arm. Enter the system `sudo` password when prompted.
 
-同一 PC 可保存多套主臂：新主臂执行上述命令登记并标定，已登记主臂接回后自动使用各自的记录。同一时间只连接一套主臂。
+One PC can store multiple leader sets. Register and calibrate a new set with the command above; previously registered leaders automatically use their saved records when reconnected. Connect only one set at a time.
 
-首次或重做时，将双主臂一起摆到 Home，保持静止，按一次 Enter 完成。更换配对机器人无需重标主臂。
+For first-time or repeated calibration, place both leaders at Home together, hold them still, and press Enter once. Changing the paired robot does not require recalibrating the leaders.
 
-### 从臂标定与序列号记录（树莓派）
+### Follower calibration and serial-number registration (Raspberry Pi)
 
 ```bash
 conda activate alohamini_host
-alohamini calibrate robot --robot_model <型号>
+alohamini calibrate robot --robot_model <MODEL>
 ```
 
-首次按提示记录左右从臂 USB 控制板序列号并绑定设备名：拔下左右从臂 USB，按 Enter；先插左臂，识别后保持连接，再插右臂。按提示输入系统 `sudo` 密码，生成 `/dev/am_arm_follower_left`、`/dev/am_arm_follower_right`。
+On first use, follow the prompts to register both follower USB controller serial numbers and bind device names: unplug both follower USB connections and press Enter; connect the left arm first, leave it connected after identification, then connect the right arm. Enter the system `sudo` password when prompted to create `/dev/am_arm_follower_left` and `/dev/am_arm_follower_right`.
 
-绑定保存在树莓派工作区的 `calibration/devices/follower.json`，udev 规则安装到 `/etc/udev/rules.d/`。以后按序列号复用绑定，换 USB 插口或重启不需要重新确认左右；更换控制板时须重新登记。
+Bindings are stored in `calibration/devices/follower.json` in the Raspberry Pi workspace; udev rules are installed in `/etc/udev/rules.d/`. Serial numbers identify the same arms after port changes or restarts, so left/right confirmation is not repeated. Register again when replacing a controller.
 
-USB 绑定完成后才进入 Home 标定。首次或重做时，将双从臂一起摆到 Home，保持静止，按一次 Enter 完成。
+Home calibration starts only after USB binding completes. For first-time or repeated calibration, place both followers at Home together, hold them still, and press Enter once.
 
-串口查询用 `alohamini find-port`；自定义串口须同时传入 `--left_port`、`--right_port`。
+Use `alohamini find-port` to inspect serial ports. Custom ports require both `--left_port` and `--right_port`.
 
-## 3. 相机
+## 3. Cameras
 
-在树莓派查找相机，先停止占用相机的 Host：
+On the Raspberry Pi, stop the Host using the cameras before discovery:
 
 ```bash
 conda activate alohamini_host
 alohamini find-cameras opencv
 ```
 
-加 `--record-time-s 0` 只列出设备，不保存预览。
+Add `--record-time-s 0` to list devices without saving a preview.
 
-### 相机找不到或缺少固定名称
+### Missing cameras or persistent device names
 
-先停止 Host 和其他占用相机的程序，在树莓派执行：
+Stop the Host and other camera applications first, then run on the Raspberry Pi:
 
 ```bash
 ls -l /dev/video* /dev/am_camera*
 alohamini find-cameras opencv --record-time-s 0
 ```
 
-- 没有对应的 `/dev/video*`：检查供电、USB 线和集线器，重新插拔后再查。
-- 有设备但无法打开：用 `fuser -v /dev/videoX` 检查占用，并确认当前用户属于 `video` 组。
-- 能找到相机，但没有 `/dev/am_camera_<名称>`：需要补充设备命名规则；`videoX` 编号可能随开机或插拔变化。
+- No matching `/dev/video*`: check power, USB cables, and hubs; reconnect and inspect again.
+- Device exists but cannot be opened: use `fuser -v /dev/videoX` to check ownership and verify that the user belongs to the `video` group.
+- Camera is found but `/dev/am_camera_<NAME>` is missing: add a device naming rule. `videoX` numbers may change after startup or reconnection.
 
-逐个插拔或查看预览，确认每颗相机的安装位置和能出图的 `/dev/videoX`，再查询身份：
+Reconnect cameras one at a time or inspect previews to identify each mounting position and working `/dev/videoX`, then query its identity:
 
 ```bash
 udevadm info --query=property --name=/dev/videoX
@@ -117,106 +119,106 @@ cat /sys/class/video4linux/videoX/index
 sudoedit /etc/udev/rules.d/70-alohamini-cameras.rules
 ```
 
-每颗相机写一条规则，将 `<VID>`、`<PID>`、`<序列号>` 分别替换为查询到的 `ID_VENDOR_ID`、`ID_MODEL_ID`、`ID_SERIAL_SHORT`，`<索引>` 使用上一步输出，`<名称>` 使用下文 Host 支持的相机名：
+Create one rule per camera. Replace `<VID>`, `<PID>`, and `<SERIAL>` with the reported `ID_VENDOR_ID`, `ID_MODEL_ID`, and `ID_SERIAL_SHORT`; use the reported `<INDEX>` and a Host camera `<NAME>` listed below:
 
 ```text
-SUBSYSTEM=="video4linux", ATTRS{idVendor}=="<VID>", ATTRS{idProduct}=="<PID>", ATTRS{serial}=="<序列号>", ATTR{index}=="<索引>", SYMLINK+="am_camera_<名称>", GROUP="video", MODE="0660"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="<VID>", ATTRS{idProduct}=="<PID>", ATTRS{serial}=="<SERIAL>", ATTR{index}=="<INDEX>", SYMLINK+="am_camera_<NAME>", GROUP="video", MODE="0660"
 ```
 
-没有唯一序列号时，将 `ATTRS{serial}=="<序列号>"` 换成 `ENV{ID_PATH}=="<查询到的 ID_PATH>"`，并保持相机连接在同一 USB 插口。不要只用相同型号的 VID/PID 区分多颗相机，也不要让多条规则给不同相机分配同一个名称。
+Without a unique serial number, replace `ATTRS{serial}=="<SERIAL>"` with `ENV{ID_PATH}=="<REPORTED_ID_PATH>"` and keep the camera on the same USB port. Do not distinguish identical cameras by VID/PID alone, or assign the same name to different cameras through multiple rules.
 
-保存后加载规则，重新插拔对应相机并检查：
+After saving, reload the rules, reconnect the affected camera, and verify:
 
 ```bash
 sudo udevadm control --reload-rules
-# 重新插入相机 USB 后执行：
+# Run after reconnecting the camera USB cable:
 ls -l /dev/am_camera*
 alohamini find-cameras opencv
 ```
 
-核对预览与固定名称对应的实际位置，再启动 Host。固定设备名只解决设备识别，相机内参和外参另行标定。
+Confirm that each preview matches its persistent name and physical mounting position before starting the Host. Persistent names identify devices; camera intrinsics and extrinsics are calibrated separately.
 
-## 4. 启动树莓派 Host
+## 4. Start the Raspberry Pi Host
 
-> 启动会使能舵机并执行升降触底回零。
+> Startup enables servo torque and homes the lift against its lower stop.
 
 ```bash
 conda activate alohamini_host
-alohamini host --robot_model <型号>
+alohamini host --robot_model <MODEL>
 ```
-Host 控制频率为 50 Hz，相机请求配置为 640×480、30 Hz。
+The Host control rate is 50 Hz. Cameras are requested at 640×480 and 30 Hz.
 
-相机名称可选 `forward`、`forward_left`、`forward_right`、`backward`、`chest`、`wrist_left`、`wrist_right`，对应 `/dev/am_camera_<名称>`。EDU 默认开启双前视与右腕（`forward_left forward_right wrist_right`），其他机型默认开启单前视与右腕。用 `--cameras` 覆盖机型默认配置，多个名称用空格分隔。
+Supported camera names are `forward`, `forward_left`, `forward_right`, `backward`, `chest`, `wrist_left`, and `wrist_right`, mapped to `/dev/am_camera_<NAME>`. EDU defaults to dual forward cameras and the right wrist (`forward_left forward_right wrist_right`); other models default to one forward camera and the right wrist. Override model defaults with `--cameras`, separating names with spaces.
 
-ROS2 等客户端可订阅已开启的相机，见 [ROS2](ros2.md)。
+ROS 2 and other clients can subscribe to enabled cameras; see [ROS 2](ros2.md).
 
-| 需要调整的内容 | 启动命令后追加 |
+| Setting | Append to the startup command |
 | --- | --- |
-| 仅开启前视相机 | `--cameras forward` |
-| 仅开启 EDU 双前视相机 | `--cameras forward_left forward_right` |
-| 不开启相机 | `--cameras`，后面不填名称 |
-| 查看实际 Hz 与耗时 | `--profile_timing` |
-| 指定串口 | `--left_port /dev/ttyACM0 --right_port /dev/ttyACM1` |
-| 指定整机标定文件 | `--calibration /绝对路径/AlohaMiniRobot.json` |
+| Forward camera only | `--cameras forward` |
+| EDU dual forward cameras only | `--cameras forward_left forward_right` |
+| No cameras | `--cameras` without names |
+| Actual rates and timings | `--profile_timing` |
+| Serial ports | `--left_port /dev/ttyACM0 --right_port /dev/ttyACM1` |
+| Robot calibration file | `--calibration /absolute/path/AlohaMiniRobot.json` |
 
-## 5. PC 查询状态
+## 5. Inspect state from the PC
 
-保持 Host 运行，在 PC 执行：
+Keep the Host running and run on the PC:
 
 ```bash
 conda activate alohamini
-alohamini inspect --host <树莓派_IP> --model <型号>
+alohamini inspect --host <PI_IP> --model <MODEL>
 ```
 
-只读取一次状态，不发送运动命令。连接失败时先确认 Host、IP、两端型号；字段单位与 Python 调用见[客户端接口](host-protocol.md)。
+Reads one state snapshot without sending motion commands. On connection failure, check the Host, IP address, and model on both sides. See the [client API](host-protocol.md) for fields, units, and Python usage.
 
-## 6. PC 遥操
+## 6. PC teleoperation
 
-保持 Host 运行，在 PC 执行：
+Keep the Host running and run on the PC:
 
 ```bash
 conda activate alohamini
 alohamini teleoperate \
-  --host <树莓派_IP> \
-  --robot_model <型号> \
+  --host <PI_IP> \
+  --robot_model <MODEL> \
   --teleop.id am_leader_bi
 ```
 
-`--teleop.id` 与标定时一致。默认 50 Hz 控制、30 Hz 图像请求，开启 Rerun 预览。
+Use the same `--teleop.id` as calibration. Defaults are 50 Hz control, 30 Hz image requests, and Rerun preview enabled.
 
-| 按键 | 操作 |
+| Key | Action |
 | --- | --- |
-| `w` / `s` | 底盘前进 / 后退 |
-| `z` / `x` | 底盘左移 / 右移 |
-| `a` / `d` | 底盘左转 / 右转 |
-| `t` / `g` | 提高 / 降低速度档位 |
-| `u` / `j` | 升降上升 / 下降 |
-| `q`、Esc、Ctrl+C | 退出遥操 |
+| `w` / `s` | Base forward / backward |
+| `z` / `x` | Base left / right |
+| `a` / `d` | Base rotate left / right |
+| `t` / `g` | Increase / decrease speed level |
+| `u` / `j` | Lift up / down |
+| `q`, Esc, Ctrl+C | Exit teleoperation |
 
-**键盘需要 X11 桌面。**
+**Keyboard control requires an X11 desktop.**
 
-仅用主臂加 `--no_keyboard`；仅用键盘加 `--no_leader`；关闭预览加 `--no_preview`。
+Add `--no_keyboard` for leaders only, `--no_leader` for keyboard only, or `--no_preview` to disable preview.
 
-PC 终端显示遥操状态和跟踪信息，树莓派终端显示 Host 的 Hz、耗时与硬件故障。同一时间只运行一个运动控制客户端；**退出遥操后再启动数采**。
+The PC terminal shows teleoperation state and tracking; the Raspberry Pi terminal reports Host rates, timings, and hardware faults. Run only one motion-control client at a time. **Exit teleoperation before starting data collection.**
 
-## 7. PC 本地数采
+## 7. Local data collection on the PC
 
-先在树莓派选择本次要录制的相机并启动 Host，数采期间保持 Host 运行：
+Select the cameras for this session and start the Host on the Raspberry Pi. Keep it running throughout collection:
 
 ```bash
 conda activate alohamini_host
-alohamini host --robot_model <型号> --cameras <相机列表>
+alohamini host --robot_model <MODEL> --cameras <CAMERA_LIST>
 ```
 
-`<相机列表>` 用空格分隔，例如 `forward_left wrist_right`；可选名称见 [Host 配置](#4-启动树莓派-host)。数采记录 Host 开启的全部相机，相机名分别写入数据字段和视频目录，不合并左右视角。
+Separate `<CAMERA_LIST>` entries with spaces, for example `forward_left wrist_right`. Available names are listed under [Host configuration](#4-start-the-raspberry-pi-host). Collection records all cameras enabled by the Host, using separate data fields and video directories for each name; left and right views are not merged.
 
-然后在 PC 启动数采：
+Then start collection on the PC:
 
 ```bash
 conda activate alohamini
 alohamini record \
-  --host <树莓派_IP> \
-  --robot_model <型号> \
+  --host <PI_IP> \
+  --robot_model <MODEL> \
   --teleop.id am_leader_bi \
   --dataset pickup_01 \
   --task "pick up the object" \
@@ -225,85 +227,85 @@ alohamini record \
   --reset_time 3
 ```
 
-默认 30 Hz 数采，`--display_data` 开启预览。
-`--profile_timing` 开启采集、保存分段和各相机视频处理计时；默认关闭，不采集详细视频计时。
+Collection defaults to 30 Hz. Add `--display_data` to enable preview.
+`--profile_timing` enables capture, save-stage, and per-camera video-processing timings. It is off by default, and detailed video timings are not collected when disabled.
 
-| 参数 | 用途 |
+| Option | Purpose |
 | --- | --- |
-| `--video-encoder nvenc` | 使用 NVIDIA GPU 编码 H.264，需驱动和 PyAV NVENC 支持；默认 `cpu` |
-| `--no-background-video-encoding` | 关闭后台编码，默认开启 |
-| `--video-encoding-workers 2` | 限制同时编码的相机数量，默认按启用相机数 |
-| `--video-encoding-memory-mib 2048` | 编码子进程的内存限额（MiB）；不包含整个录制程序或 GPU 显存 |
+| `--video-encoder nvenc` | NVIDIA GPU H.264 encoding; requires a compatible driver and PyAV NVENC support. Default: `cpu` |
+| `--no-background-video-encoding` | Disable background encoding, which is enabled by default |
+| `--video-encoding-workers 2` | Limit concurrently encoded cameras; defaults to the number of enabled cameras |
+| `--video-encoding-memory-mib 2048` | Encoder child-process RAM limit (MiB); excludes the full recording application and GPU memory |
 
-NVENC 与 CPU 编码的图像像素和文件大小可能不同。
+NVENC and CPU encoding can produce different pixels and file sizes.
 
-| 按键 | 操作 |
+| Key | Action |
 | --- | --- |
-| 右方向键 | 提前结束当前阶段 |
-| `R` / 左方向键 | 删除当前 episode 的临时数据并重录 |
-| Esc、`q`、Ctrl+C | 结束数采 |
+| Right arrow | End the current phase early |
+| `R` / Left arrow | Delete temporary data for the current episode and rerecord |
+| Esc, `q`, Ctrl+C | End collection |
 
-复位阶段可继续遥操，但不记录数据。退出时尝试保存已采到的有效帧。
+Teleoperation remains available during reset, but data is not recorded. On exit, the application attempts to save valid frames already collected.
 
-数据默认保存到 `~/Alohamini_workspace/datasets/pickup_01/`。自定义位置用 `--root`；继续已有数据集用 `--resume`，型号、标定、相机、任务和帧率须一致。
+Data defaults to `~/Alohamini_workspace/datasets/pickup_01/`. Use `--root` for another location or `--resume` to append to an existing dataset; model, calibration, cameras, task, and frame rate must match.
 
-完整内容检查使用 `dataset check --decode-videos`。
+Use `dataset check --decode-videos` for a full content check.
 
-任务需要固定部分关节时，先遥操摆好位置，退出遥操，再在上述采集命令后追加：
+To fix selected joints for a task, first place the robot by teleoperation, exit teleoperation, and append the following to the collection command:
 
 ```bash
 --fixed-dimensions arm_right lift_axis
 ```
 
-支持 `arm_left`、`arm_right`（含夹爪）、`lift_axis`、`base`，也可逐个指定
-`arm_right_elbow_flex.pos`、`lift_axis.height_mm` 等动作字段。固定整个手臂时无需连接该侧主臂。固定臂上的相机继续正常记录。
-底盘固定表示零速度，不是世界坐标位置保持。
-若要保持腕相机的空间位置，还需按任务选择会带动它的升降等父轴；固定手臂不会自动锁住升降。
+Supported groups are `arm_left`, `arm_right` (including the gripper), `lift_axis`, and `base`. Individual action fields such as
+`arm_right_elbow_flex.pos` and `lift_axis.height_mm` are also supported. Fixing an entire arm removes the need to connect its leader. Cameras on a fixed arm are still recorded normally.
+Fixing the base commands zero velocity; it does not hold a world-frame position.
+To keep a wrist camera fixed in space, also select any parent axes that move it, such as the lift, as required by the task. Fixing an arm does not automatically lock the lift.
 
-后续使用相同采集命令加 `--resume`，可省略 `--fixed-dimensions`；程序自动恢复保存的目标。
+When continuing with the same collection command and `--resume`, `--fixed-dimensions` can be omitted; saved targets are restored automatically.
 
-录制结果为 LeRobot v3 数据集。
+Recordings use the LeRobot v3 dataset format.
 
-| 文件 | 内容 |
+| File | Contents |
 | --- | --- |
-| `meta/info.json`、`meta/alohamini.json` | 字段定义、型号、标定和单位 |
-| `data/chunk-*/file-*.parquet` | state、action、索引、舵机反馈及有效掩码 |
-| `videos/observation.images.*/chunk-*/file-*.mp4` | 各相机的视频，可直接播放 |
-| `meta/episodes/`、`meta/tasks.parquet`、`meta/stats.json` | episode 索引、任务和统计 |
-| `meta/safety/episode_*.jsonl` | 保护记录、命令标识与实际采样时间 |
+| `meta/info.json`, `meta/alohamini.json` | Field definitions, model, calibration, and units |
+| `data/chunk-*/file-*.parquet` | State, actions, indices, servo feedback, and validity masks |
+| `videos/observation.images.*/chunk-*/file-*.mp4` | Playable video for each camera |
+| `meta/episodes/`, `meta/tasks.parquet`, `meta/stats.json` | Episode indices, tasks, and statistics |
+| `meta/safety/episode_*.jsonl` | Protection events, command identities, and actual sampling times |
 
-### 检查与恢复
+### Validation and recovery
 
 ```bash
 alohamini dataset check ~/Alohamini_workspace/datasets/pickup_01
 ```
 
-加 `--decode-videos` 检查视频内容，`--output-json <新文件>` 保存报告。`VALID` 表示结构检查通过；训练前仍须检查缺帧和保护事件等警告。
+Add `--decode-videos` to validate video contents, or `--output-json <NEW_FILE>` to save a report. `VALID` confirms structural checks; inspect warnings about missing frames and protection events before training.
 
-保存中断时保留原目录，恢复到新目录：
+If saving is interrupted, retain the original directory and recover into a new directory:
 
 ```bash
 alohamini dataset recover ~/Alohamini_workspace/datasets/pickup_01 \
   --output ~/Alohamini_workspace/datasets/pickup_01_recovered
 ```
 
-仅恢复完整帧，不修改原数据。异常中断留下的 `*.pending/` 用于恢复，不要手动删除。
-按 `R` 或左方向键重录会删除当前回合的临时图片和日志。
+Only complete frames are recovered; original data is unchanged. Keep any `*.pending/` directories left by interruption for recovery; do not delete them manually.
+Pressing `R` or Left arrow to rerecord deletes temporary images and logs for the current episode.
 
-数据集的索引、媒体引用异常时，修复到新目录：
+Repair broken dataset indices or media references into a new directory:
 
 ```bash
 alohamini dataset repair ~/Alohamini_workspace/datasets/task_demo \
   --output ~/Alohamini_workspace/datasets/task_demo_repaired
 ```
 
-保留原数据，重建可确定的索引与媒体引用；缺失图像或配对不明时拒绝修复。修复结果不用于追加录制，也不消除实际漏采与时间偏差。
+The original data is retained while unambiguous indices and media references are rebuilt. Repair refuses missing images or ambiguous pairings. Repaired datasets cannot be used for appended recordings, and repair does not remove actual sampling gaps or timing errors.
 
-评估记录的 Rerun 查看、训练示范对比和报告导出，见 [训练指南：对比评估与训练示范](training.md#8-对比评估与训练示范)。
+For Rerun evaluation viewing, comparison with training demonstrations, and report export, see [Comparing evaluations with training demonstrations](training.md#8-compare-evaluation-runs-and-training-demonstrations).
 
-### 导出与选择字段
+### Export and field selection
 
-需要另存或选择 state 字段时，在 `alohamini` 环境中执行：
+To save a separate copy or select state fields, run in the `alohamini` environment:
 
 ```bash
 alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
@@ -311,61 +313,61 @@ alohamini dataset export ~/Alohamini_workspace/datasets/pickup_01 \
   --format lerobot-v3
 ```
 
-默认 state 为双臂关节位置、底盘速度、升降高度（AM-ARM 共 18 维），action 不变，反馈保留。`--state` 选择输入字段；纯视觉副本及训练见 [训练与部署](training.md#导出与纯视觉副本)。
+Default state includes both arm joint positions, base velocity, and lift height (18 dimensions for AM-ARM); actions and feedback are retained. `--state` selects input fields. For vision-only copies and training, see [Training and deployment](training.md#export-and-vision-only-copies).
 
-当前数据的视频在导出时原样复制，不重新编码。恢复与导出须使用新目录；`.pending-*` 表示导出未完成。
+Videos in current-format datasets are copied unchanged during export, without re-encoding. Recovery and export require new directories; `.pending-*` marks an incomplete export.
 
-### 动作回放
+### Action replay
 
-回放会驱动整机，不是播放视频。先退出遥操或数采，将机器人置于示教起始姿态，并清空运动区域。
+Replay moves the robot; it does not just play video. Exit teleoperation or recording, place the robot at the demonstration starting pose, and clear the motion area.
 
 ```bash
 alohamini replay --dataset pickup_01 \
-  --host <PI_IP> --robot_model <型号> --episode 0
+  --host <PI_IP> --robot_model <MODEL> --episode 0
 ```
 
-自定义目录用 `--root`。按 action 执行，型号、动作单位和标定须与 Host 一致。
+Use `--root` for a custom directory. Replay executes actions; model, action units, and calibration must match the Host.
 
-默认按数据集帧率回放；`--fps` 覆盖帧率，`--speed` 调整倍率。低频或跳帧可能漏掉关键动作，无法保证底盘路径精确复现。
+Replay defaults to the dataset frame rate. Override it with `--fps`, or adjust speed with `--speed`. Low rates or skipped frames may miss critical actions, and exact base-path reproduction is not guaranteed.
 
-## 8. 工作文件
+## 8. Working files
 
-默认工作目录为 `~/Alohamini_workspace/`，与源码分开：
+The default workspace is `~/Alohamini_workspace/`, separate from source code:
 
-| 子目录 | 内容 |
+| Subdirectory | Contents |
 | --- | --- |
-| `calibration/robots/`、`calibration/teleoperators/` | 整机与主臂标定 |
-| `calibration/devices/` | 主从臂 USB 序列号绑定与规则副本 |
-| `datasets/` | 本地数据集 |
-| `runs/` | 训练与评估产物 |
-| `incoming/` | 待检查的回流数据 |
-| `logs/` | 运行日志与调试输出 |
+| `calibration/robots/`, `calibration/teleoperators/` | Robot and leader calibrations |
+| `calibration/devices/` | Leader/follower USB serial bindings and rule copies |
+| `datasets/` | Local datasets |
+| `runs/` | Training and evaluation artifacts |
+| `incoming/` | Returned data awaiting inspection |
+| `logs/` | Runtime logs and debug output |
 
-执行 `alohamini paths` 查看路径。更换根目录时设置 `ALOHAMINI_WORKSPACE` 为绝对路径；已有文件不会自动移动，PC 与树莓派之间也不会自动同步。
+Run `alohamini paths` to inspect paths. Set `ALOHAMINI_WORKSPACE` to an absolute path to change the root. Existing files are not moved automatically, and PC and Raspberry Pi files are not synchronized automatically.
 
-## 9. 调试工具
+## 9. Debugging tools
 
-查看舵机状态：
+Inspect servo state:
 
 ```bash
 python examples/debug/motors.py get_motors_states --port /dev/ttyACM0
 ```
 
-只读查询 ID 1–22，不改变力矩。`POS`、`OFF` 是原始刻度，`CURR(MA)` 是电流 mA；缺失项显示 `-`，`servo_error` 表示舵机故障位。
+Queries IDs 1–22 without changing torque. `POS` and `OFF` are raw ticks; `CURR(MA)` is current in mA. Missing values appear as `-`; `servo_error` indicates servo fault bits.
 
-| 命令 | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `python examples/debug/test_cv.py --camera /dev/am_camera_forward` | 检查单路相机 |
-| `python examples/debug/test_cuda.py` | 检查 PyTorch 与 GPU |
-| `python examples/debug/test_input.py` | 检查键盘输入 |
-| `python examples/debug/test_dataset.py /路径/frames.parquet` | 查看数据列与内容 |
-| `python examples/debug/test_network.py --help` | 指定 HTTP(S) 地址进行连接检查 |
-| `python examples/debug/test_mic.py` | 录音与音量检查，需额外安装 `audio-debug` 和系统 PortAudio |
+| `python examples/debug/test_cv.py --camera /dev/am_camera_forward` | Check one camera |
+| `python examples/debug/test_cuda.py` | Check PyTorch and the GPU |
+| `python examples/debug/test_input.py` | Check keyboard input |
+| `python examples/debug/test_dataset.py /path/to/frames.parquet` | Inspect dataset columns and values |
+| `python examples/debug/test_network.py --help` | Check connectivity to a specified HTTP(S) address |
+| `python examples/debug/test_mic.py` | Record audio and check levels; requires the `audio-debug` extra and system PortAudio |
 
-相机预览、录音等调试输出默认位于工作目录的 `logs/debug/`。麦克风依赖见[可选扩展](install.md#3-可选扩展)。
+Camera previews, audio recordings, and other debug outputs default to `logs/debug/` in the workspace. See [optional extensions](install.md#3-optional-extensions) for microphone dependencies.
 
 <details>
-<summary>舵机维护：卸力、改 ID、改相位</summary>
+<summary>Servo maintenance: torque release, ID changes, and phase changes</summary>
 
 ```bash
 python examples/debug/motors.py reset_motors_torque --port /dev/ttyACM0 --id 1
@@ -373,6 +375,6 @@ python examples/debug/motors.py configure_motor_id --help
 python examples/debug/motors.py configure_motor_phase --help
 ```
 
-卸力命令省略 `--id` 时会处理该串口上 ID 1–22 内所有已识别舵机。改 ID 只连接待配置的一颗舵机，并同步检查设备配置与标定；相位值须对应具体型号。维护报错后先确认设备状态，不要直接启动运动。
+Without `--id`, the torque-release command handles all identified servos with IDs 1–22 on the serial port. Connect only the servo being configured when changing its ID, and check device configuration and calibration afterward. Phase values must match the specific model. After maintenance errors, verify device state before starting motion.
 
 </details>

@@ -1,8 +1,8 @@
 # ACT
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例保留 episode 1 用于验证；单回合数据省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Examples reserve episode 1 for validation; for single-episode data, omit `--dataset.eval_episodes` and `--eval_steps`.
 
 ```bash
 python -m alohamini.learning.train \
@@ -14,15 +14,15 @@ python -m alohamini.learning.train \
   --eval_steps=1000 --background
 ```
 
-`--state=none` 使用纯视觉；`--image_size='[480,640]'` 设置高、宽。
-ResNet18 默认加载 ImageNet 权重，首次下载缓存到工作区 `pretrained/`。
-离线使用须提前准备；`--policy.pretrained_backbone_weights=null` 改为随机初始化。
+`--state=none` uses vision only; `--image_size='[480,640]'` specifies height and width.
+ResNet18 loads ImageNet weights by default, caching the first download under the workspace's `pretrained/`.
+Prepare weights beforehand for offline use; `--policy.pretrained_backbone_weights=null` selects random initialization.
 
-## 相机身份编码
+## Camera identity embeddings
 
-ACT 和 AM-ACT 新训练默认启用相机身份编码，将前视、左腕、右腕等图像与其来源对应。
-训练和推理使用同一组编码，相机名称及顺序随 checkpoint 保存；采集和部署时须保持相机命名一致。
-`--policy.use_camera_embeddings=false` 可关闭，保留原 ACT 的视觉融合方式。
-旧 checkpoint 的推理、续训及默认微调保留原配置；为旧模型补上编码时，在
-`--policy.path=<旧 checkpoint>` 微调命令中增加 `--policy.use_camera_embeddings=true`，
-使用新的输出目录，不使用 `--resume=true`。新增编码从零开始学习，需要微调后才具有区分能力。
+New ACT and AM-ACT training enables camera identity embeddings by default to associate front, left-wrist, right-wrist, and other images with their sources.
+Training and inference share embeddings. Camera names/order are saved with checkpoints; keep naming consistent during collection and deployment.
+`--policy.use_camera_embeddings=false` disables them, retaining original ACT visual fusion.
+Existing checkpoints preserve their settings for inference, resume, and default fine-tuning. To add embeddings to an older model,
+append `--policy.use_camera_embeddings=true` to fine-tuning with `--policy.path=<OLD_CHECKPOINT>`,
+using a new output directory without `--resume=true`. New embeddings learn from scratch and require fine-tuning before distinguishing cameras.

@@ -1,9 +1,9 @@
 # Long-WAM
 
-[策略索引](../../../../docs/training.md#策略选择) · [公共训练参数](../../../../docs/training.md)
+[Policy index](../../../../docs/training.md#policy-selection) · [Common training arguments](../../../../docs/training.md)
 
-本地基座目录需包含转换后的 `config.json`、`model.safetensors`（或分片与索引），
-以及 `tokenizer/` 下的 UMT5 tokenizer。模型配置须包含 video、VAE 和 text encoder 配置。
+The local base directory needs converted `config.json`, `model.safetensors` (or shards and index),
+and a UMT5 tokenizer under `tokenizer/`. Model configuration must include video, VAE, and text-encoder configurations.
 
 ```bash
 alohamini train --policy.type=longwam \
@@ -16,8 +16,8 @@ alohamini train --policy.type=longwam \
   --output_dir="$HOME/Alohamini_workspace/runs/longwam_01" --background
 ```
 
-默认使用 BF16、48 帧历史、32 帧未来监督、每 4 帧采样图像；推理执行 10 步后重规划。
-视频与动作专家的层数统一读取 `video_config.num_layers`，原版为 30 层。
-相机顺序、字段名、单位和训练统计量随 checkpoint 保存。
-动作采用数据中已声明的坐标；不同机器人维度需要显式允许重新初始化输入、输出投影。
-支持同步推理；暂不支持远程动作块、异步执行或 RTC。推理不使用未来图像。
+Defaults: BF16, 48 history frames, 32 future supervision frames, images sampled every 4 frames; inference replans after 10 executed steps.
+Video/action expert layer counts both follow `video_config.num_layers`, originally 30.
+Camera order, field names, units, and training statistics are saved with checkpoints.
+Actions use coordinates declared in the data. Different robot dimensions require explicit permission to reinitialize input/output projections.
+Synchronous inference is supported; remote action chunks, asynchronous execution, and RTC are currently unsupported. Inference uses no future images.

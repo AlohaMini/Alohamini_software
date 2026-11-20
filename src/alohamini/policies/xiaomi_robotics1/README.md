@@ -1,11 +1,11 @@
 # Xiaomi-Robotics-1
 
-[策略索引](../../../../docs/training.md#策略选择) · [安装](../../../../docs/install.md#3-可选扩展) · [数据与输入](../../../../docs/training.md#3-选择数据与输入) · [保存与续训](../../../../docs/training.md#5-保存与续训)
+[Policy index](../../../../docs/training.md#policy-selection) · [Installation](../../../../docs/install.md#3-optional-extensions) · [Data and inputs](../../../../docs/training.md#3-select-data-and-inputs) · [Saving and resuming](../../../../docs/training.md#5-saving-and-resuming)
 
-命令在仓库根目录执行。示例中的 episode 1 用于验证；数据只有一个回合时，省略 `--dataset.eval_episodes` 和 `--eval_steps`。
+Run commands from the repository root. Example episode 1 is reserved for validation; for a single episode, omit `--dataset.eval_episodes` and `--eval_steps`.
 
-使用 `xiaomi_robotics1`，本地基座目录包含官方 `model_states.pt`；`assets_path` 指向
-Qwen3-VL-4B-Instruct 的配置、tokenizer 和图像处理文件。
+Use `xiaomi_robotics1` with official `model_states.pt` in the local base directory; `assets_path` points to
+Qwen3-VL-4B-Instruct configuration, tokenizer, and image-processing files.
 
 ```bash
 alohamini train --policy.type=xiaomi_robotics1 \
@@ -17,9 +17,9 @@ alohamini train --policy.type=xiaomi_robotics1 \
   --output_dir="$HOME/Alohamini_workspace/runs/xiaomi_01" --background
 ```
 
-默认读取 `forward,wrist_left,wrist_right` 三路 RGB 和任务文本；使用 30 步动作块、BF16、同步执行。
-当前多视角提示词固定为前视、左腕、右腕；双前视加右腕不符合这一协议，不能仅覆盖 `--cameras` 后直接使用。需要先适配视角文本与配置，或采集一颗前视及双腕的数据。
-关节观测保留，动作经保存的标定转换为工具坐标系末端增量；旋转采用旋转向量，夹爪采用开度增量。
-统计量按训练集拟合，动作逐时间步计算 mean/std，状态使用 q01/q99。
-缺少运动学描述时，按[关节、TCP 与相对目标](../../../../docs/training.md#关节tcp-与相对目标)补充来源。
-升降轴保持当前高度，底盘使用数据中的速度标签。尚不支持官方异步动作前缀执行。
+Defaults read `forward,wrist_left,wrist_right` RGB and task text, using 30-step action chunks, BF16, and synchronous execution.
+Current multiview prompts assume front, left wrist, and right wrist. Dual-front plus right-wrist input does not match and cannot be used by overriding `--cameras` alone. Adapt view text/configuration first, or collect front plus both wrist views.
+Joint observations are retained. Saved calibration transforms actions to tool-frame end-effector deltas, with rotation vectors and gripper-opening deltas.
+Statistics fit training data; action mean/std is computed per time step, while state uses q01/q99.
+If kinematics are missing, provide them according to [Joint, TCP, and relative targets](../../../../docs/training.md#joint-tcp-and-relative-targets).
+The lift holds current height; the base uses dataset velocity labels. Official asynchronous action-prefix execution is not yet supported.

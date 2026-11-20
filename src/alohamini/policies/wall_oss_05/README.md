@@ -1,8 +1,8 @@
 # WALL-OSS-0.5
 
-[策略索引](../../../../docs/training.md#策略选择)
+[Policy index](../../../../docs/training.md#policy-selection)
 
-准备包含转换权重、Qwen tokenizer、图像处理器和 `config.json` 的本地基座：
+Prepare a local base with converted weights, Qwen tokenizer, image processor, and `config.json`:
 
 ```bash
 hf download lerobot/wall-oss-0.5 --revision=03ab102b8c258a5333a8313f38b17c52e49eb467 \
@@ -16,19 +16,19 @@ alohamini train --policy.type=wall_oss_05 \
   --output_dir="$HOME/Alohamini_workspace/runs/wall_oss_05_01" --background
 ```
 
-默认用数据集具名 state、action，分别归一化后放入 26 维槽位，填充维度与回合尾部不计入损失。
-字段顺序、单位、槽位和相机标签随 checkpoint 保存；相机按选择顺序全部送入模型。
-默认重置动作输入、输出头以适配新机器人，其余权重继承基座。
-复用已有机器人头时，设置 `--policy.reinitialize_robot_heads=false`，并显式提供
-`--policy.state_slots='{"字段名":槽位}'`、`--policy.action_slots='{"字段名":槽位}'`。
-映射只决定位置；数据坐标、单位和控制语义须与保留的机器人头一致。
+Defaults use named dataset state/action, separately normalized into 26-dimensional slots. Padding dimensions and episode tails are excluded from loss.
+Field order, units, slots, and camera labels are saved with checkpoints. All cameras feed the model in selection order.
+Action input/output heads reset for new robots by default; other weights inherit the base.
+To reuse existing robot heads, set `--policy.reinitialize_robot_heads=false` and explicitly provide
+`--policy.state_slots='{"FIELD_NAME":SLOT}'` and `--policy.action_slots='{"FIELD_NAME":SLOT}'`.
+Mappings determine positions only; data coordinates, units, and control semantics must match retained robot heads.
 
-`--policy.normalization_recipe=recorded`（默认）使用 q01/q99 加 `1e-6`，保留范围外动作；
-`wall` 使用原文分位数边界裁剪。图像长边默认 448，保持比例，再由本地 Qwen 处理器生成视觉 token。
-state 离散为 512 档，仅影响输入语言 token。
+`--policy.normalization_recipe=recorded` (default) uses q01/q99 plus `1e-6`, retaining out-of-range actions;
+`wall` uses the original quantile-boundary clipping. Images default to long side 448 with aspect ratio preserved, then become visual tokens through the local Qwen processor.
+State discretizes into 512 bins, affecting input language tokens only.
 
-基座的 VLM 和动作专家各 36 层，视觉编码器 32 层。默认 BF16 参数、FP32 动作头和 RMSNorm，
-开启视觉及联合 Transformer 重计算。FP32 可训练参数与 BF16 计算可使用
-`--trainable_dtype=float32 --mixed_precision=bfloat16`。
-默认动作块 32 步、积分 10 步，支持 `n_action_steps` 和 `num_inference_timesteps`。
-当前提供机器人 flow 微调和动作推理，不包含语言监督、DMuon、专用 FlashMask 内核或 RTC。
+The base VLM and action expert have 36 layers each; the vision encoder has 32. Defaults use BF16 parameters, FP32 action heads and RMSNorm,
+with vision/joint-Transformer activation checkpointing. For FP32 trainable parameters and BF16 computation, use
+`--trainable_dtype=float32 --mixed_precision=bfloat16`.
+Defaults: 32-step action chunks and 10 integration steps; supports `n_action_steps` and `num_inference_timesteps`.
+Currently provides robot flow fine-tuning and action inference, excluding language supervision, DMuon, dedicated FlashMask kernels, and RTC.
