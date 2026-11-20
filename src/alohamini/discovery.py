@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from zeroconf import ServiceInfo
 
 SERVICE_TYPE = "_alohamini._tcp.local."
+NETWORK_POLL_INTERVAL_S = 2.0
 logger = logging.getLogger(__name__)
 
 
@@ -80,26 +81,25 @@ def load_identity(paths: WorkspacePaths, name: str | None = None) -> DeviceIdent
     return identity
 
 
+def _ipv4_addresses(bind_host):
+    import ifaddr
+
+    available = {
+        address.ip
+        for adapter in ifaddr.get_adapters()
+        for address in adapter.ips
+        if isinstance(address.ip, str)
+    }
+    if bind_host == "0.0.0.0":
+        return sorted(address for address in available if not address.startswith("127."))
+    address = socket.gethostbyname(bind_host)
+    return [address] if address in available else []
+
+
 @contextmanager
-def advertise_robot(identity: DeviceIdentity, robot_model: str, *, bind_host="0.0.0.0"):
+def _advertisement(identity, robot_model, addresses):
     from zeroconf import IPVersion, NonUniqueNameException, ServiceInfo, Zeroconf
 
-    get_robot_model(robot_model)
-    if bind_host == "0.0.0.0":
-        import ifaddr
-
-        addresses = sorted(
-            {
-                address.ip
-                for adapter in ifaddr.get_adapters()
-                for address in adapter.ips
-                if isinstance(address.ip, str) and not address.ip.startswith("127.")
-            }
-        )
-    else:
-        addresses = [socket.gethostbyname(bind_host)]
-    if not addresses:
-        raise OSError("没有可广播的 IPv4 网络接口，请检查机器人网络")
     instance = f"AlohaMini-{UUID(identity.device_id).hex}"
     service = ServiceInfo(
         SERVICE_TYPE,
@@ -134,19 +134,55 @@ def advertise_robot(identity: DeviceIdentity, robot_model: str, *, bind_host="0.
             identity.device_id,
             ", ".join(addresses),
         )
+        yield zeroconf, service
+
+
+@contextmanager
+def advertise_robot(identity: DeviceIdentity, robot_model: str, *, bind_host="0.0.0.0"):
+    get_robot_model(robot_model)
+    addresses = _ipv4_addresses(bind_host)
+    if not addresses:
+        raise OSError("没有可广播的 IPv4 网络接口，请检查机器人网络")
+    with _advertisement(identity, robot_model, addresses):
         yield identity
 
 
 def advertise_device(paths: WorkspacePaths, robot_model: str, *, name=None, bind_host="0.0.0.0"):
     """常驻发布设备身份，与电机 Host 的启停无关。"""
+    get_robot_model(robot_model)
     identity = load_identity(paths, name)
     with ExitStack() as cleanup:
         for signum in (signal.SIGTERM, signal.SIGINT):
             # 信号处理器不获取线程锁，由退出异常触发上下文清理。
             previous = signal.signal(signum, lambda _signum, _frame: sys.exit(0))
             cleanup.callback(signal.signal, signum, previous)
-        cleanup.enter_context(advertise_robot(identity, robot_model, bind_host=bind_host))
-        threading.Event().wait()
+        waiting = threading.Event()
+        addresses = _ipv4_addresses(bind_host)
+        while True:
+            if not addresses:
+                logger.info("暂无可用 IPv4 地址，等待网络恢复后自动广播")
+                while not addresses:
+                    waiting.wait(NETWORK_POLL_INTERVAL_S)
+                    addresses = _ipv4_addresses(bind_host)
+            with _advertisement(identity, robot_model, addresses) as (zeroconf, service):
+                while True:
+                    waiting.wait(NETWORK_POLL_INTERVAL_S)
+                    current = _ipv4_addresses(bind_host)
+                    if not current:
+                        addresses = current
+                        break
+                    # SDK 同步实际收发网卡；仅修改地址记录无法完成换网。
+                    zeroconf.update_interfaces(interfaces=current)
+                    if current == addresses:
+                        continue
+                    service.addresses = [socket.inet_aton(address) for address in current]
+                    zeroconf.update_service(service)
+                    addresses = current
+                    logger.info(
+                        "机器人广播地址已更新：%s，编号 %s",
+                        ", ".join(addresses),
+                        identity.device_id,
+                    )
 
 
 def parse_service(info: ServiceInfo) -> DiscoveredRobot:
