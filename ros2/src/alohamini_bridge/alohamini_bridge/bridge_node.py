@@ -432,8 +432,11 @@ class AlohaMiniBridge(Node):
         except (KeyError, TypeError, ValueError) as exc:
             self.get_logger().warning(f"Rejected {resource} JointJog: {exc}")
 
-    def reject(self, reason):
-        self.commands.fail(reason)
+    def reject(self, reason, *, temporary=False):
+        if temporary:
+            self.commands.discard_feedback(reason)
+        else:
+            self.commands.fail(reason)
         if self.mapper is not None:
             self.mapper.reset()
         # Keep the sample watermark so stale replies cannot become fresh after rejection.
@@ -449,7 +452,7 @@ class AlohaMiniBridge(Node):
             self.last_observation_monotonic is None
             or time.monotonic() - self.last_observation_monotonic > self.obs_timeout
         ):
-            self.reject(reason)
+            self.reject(reason, temporary=True)
 
     def on_timer(self):
         result = self.receiver.take()
@@ -458,7 +461,7 @@ class AlohaMiniBridge(Node):
                 self.last_observation_monotonic is not None
                 and time.monotonic() - self.last_observation_monotonic > self.obs_timeout
             ):
-                self.reject("Host observation stale")
+                self.discard_observation("Host observation stale")
             return
         snapshot, generation, error = result
         if isinstance(error, ResponseTimeoutError):

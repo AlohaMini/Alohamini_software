@@ -86,7 +86,7 @@ Stop control:
 ros2 service call /alohamini_lerobot_bridge/command_enable std_srvs/srv/SetBool '{data: false}'
 ```
 
-Inspect `stop_pending` and `command_status` in `/diagnostics` for stop-request status, and still confirm the physical robot has stopped. After protection or disconnection, inspect the robot and re-enable. Before switching clients, wait for the Host to release ownership.
+Inspect `stop_pending` and `command_status` in `/diagnostics` for stop-request status, and still confirm the physical robot has stopped. Feedback timeouts pause command transmission and abort active trajectories; after fresh feedback returns, submit new commands without re-enabling. Host protection, ownership changes, and connection errors still require re-enabling. Before switching clients, wait for the Host to release ownership.
 
 ## Trajectories and jog
 
