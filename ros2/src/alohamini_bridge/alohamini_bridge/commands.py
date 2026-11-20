@@ -197,6 +197,24 @@ class RobotCommands:
             self.disable(reason, fault=True)
             self._snapshot = None
 
+    def pause_feedback(self, reason):
+        """Discard expired motion without revoking the explicit command enable."""
+        with self._lock:
+            if self._snapshot is None:
+                return
+            self._snapshot = None
+            self._command = self._command_at = None
+            self._lift_jog = None
+            self._lift_stop_requested = self._lift_holding = False
+            self._stop_needed |= self._identity is not None or self._inflight
+            self._pending = None
+            self._stopping = False
+            self._cancel_stops.clear()
+            self._sent_goals.clear()
+            self._reason = f"{reason}; waiting for fresh Host feedback"
+            for resource in self.resources.values():
+                resource._finish(TerminalState.STALE, reason, None, time.monotonic(), hold=False)
+
     def discard_feedback(self, reason):
         """Skip one unusable reply without extending the last valid sample's lifetime."""
         with self._lock:
@@ -204,7 +222,7 @@ class RobotCommands:
                 self._sample_received is None
                 or time.monotonic() - self._sample_received > self.observation_timeout
             ):
-                self.fail(reason)
+                self.pause_feedback(reason)
 
     @staticmethod
     def _context_of(status):
@@ -290,8 +308,8 @@ class RobotCommands:
             self._sample_received is not None
             and now - self._sample_received > self.observation_timeout
         ):
-            self.disable("Host feedback gap; enable again", fault=True)
-            self._snapshot = None
+            self.pause_feedback("Host feedback gap")
+        resuming = self._snapshot is None and self._enabled
         self._sample, self._sample_received = sample, snapshot.received_s
         if self.mapper is not None:
             if (
@@ -303,6 +321,8 @@ class RobotCommands:
                 snapshot.payload, snapshot.payload["_robot_metadata"]
             )
         self._snapshot = snapshot
+        if resuming:
+            self._reason = "Enabled; Host feedback restored"
         if self._pending is not None:
             acknowledged = status.get("command") == asdict(self._pending)
             if acknowledged:
