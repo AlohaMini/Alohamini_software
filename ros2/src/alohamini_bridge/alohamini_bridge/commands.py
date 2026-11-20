@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import asdict, replace
 
+from alohamini.client import control_feedback_valid, control_session_compatible
 from alohamini.errors import AlohaMiniError
 from alohamini.protocol import decode_command_context
 from alohamini.schema import BodyVelocity
@@ -62,6 +63,7 @@ class RobotCommands:
         self._snapshot = None
         self._sample = None
         self._sample_received = None
+        self._feedback_paused = False
         self._context = self._metadata = None
         self._enabled = False
         self._input_epoch = 0
@@ -148,10 +150,14 @@ class RobotCommands:
                 return False, "Disable commands before enabling a new command epoch"
             if self._stop_needed or self._inflight or self._pending is not None:
                 return False, "Previous command/stop is still pending"
-            if self._snapshot is None:
+            if (
+                self._snapshot is None
+                or self._feedback_paused
+                or not control_feedback_valid(self._snapshot)
+            ):
                 return False, "Fresh Host feedback is required"
             try:
-                context = self._validate(self._snapshot, time.monotonic())
+                context = self._validate_status(self._snapshot.payload["_safety"])
             except (KeyError, TypeError, ValueError) as exc:
                 return False, str(exc)
             self._context = context
@@ -197,12 +203,12 @@ class RobotCommands:
             self.disable(reason, fault=True)
             self._snapshot = None
 
-    def pause_feedback(self, reason):
+    def pause_feedback(self, reason, *, force=False):
         """Discard expired motion without revoking the explicit command enable."""
         with self._lock:
-            if self._snapshot is None:
+            if self._feedback_paused and not force:
                 return
-            self._snapshot = None
+            self._feedback_paused = True
             self._command = self._command_at = None
             self._lift_jog = None
             self._lift_stop_requested = self._lift_holding = False
@@ -218,10 +224,7 @@ class RobotCommands:
     def discard_feedback(self, reason):
         """Skip one unusable reply without extending the last valid sample's lifetime."""
         with self._lock:
-            if (
-                self._sample_received is None
-                or time.monotonic() - self._sample_received > self.observation_timeout
-            ):
+            if not control_feedback_valid(self._snapshot):
                 self.pause_feedback(reason)
 
     @staticmethod
@@ -238,7 +241,9 @@ class RobotCommands:
         sampled = finite_number(timing["state_sample_finished_monotonic_s"], "state sample")
         host_now = finite_number(status["sampled_at_monotonic_s"], "Host status time")
         if (
-            host_now < sampled
+            not control_feedback_valid(snapshot)
+            or host_now < sampled
+            or self._feedback_paused
             or now - snapshot.request_started_s + host_now - sampled > self.max_age
             or self._sample_received is None
             or now - self._sample_received > self.observation_timeout
@@ -266,6 +271,13 @@ class RobotCommands:
 
     def _prepare(self, client, snapshot, now):
         self._client_id = client.client_id
+        response = snapshot is not None
+        if snapshot is None:
+            if self._feedback_paused:
+                return None
+            snapshot = self._snapshot
+        if snapshot is None:
+            return None
         status = snapshot.payload["_safety"]
         sample = (
             status["host_session_id"],
@@ -273,10 +285,22 @@ class RobotCommands:
                 snapshot.payload["_host_timing"]["state_sample_finished_monotonic_s"], "sample"
             ),
         )
-        new_sample = (
+        new_sample = response and (
             self._sample is None or sample[0] != self._sample[0] or sample[1] > self._sample[1]
         )
         context = self._context_of(status)
+        if response and self._enabled and context != self._context:
+            recoverable = (
+                context[2] == self._context[2]
+                and not status.get("joint_holds")
+                and control_session_compatible(self._snapshot, snapshot, client.client_id)
+            )
+            if recoverable:
+                self.pause_feedback("Host control lease renewed", force=True)
+                self._identity = self._pending = None
+                self._stop_needed = self._stopping = False
+                self._touched.clear()
+                self._context = context
         if self._identity is not None and (
             status.get("control_owner") not in (None, client.client_id)
             or context[:2] != (self._identity.host_session_id, self._identity.control_epoch)
@@ -285,11 +309,23 @@ class RobotCommands:
             self._identity = self._pending = None
             self._stop_needed = self._stopping = False
             self._touched.clear()
-        # Protection and lease changes remain fatal even in a delayed reply.
+        # Fault and protection checks also apply to delayed replies.
+        if (
+            not status.get("fault")
+            and status.get("phase") not in ("fault", "closed")
+            and (
+                status.get("feedback_valid") is not True
+                or status.get("lift_reference_valid") is not True
+                or status.get("phase") not in ("ready", "active")
+            )
+        ):
+            self.pause_feedback("Host feedback is unavailable")
+            return None
         context = self._validate_status(status, stopping=True)
         if self._enabled and (
             context != self._context
             or snapshot.payload["_robot_metadata"] != self._metadata
+            or not control_session_compatible(self._snapshot, snapshot, client.client_id)
             or status["joint_holds"]
         ):
             self.disable(
@@ -301,29 +337,38 @@ class RobotCommands:
         host_now = finite_number(status["sampled_at_monotonic_s"], "Host status time")
         if not 0 <= started <= sample[1] <= host_now:
             raise ValueError("Invalid Host sample interval")
-        if not new_sample or now - snapshot.request_started_s + host_now - sample[1] > self.max_age:
+        fresh = new_sample and control_feedback_valid(snapshot)
+        measured_fresh = (
+            fresh and now - snapshot.request_started_s + host_now - sample[1] <= self.max_age
+        )
+        if not fresh:
             self.discard_feedback("Host feedback is stale")
-            return None
-        if (
-            self._sample_received is not None
-            and now - self._sample_received > self.observation_timeout
-        ):
-            self.pause_feedback("Host feedback gap")
-        resuming = self._snapshot is None and self._enabled
-        self._sample, self._sample_received = sample, snapshot.received_s
-        if self.mapper is not None:
-            if (
-                self._snapshot is None
-                or context[:2] != self._context_of(self._snapshot.payload["_safety"])[:2]
-            ):
-                self.mapper.reset()
-            self.positions = self.mapper.observation_to_joint_positions(
-                snapshot.payload, snapshot.payload["_robot_metadata"]
-            )
-        self._snapshot = snapshot
-        if resuming:
-            self._reason = "Enabled; Host feedback restored"
+            if self._feedback_paused or not control_feedback_valid(self._snapshot):
+                return None
+            snapshot = self._snapshot
+            status = snapshot.payload["_safety"]
+        else:
+            if self._snapshot is not None and not control_feedback_valid(self._snapshot):
+                self.pause_feedback("Host feedback gap")
+            resuming = self._feedback_paused
+            self._sample, self._sample_received = sample, snapshot.received_s
+            if self.mapper is not None:
+                if (
+                    self._snapshot is None
+                    or resuming
+                    or context[:2] != self._context_of(self._snapshot.payload["_safety"])[:2]
+                ):
+                    self.mapper.reset()
+                self.positions = self.mapper.observation_to_joint_positions(
+                    snapshot.payload, snapshot.payload["_robot_metadata"]
+                )
+            self._snapshot = snapshot
+            self._feedback_paused = False
+            if resuming and self._enabled:
+                self._reason = "Enabled; Host feedback restored"
         if self._pending is not None:
+            if not fresh:
+                return None
             acknowledged = status.get("command") == asdict(self._pending)
             if acknowledged:
                 self._pending = None
@@ -354,7 +399,7 @@ class RobotCommands:
             self._command_at = None
             self._reason = "/cmd_vel timed out; base stopped"
         if self._stop_needed and not self._stopping:
-            if self._identity is None:
+            if self._identity is None or not measured_fresh:
                 return None
             # A submitted claim may still be in flight while the Host says idle.
             # A higher-sequence zero in the same session/epoch supersedes it.
@@ -367,10 +412,12 @@ class RobotCommands:
                     continue
                 for joint in self.resources[name].joints:
                     targets.update(self._convert(joint, self.positions[joint], snapshot))
-            return targets, True, {}
+            return targets, True, {}, snapshot
         if not self._enabled or self._pending is not None:
             return None
-        self._validate(snapshot, now)
+        if not control_feedback_valid(snapshot):
+            self.pause_feedback("Host feedback is stale")
+            return None
         targets = {}
         if self._lift_jog is not None:
             velocity, received = self._lift_jog
@@ -417,7 +464,10 @@ class RobotCommands:
                 self.positions,
                 True,
                 now,
-                allow_success=self._sent_goals.get(name) == goal_id and not contact,
+                allow_success=measured_fresh
+                and self._sent_goals.get(name) == goal_id
+                and not contact,
+                measured_fresh=measured_fresh,
             )
             if contact and goal_id is not None and resource.active_goal_id is None:
                 # Let retreat targets reach the Host guard. If it keeps holding
@@ -442,6 +492,7 @@ class RobotCommands:
             targets,
             False,
             {name: resource.active_goal_id for name, resource in self.resources.items()},
+            snapshot,
         )
 
     @staticmethod
@@ -465,7 +516,7 @@ class RobotCommands:
 
     def validate_goal(self, name, names, samples):
         with self._lock:
-            if not self._enabled or self._snapshot is None:
+            if not self._enabled or self._snapshot is None or self._feedback_paused:
                 raise ValueError("ROS commands are disabled or feedback is unavailable")
             context = self._validate(self._snapshot, time.monotonic())
             if context != self._context:
@@ -509,6 +560,8 @@ class RobotCommands:
                 self._stop_lift("Lift trajectory canceled", time.monotonic())
             elif canceled and fresh and name in self._touched:
                 self._cancel_stops.add(name)
+            elif canceled and not fresh:
+                self._stop_needed |= self._identity is not None or self._inflight
             return canceled
 
     def goal_status(self, name, goal_id):
@@ -518,11 +571,12 @@ class RobotCommands:
             desired = dict(resource.desired or self.positions)
             # Terminal results may report the last known pose. Periodic feedback
             # must not stamp an expired cache as a fresh measured position.
-            fresh = (
-                self._snapshot is not None
-                and self._sample_received is not None
-                and time.monotonic() - self._sample_received <= self.observation_timeout
-            )
+            fresh = self._snapshot is not None
+            if fresh:
+                try:
+                    self._validate(self._snapshot, time.monotonic(), stopping=True)
+                except (KeyError, TypeError, ValueError):
+                    fresh = False
             measured = dict(self.positions) if fresh or event is not None else {}
             return event, desired, measured
 
@@ -576,8 +630,13 @@ class RobotCommands:
                 prepared = self._prepare(client, snapshot, time.monotonic())
             if prepared is None:
                 return
-            targets, stopping, sent_goals = prepared
-            identity = client.send_command(targets, based_on=snapshot)
+            targets, stopping, sent_goals, based_on = prepared
+            if not control_feedback_valid(based_on):
+                with self._lock:
+                    self._inflight = False
+                    self.pause_feedback("Host feedback is stale")
+                return
+            identity = client.send_command(targets, based_on=based_on)
             with self._lock:
                 if identity is None:
                     self._inflight = False

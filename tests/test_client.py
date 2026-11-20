@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from support import state_frames, state_payload
 
-from alohamini.client import HostClient
+from alohamini.client import HostClient, control_feedback_valid, control_session_compatible
 from alohamini.errors import (
     ConnectionError,
     ModelMismatchError,
@@ -23,6 +23,34 @@ except ImportError:
 
 
 class ClientConfigurationTests(unittest.TestCase):
+    def test_feedback_validity_uses_the_advertised_host_budget(self):
+        from alohamini.protocol import HostSnapshot
+
+        for budget in (0.5, 1.0, 2.0):
+            for age in (0.1, budget - 0.001, budget, budget + 0.001):
+                with self.subTest(budget=budget, age=age):
+                    payload = state_payload()
+                    payload["_safety"]["command_watchdog_timeout_s"] = budget
+                    sample = HostSnapshot(payload, {}, 10.0, 10.0)
+                    with patch("alohamini.client.time.monotonic", return_value=10.0 + age):
+                        self.assertEqual(control_feedback_valid(sample), age < budget)
+                    self.assertEqual(sample.request_started_s, 10.0)
+
+    def test_session_recovery_rejects_replaced_calibration_and_lift_reference(self):
+        from copy import deepcopy
+
+        from alohamini.protocol import HostSnapshot
+
+        before = HostSnapshot(state_payload(), {}, 1.0, 1.0)
+        before.payload["_safety"]["phase"] = "ready"
+        after = deepcopy(before)
+        self.assertTrue(control_session_compatible(before, after, "client"))
+        after.payload["lift_axis.reference_sequence"] = 1
+        self.assertFalse(control_session_compatible(before, after, "client"))
+        after = deepcopy(before)
+        after.payload["_robot_metadata"]["motors"]["joint"] = {"homing_offset": 1}
+        self.assertFalse(control_session_compatible(before, after, "client"))
+
     def test_refresh_keeps_command_context_while_discarding_old_requests(self):
         with HostClient("127.0.0.1") as client:
             client._pending[b"old"] = 1.0

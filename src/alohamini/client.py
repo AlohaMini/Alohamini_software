@@ -75,6 +75,24 @@ def control_feedback_valid(snapshot: HostSnapshot | None) -> bool:
     return time.monotonic() - snapshot.request_started_s < timeout
 
 
+def control_session_compatible(
+    previous: HostSnapshot | None, snapshot: HostSnapshot, client_id: str
+) -> bool:
+    """Allow an available lease on the same calibrated Host after a watchdog stop."""
+    if previous is None:
+        return False
+    before, after = previous.payload["_safety"], snapshot.payload["_safety"]
+    return (
+        before.get("control_owner") in (None, client_id)
+        and before.get("host_session_id") == after.get("host_session_id")
+        and after.get("control_owner") in (None, client_id)
+        and after.get("phase") in ("ready", "active")
+        and snapshot.payload["_robot_metadata"] == previous.payload["_robot_metadata"]
+        and snapshot.payload.get("lift_axis.reference_sequence")
+        == previous.payload.get("lift_axis.reference_sequence")
+    )
+
+
 class HostClient:
     """Single-threaded client with a bounded observation request window.
 

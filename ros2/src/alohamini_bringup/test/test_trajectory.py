@@ -136,6 +136,26 @@ def test_action_feedback_does_not_retimestamp_stale_pose(control, resource, join
     assert not actions._active
 
 
+def test_cached_measurement_does_not_trigger_tracking_failure_or_goal_success():
+    resource = TrajectoryResource("arm", ["joint"], 0.05, 0.01, 0.2, 0.25)
+    goal = resource.activate(["joint"], [TrajectorySample(1, {"joint": 1})], {"joint": 0}, 0)
+    assert resource.update({"joint": 0}, True, 0.5, measured_fresh=False) == {"joint": 0.5}
+    assert resource.active_goal_id == goal
+    assert resource.update({"joint": 0.5}, True, 0.5) == {"joint": 0.5}
+    assert resource.update({"joint": 0.5}, True, 1, measured_fresh=False) == {"joint": 1}
+    assert resource.active_goal_id == goal
+    resource.update({"joint": 1}, True, 1.01)
+    assert resource.terminal(goal).state is TerminalState.SUCCEEDED
+
+
+def test_goal_deadline_without_measurement_does_not_hold_an_old_pose():
+    resource = TrajectoryResource("arm", ["joint"], 0.05, 0.01, 0.2, 0.25)
+    goal = resource.activate(["joint"], [TrajectorySample(0.1, {"joint": 1})], {"joint": 0}, 0)
+    assert resource.update({"joint": 0}, True, 0.4, measured_fresh=False) is None
+    assert resource.terminal(goal).state is TerminalState.STALE
+    assert resource.hold_positions is None
+
+
 def test_gripper_contact_is_not_reported_as_reached(control):
     commands, client = control
     goal = commands.start_goal(
@@ -286,7 +306,7 @@ def test_cancel_stop_cannot_cross_control_lease(control, change):
     commands.cancel_goal("left_arm", goal)
     commands.step(client, command_reply(commands, sample=10.04, command={}, **change))
     assert client.send_command.call_count == 1
-    assert not commands.status()[0]
+    assert commands.status()[0] == ("control_owner" not in change)
 
 
 def test_new_goal_replaces_queued_cancel_hold_without_waiting_for_ack(control):

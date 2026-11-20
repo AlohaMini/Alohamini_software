@@ -14,6 +14,7 @@ from contextlib import ExitStack
 from alohamini._validation import finite_number
 from alohamini.apps.teleop_monitor import TeleopMonitor
 from alohamini.client import HostClient, control_feedback_valid
+from alohamini.client import control_session_compatible as _same_control_session
 from alohamini.errors import ResponseTimeoutError
 from alohamini.hardware.leader import BimanualLeader
 from alohamini.model import get_robot_model
@@ -219,22 +220,6 @@ def stop_owned_robot(client, robot_model, identity):
         logger.warning("未确认停止目标；Host watchdog 将在命令超时后停止运动。")
     except Exception as exc:
         logger.warning("停止请求未完成：%s；Host watchdog 负责断联停止。", exc)
-
-
-def _same_control_session(previous, snapshot, client_id):
-    """Allow an available lease on the same calibrated Host, independent of epoch jumps."""
-    if previous is None:
-        return False
-    before, after = previous.payload["_safety"], snapshot.payload["_safety"]
-    return (
-        before.get("control_owner") in (None, client_id)
-        and before.get("host_session_id") == after.get("host_session_id")
-        and after.get("control_owner") in (None, client_id)
-        and after.get("phase") in ("ready", "active")
-        and snapshot.payload["_robot_metadata"] == previous.payload["_robot_metadata"]
-        and snapshot.payload.get("lift_axis.reference_sequence")
-        == previous.payload.get("lift_axis.reference_sequence")
-    )
 
 
 def run_loop(
