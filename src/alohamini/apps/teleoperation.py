@@ -9,13 +9,14 @@ import os
 import sys
 import threading
 import time
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
 
 from alohamini._validation import finite_number
 from alohamini.apps.teleop_monitor import TeleopMonitor
 from alohamini.client import HostClient, control_feedback_valid
 from alohamini.errors import ResponseTimeoutError
 from alohamini.hardware.leader import BimanualLeader
+from alohamini.interaction import DesktopInteraction
 from alohamini.model import get_robot_model
 from alohamini.protocol import HostSnapshot, decode_command_context
 
@@ -177,10 +178,10 @@ def ready_units(snapshot: HostSnapshot, robot_model: str, client_id: str) -> dic
     return units
 
 
-def stop_owned_robot(client, robot_model, identity):
+def stop_owned_robot(client, robot_model, identity, *, arms_only=False):
     """Best-effort measured hold/zero, only for this unchanged control lease."""
     if identity is None or identity.client_id != client.client_id:
-        return
+        return False
     try:
         snapshot = client.read()
         safety = snapshot.payload["_safety"]
@@ -190,23 +191,22 @@ def stop_owned_robot(client, robot_model, identity):
             or safety.get("control_epoch") != identity.control_epoch
             or ready_units(snapshot, robot_model, client.client_id) is None
         ):
-            return
+            return False
         # A prefetched reply can precede our first command's ownership claim.
         # A newer sequence on the same lease also supersedes that in-flight command.
         units = ready_units(snapshot, robot_model, client.client_id)
         targets = {key: snapshot.payload[key] for key in units}
-        targets.update(
-            {
+        if not arms_only:
+            targets.update({
                 "x.vel": 0.0,
                 "y.vel": 0.0,
                 "theta.vel": 0.0,
                 "lift_axis.height_mm": snapshot.payload["lift_axis.height_mm"],
-            }
-        )
+            })
         stopped = client.send_command(targets, based_on=snapshot)
         if stopped is None:
             logger.warning("停止目标未发送；Host watchdog 将在命令超时后停止运动。")
-            return
+            return False
         deadline = time.monotonic() + 0.3
         while time.monotonic() < deadline:
             reply = client.read().payload["_safety"]
@@ -215,10 +215,11 @@ def stop_owned_robot(client, robot_model, identity):
                 command.get("client_id") == client.client_id
                 and command.get("sequence") == stopped.sequence
             ):
-                return
+                return True
         logger.warning("未确认停止目标；Host watchdog 将在命令超时后停止运动。")
     except Exception as exc:
         logger.warning("停止请求未完成：%s；Host watchdog 负责断联停止。", exc)
+    return False
 
 
 def _same_control_session(previous, snapshot, client_id):
@@ -248,6 +249,7 @@ def run_loop(
     on_frame=None,
     stop_event=None,
     tracking=None,
+    verification=None,
 ):
     """Observe -> input -> send -> monitor -> submit the latest preview state.
 
@@ -270,6 +272,7 @@ def run_loop(
     timeout_report_t = -math.inf
     waiting_since = None
     timeout_warned = False
+    following = False
     default_units = {
         f"{m.name}.pos": "range_0_100" if m.name.endswith("gripper") else "range_m100_100"
         for m in get_robot_model(robot_model).actuators
@@ -363,7 +366,16 @@ def run_loop(
                     monitor.update(snapshot.payload, sent=False, fresh=False, permitted=False)
                     stop.wait(max(1.0 / fps - (time.perf_counter() - t0), 0.0))
                     continue
-                action.update(mapper.targets(keys, snapshot.payload, now=time.monotonic()))
+                if verification is None:
+                    action.update(mapper.targets(keys, snapshot.payload, now=time.monotonic()))
+                if verification is not None and not following and new_response and identity is not None:
+                    command = safety.get("command", {})
+                    if (
+                        safety.get("control_owner") == client.client_id
+                        and command.get("client_id") == client.client_id
+                    ):
+                        following = True
+                        verification.notify("verifying")
                 if stop.is_set():
                     break
                 submitted = client.send_command(action, based_on=snapshot)
@@ -386,8 +398,15 @@ def run_loop(
             # Same per-cycle sleep as source precise_sleep on Linux, cancellable.
             stop.wait(max(1.0 / fps - (time.perf_counter() - t0), 0.0))
     finally:
+        stop_confirmed = True
         if client is not None:
-            stop_owned_robot(client, robot_model, identity)
+            if verification is None:
+                stop_owned_robot(client, robot_model, identity)
+            if verification is not None and identity is not None:
+                stop_confirmed = stop_owned_robot(client, robot_model, identity, arms_only=True)
+    if verification is not None and identity is not None and not stop_confirmed:
+        raise RuntimeError("Host 未确认停止，请观察机器人停止后再继续。")
+    return following if verification is not None else None
 
 
 def teleoperate(
@@ -406,6 +425,7 @@ def teleoperate(
     camera_fps=30,
     arm_profile=None,
     tracking=False,
+    verification=None,
 ):
     if no_leader and no_keyboard:
         raise ValueError("不能同时关闭主臂与键盘。")
@@ -473,7 +493,7 @@ def teleoperate(
 
             tracking_log = TrackingLog()
             cleanup.callback(tracking_log.close)
-        run_loop(
+        return run_loop(
             client,
             robot_model,
             leader,
@@ -482,4 +502,25 @@ def teleoperate(
             camera_fps=camera_fps,
             on_frame=on_frame,
             tracking=tracking_log,
+            stop_event=verification.cancelled if verification is not None else None,
+            verification=verification,
         )
+
+
+def verify_teleoperation(host, robot_model, **options):
+    """验证流程只复用双臂控制，并把 Host 确认结果交给桌面。"""
+    from alohamini.errors import AlohaMiniError
+
+    if options["no_leader"] or options["no_robot"]:
+        raise ValueError("验证跟随需要主臂和真实机器人。")
+    interaction = DesktopInteraction(sys.stdin, sys.stdout, actions=("finish",))
+    options.update(no_keyboard=True, no_preview=True, tracking=True, verification=interaction)
+    with redirect_stdout(sys.stderr):
+        try:
+            following = teleoperate(host, robot_model, **options)
+        except (AlohaMiniError, OSError, ValueError, RuntimeError) as error:
+            print(str(error), file=sys.stderr, flush=True)
+            interaction.notify("failed")
+            return 1
+    interaction.notify("succeeded" if following else "cancelled")
+    return 0

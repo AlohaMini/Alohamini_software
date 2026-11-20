@@ -315,7 +315,7 @@ def _main(argv: list[str] | None = None) -> int:
         "calibrate", help="Bind USB controllers and calibrate both arms at Home"
     )
     calibration.add_argument("target", choices=("leader", "robot"))
-    calibration.add_argument("--gui", action="store_true", help="通过逐行 JSON 处理桌面主臂标定交互")
+    calibration.add_argument("--gui", action="store_true", help="通过逐行 JSON 处理桌面标定交互")
     calibration.add_argument(
         "--robot_model", required=True, choices=("alohamini2", "alohamini2pro")
     )
@@ -371,6 +371,7 @@ def _main(argv: list[str] | None = None) -> int:
         help="启用的相机名，设备为 /dev/am_camera_<名称>；不填名称则不启用相机",
     )
     teleop = commands.add_parser("teleoperate", help="双主臂与键盘遥操；使用已有标定")
+    teleop.add_argument("--verify", action="store_true", help="通过桌面工作流验证双臂跟随")
     teleop.add_argument(
         "--host", "--robot.remote_ip", "--remote_ip", dest="host", default="127.0.0.1"
     )
@@ -607,8 +608,6 @@ def _main(argv: list[str] | None = None) -> int:
                 arm_profile=args.arm_profile,
             )
             if args.gui:
-                if args.target != "leader":
-                    raise ValueError("桌面交互仅用于主臂标定")
                 from alohamini.calibration.interaction import run_gui_calibration
 
                 return run_gui_calibration(**options)
@@ -650,25 +649,15 @@ def _main(argv: list[str] | None = None) -> int:
             robot.run(profile_timing=args.profile_timing)
             return 0
         if args.command == "teleoperate":
-            from alohamini.apps.teleoperation import teleoperate
+            from alohamini.apps.teleoperation import teleoperate, verify_teleoperation
 
             logging.basicConfig(level=logging.INFO, format="%(message)s")
-            teleoperate(
-                args.host,
-                args.robot_model,
-                leader_id=args.leader_id,
-                calibration_dir=args.calibration_dir,
-                left_port=args.left_port,
-                right_port=args.right_port,
-                no_leader=args.no_leader,
-                no_keyboard=args.no_keyboard,
-                no_robot=args.no_robot,
-                no_preview=args.no_preview,
-                fps=args.fps,
-                camera_fps=args.camera_fps,
-                arm_profile=args.arm_profile,
-                tracking=args.tracking,
-            )
+            options = vars(args).copy()
+            options.pop("command")
+            host, model = options.pop("host"), options.pop("robot_model")
+            if options.pop("verify"):
+                return verify_teleoperation(host, model, **options)
+            teleoperate(host, model, **options)
             return 0
         with HostClient(
             args.host, port=args.port, expected_model=args.model, timeout_s=args.timeout

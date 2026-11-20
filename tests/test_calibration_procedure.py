@@ -544,6 +544,55 @@ class CalibrationProcedureTests(unittest.TestCase):
         )
         self.assert_passive_and_closed()
 
+    def test_follower_gui_cli_confirms_one_home_pose_and_saves_both_arms(self):
+        from alohamini.cli import main
+
+        self.configure("robot")
+        for side in ("left", "right"):
+            self.serials[f"/dev/am_arm_follower_{side}"] = self.serials[f"/dev/test-{side}"]
+        read_fd, write_fd = os.pipe()
+        output, errors = io.StringIO(), io.StringIO()
+        with os.fdopen(read_fd) as source, os.fdopen(write_fd, "w") as control:
+            control.write('{"action":"confirm","prompt_id":1}\n')
+            control.flush()
+            with (
+                patch("sys.stdin", source),
+                patch.dict(os.environ, XDG_CACHE_HOME=str(self.root / "cache")),
+                patch("builtins.input", side_effect=AssertionError("从臂标定不得读取终端")),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(errors),
+            ):
+                self.assertEqual(main([
+                    "calibrate", "robot", "--gui", "--robot_model", self.model_name,
+                    "--calibration_dir", str(self.root),
+                ]), 0, errors.getvalue())
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([event["step"] for event in events], [
+            "connecting", "home", "writing_left", "writing_right", "saving", "succeeded",
+        ])
+        self.assertEqual([event["prompt_id"] for event in events if event["prompt_id"]], [1])
+        profile = load_reference_profile(self.root / "AlohaMiniRobot.json", self.model_name)
+        self.assertEqual(set(profile["arms"]), {"left", "right"})
+        self.assert_passive_and_closed()
+
+    def test_follower_gui_cancel_preserves_previous_robot_calibration(self):
+        self.configure("robot")
+        self.run_calibration()
+        previous = (self.root / "AlohaMiniRobot.json").read_bytes()
+        for side in ("left", "right"):
+            serial = self.serials[f"/dev/test-{side}"]
+            serial.set(1, 56, 2, serial.get(1, 56, 2) + 80)
+            self.original[side] = {
+                motor_id: bytes(registers) for motor_id, registers in serial.registers.items()
+            }
+        with self.gui_interaction(cancel_at="writing_right") as (interaction, _):
+            with self.assertRaises(InterruptedError):
+                calibrate("robot", self.model_name, calibration_dir=self.root,
+                          left_port="/dev/test-left", right_port="/dev/test-right", interaction=interaction)
+        self.assert_restored()
+        self.assertEqual((self.root / "AlohaMiniRobot.json").read_bytes(), previous)
+        self.assert_passive_and_closed()
+
     def test_robot_one_pose_preserves_velocity_axes_and_saves_shared_bindings(self):
         self.configure("robot")
         self.run_calibration()

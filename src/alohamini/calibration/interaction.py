@@ -1,4 +1,4 @@
-"""桌面主臂标定入口，复用共享交互通道。"""
+"""桌面标定入口，复用共享交互通道。"""
 
 import sys
 from contextlib import redirect_stdout

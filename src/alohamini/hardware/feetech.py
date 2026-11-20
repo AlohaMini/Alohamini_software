@@ -3,6 +3,7 @@
 # Feedback layout/sign decoding adapted from LeRobot FeetechMotorsBus.
 """Read-only STS feedback, using a caller-owned nonblocking serial connection."""
 
+import sys
 import threading
 import time
 from collections.abc import Sequence
@@ -92,10 +93,14 @@ class _PacketPort:
         if self.write_timeout_s is None:
             return self.serial.write(bytes(packet))
         previous = self.serial.write_timeout
+        budget = min(self.write_timeout_s, self.deadline - time.monotonic())
+        if sys.platform == "darwin":
+            # pySerial 设置写超时会重新配置 macOS 串口，可能丢失此请求的应答。
+            if previous is None or previous > budget:
+                raise TimeoutError("Feedback transaction deadline exceeded")
+            return self.serial.write(bytes(packet))
         try:
-            self.serial.write_timeout = min(
-                self.write_timeout_s, max(0.0, self.deadline - time.monotonic())
-            )
+            self.serial.write_timeout = max(0.0, budget)
             self._check_deadline()
             return self.serial.write(bytes(packet))
         finally:

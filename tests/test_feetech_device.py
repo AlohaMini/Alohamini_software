@@ -499,6 +499,7 @@ class FeetechDeviceTests(unittest.TestCase):
             return original(packet)
 
         with (
+            patch("sys.platform", "linux"),
             patch("time.monotonic", side_effect=clock),
             patch.object(self.serial, "write", side_effect=delayed_write),
         ):
@@ -522,6 +523,7 @@ class FeetechDeviceTests(unittest.TestCase):
             raise SerialTimeoutException("Write timeout")
 
         with (
+            patch("sys.platform", "linux"),
             patch("time.monotonic", side_effect=clock),
             patch.object(self.serial, "write", side_effect=blocked_write) as write,
         ):
@@ -1654,7 +1656,7 @@ class FeetechDeviceTests(unittest.TestCase):
         self.connect()
         self.serial.drop.add((1, 2, 69))
         started = time.monotonic()
-        with self.assertRaisesRegex(ConnectionError, "attempts=1"):
+        with patch("sys.platform", "linux"), self.assertRaisesRegex(ConnectionError, "attempts=1"):
             self.device._read_register("joint", 69, 2, deadline=started + 0.003)
         self.assertEqual(len(self.serial.requests), 1)
         self.assertLess(time.monotonic() - started, 0.025)
@@ -1828,7 +1830,7 @@ class FeetechDeviceTests(unittest.TestCase):
 
     def test_register_fallback_write_cannot_exceed_its_cyclic_deadline(self):
         self.connect()
-        with patch("time.monotonic", return_value=1.0):
+        with patch("sys.platform", "linux"), patch("time.monotonic", return_value=1.0):
             port = self.device._packet_port(1.003, register=True)
             observed = []
             with patch.object(

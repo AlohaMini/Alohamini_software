@@ -88,7 +88,8 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(
                     main(["calibrate", target, "--robot_model", "alohamini2pro", "--id", "test"]), 0
                 )
-                self.assertEqual(calibrate.call_args.args, (target, "alohamini2pro"))
+                self.assertEqual(calibrate.call_args.kwargs["target"], target)
+                self.assertEqual(calibrate.call_args.kwargs["robot_model"], "alohamini2pro")
                 self.assertEqual(calibrate.call_args.kwargs["device_id"], "test")
                 self.assertNotIn("rehome", calibrate.call_args.kwargs)
 

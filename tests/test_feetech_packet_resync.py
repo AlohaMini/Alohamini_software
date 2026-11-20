@@ -1,6 +1,7 @@
 """Malformed servo traffic must not consume a following complete legal reply."""
 
 import importlib.util
+import time
 from unittest.mock import patch
 
 import pytest
@@ -165,6 +166,33 @@ def test_expired_transaction_starts_no_more_serial_io(operation):
     read_bytes.assert_not_called()
     write_bytes.assert_not_called()
     clear.assert_not_called()
+
+
+def test_macos_register_query_keeps_its_reply_without_reconfiguring_the_port():
+    from scservo_sdk.protocol_packet_handler import protocol_packet_handler
+    from scservo_sdk.scservo_def import COMM_SUCCESS
+
+    class ReconfiguringSerial(MemorySerial):
+        @property
+        def write_timeout(self):
+            return 0.005
+
+        @write_timeout.setter
+        def write_timeout(self, _):
+            self.reset_input_buffer()
+
+    wire = packet(1, data=(777).to_bytes(2, "little"))
+    serial = ReconfiguringSerial([wire])
+    with patch("sys.platform", "darwin"):
+        port = _PacketPort(serial, time.monotonic() + 0.050, write_timeout_s=0.050)
+        assert protocol_packet_handler().readTx(port, 1, 3, 2) == COMM_SUCCESS
+        assert port.read_packet() == (list(wire), COMM_SUCCESS)
+
+        with patch("time.monotonic", return_value=1.0):
+            port = _PacketPort(serial, 1.003, write_timeout_s=0.050)
+            with pytest.raises(TimeoutError, match="deadline"):
+                port.writePort([1])
+    assert len(serial.writes) == 1
 
 
 @pytest.mark.parametrize("malformed", ["partial", "checksum"])

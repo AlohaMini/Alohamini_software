@@ -465,6 +465,7 @@ class LeaderTests(unittest.TestCase):
                 return write(packet)
 
             with (
+                patch("sys.platform", "linux"),
                 patch.object(serial, "write", side_effect=delayed_write),
                 patch("time.monotonic", side_effect=clock),
             ):
@@ -541,6 +542,7 @@ class LeaderTests(unittest.TestCase):
                 raise SerialTimeoutException("Write timeout")
 
             with (
+                patch("sys.platform", "linux"),
                 patch.object(serial, "write", side_effect=timeout) as write,
                 patch("time.monotonic", side_effect=clock),
                 self.assertRaisesRegex(
@@ -634,6 +636,57 @@ class KeyboardTests(unittest.TestCase):
 
 
 class TeleoperationTests(unittest.TestCase):
+    def test_verification_waits_for_host_acknowledgement_and_stops_only_arms(self):
+        for acknowledge_stop in (True, False):
+            with self.subTest(acknowledge_stop=acknowledge_stop):
+                verification = Mock()
+                stop = threading.Event()
+                client = Mock(client_id="client")
+                leader = Mock()
+                leader.read.return_value = {"arm_left_gripper.pos": 51.0}
+                sent = []
+
+                def send(targets, **_kwargs):
+                    sent.append(targets)
+                    if len(sent) == 2:
+                        stop.set()
+                    if len(sent) == 3 and not acknowledge_stop:
+                        return None
+                    return CommandIdentity("client", len(sent), "session", 0)
+
+                def read():
+                    state = snapshot()
+                    if sent:
+                        state.payload["_safety"].update(
+                            control_owner="client", command={"client_id": "client", "sequence": len(sent)},
+                        )
+                    return state
+
+                client.read.side_effect = read
+                client.send_command.side_effect = send
+                expected = contextlib.nullcontext() if acknowledge_stop else self.assertRaisesRegex(
+                    RuntimeError, "Host 未确认停止"
+                )
+                with expected:
+                    self.assertTrue(run_loop(client, "alohamini2pro", leader, None,
+                                             stop_event=stop, verification=verification))
+                verification.notify.assert_called_once_with("verifying")
+                self.assertEqual(len(sent), 3)
+                self.assertTrue(all(key.startswith("arm_") for targets in sent for key in targets))
+
+    def test_verification_cli_emits_a_terminal_event_without_opening_hardware(self):
+        for began, terminal in ((True, "succeeded"), (False, "cancelled")):
+            with (
+                patch("alohamini.apps.teleoperation.teleoperate", return_value=began) as run,
+                patch("sys.stdin", io.StringIO('{"action":"finish"}\n')),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(main(["teleoperate", "--verify", "--robot_model", "alohamini2pro"]), 0)
+            self.assertEqual(json.loads(output.getvalue())["step"], terminal)
+            self.assertTrue(run.call_args.kwargs["no_keyboard"])
+            self.assertTrue(run.call_args.kwargs["no_preview"])
+            self.assertTrue(run.call_args.kwargs["tracking"])
+
     def test_skipped_send_resamples_input_and_preserves_last_identity_for_cleanup(self):
         client, leader = Mock(client_id="client"), Mock()
         stop, on_frame = threading.Event(), Mock()
